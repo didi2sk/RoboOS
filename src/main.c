@@ -2,7 +2,7 @@
 #include "usb.h"
 #include "sd.h"
 
-#define VERSION "0.9"
+#define VERSION "0.10"
 
 static void status(int good)
 {
@@ -60,7 +60,7 @@ void kernel_main(void)
         const u8 *m = eth_mac();
         status(!bad);
         if (bad) kprintf("Ethernet: init failed at %s (%d, HCINT %x)\n", bad, code, hc);
-        else kprintf("Ethernet: LAN9514, MAC %02x:%02x:%02x:%02x:%02x:%02x\n", m[0], m[1], m[2], m[3], m[4], m[5]);
+        else kprintf("Ethernet: %s, MAC %02x:%02x:%02x:%02x:%02x:%02x\n", eth_chip_name(), m[0], m[1], m[2], m[3], m[4], m[5]);
     }
     int sde = sd_init();
     if (sde == SD_OK && fat_mount() == 0) {

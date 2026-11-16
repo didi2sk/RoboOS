@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.9**
+Aktuálna verzia: **0.10**
 
 ## Podporované dosky
 
@@ -126,7 +126,8 @@ LED zapájaj cez odpor 220–330 Ω, relé a motory cez tranzistor alebo modul.
 
 ## Sieť: správy medzi RoboOS doskami
 
-Pi 3B má ethernetový čip LAN9514 (USB zariadenie za hubom na doske). Zapoj dosky do
+Pi 3B (LAN9514) a Pi 3B+ (LAN7515) majú ethernetový čip, ktorý je USB zariadenie za hubom
+na doske; RoboOS má ovládač pre oba. Zapoj dosky do
 toho istého switchu alebo routera a môžu si posielať krátke textové správy.
 Protokol je vlastný, na surových ethernetových rámcoch (EtherType `88b5`); IP/UDP
 zatiaľ nie je, takže PC mu nerozumie.
@@ -159,7 +160,7 @@ delivered
 - Programy v C: `netSend(to, text)`, `netReceive(from, text, max)`, `netName()`;
   pozri `sdk/examples/chat.c` (`run chat` = chat medzi doskami).
 
-Nie je na Zero 2 W a 3A+ (nemajú Ethernet) ani na 3B+ (iný čip, LAN7515).
+Nie je na Zero 2 W a 3A+ (nemajú Ethernet). 3B a 3B+ sa medzi sebou dohovoria.
 
 ## USB klávesnica
 
@@ -251,7 +252,7 @@ vyvolá výnimku; tá sa vypíše a systém sa vráti do shellu.
 | `src/fb.c` | HDMI framebuffer 1024×768, textová konzola s fontom 8×16 |
 | `src/console.c` | výstup na UART + HDMI, `kprintf`, farby, vstup |
 | `src/usb.c` | USB host ovládač DWC2: inicializácia, root port, DMA prenosy, split transakcie, enumerácia, huby, hot-plug |
-| `src/eth.c` | Ethernet: LAN9514 cez USB bulk endpointy, surové rámce |
+| `src/eth.c` | Ethernet: LAN9514 (3B) a LAN7515 (3B+) cez USB bulk endpointy, surové rámce |
 | `src/net.c` | správy medzi RoboOS doskami (mená, who, odoslanie s potvrdením, schránka) |
 | `src/kbd.c` | HID klávesnica: boot protocol, preklad scan kódov, autorepeat |
 | `src/sd.c` | ovládač SD karty (Arasan SDHCI, GPIO48-53 ALT3), čítanie aj zápis |

@@ -74,6 +74,7 @@ int  eth_present(void);
 int  eth_is(const struct usb_dev *d);
 const u8 *eth_mac(void);
 u32  eth_chip(void);
+const char *eth_chip_name(void);                 /* "LAN9514 (SMSC)" / "LAN7515 (LAN7800)" */
 const char *eth_error(int *code, u32 *hcint);    /* 0 = fine, else the failed init step */
 int  eth_link(int *full);                        /* 0 = down, else 10 / 100 */
 int  eth_send(const void *frame, int len);       /* frame = dst, src, type, payload */

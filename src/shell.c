@@ -216,7 +216,7 @@ static void net_status(void)
 {
     int code, full = 0; u32 hc;
     const char *bad = eth_error(&code, &hc);
-    kprintf("chip:  LAN95xx id %08x\n", eth_chip());
+    kprintf("chip:  %s, id %08x\n", eth_chip_name(), eth_chip());
     if (bad) { kprintf("init:  FAILED at %s (%d, HCINT %x)\n", bad, code, hc); return; }
     kprintf("MAC:   "); put_mac(eth_mac()); con_putc('\n');
     int sp = eth_link(&full);
@@ -304,7 +304,7 @@ static void cmd_net(int argc, char **argv)
         return;
     }
     if (!eth_present()) {
-        kprintf("no Ethernet chip found (LAN9514 on Pi 3B / Pi 2 only)\n");
+        kprintf("no Ethernet chip found (LAN9514 on Pi 3B, LAN7515 on Pi 3B+)\n");
         kprintf("name:  %s%s\n", net_name(), net_looping() ? "  (loopback on)" : "");
         return;
     }

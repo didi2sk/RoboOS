@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.9**
+Current version: **0.10**
 
 ## Supported boards
 
@@ -125,7 +125,8 @@ Use a 220-330 Ω resistor for LEDs and a transistor/module for relays and motors
 
 ## Network: messages between RoboOS boards
 
-The Pi 3B has a LAN9514 Ethernet chip (a USB device behind the onboard hub). Plug the
+The Pi 3B (LAN9514) and the Pi 3B+ (LAN7515) have an Ethernet chip that is a USB device
+behind the onboard hub; RoboOS has a driver for both. Plug the
 boards into the same switch or router and they can send each other short text messages.
 The protocol is RoboOS's own, on raw Ethernet frames (EtherType `88b5`); there is no
 IP/UDP yet, so a PC does not understand it.
@@ -158,7 +159,7 @@ delivered
 - C programs: `netSend(to, text)`, `netReceive(from, text, max)`, `netName()`;
   see `sdk/examples/chat.c` (`run chat` = a chat between the boards).
 
-Not available on the Zero 2 W and 3A+ (no Ethernet) and on the 3B+ (different chip, LAN7515).
+Not available on the Zero 2 W and 3A+ (no Ethernet). The 3B and 3B+ can talk to each other.
 
 ## USB keyboard
 
@@ -248,7 +249,7 @@ raises an exception; it is printed and the system returns to the shell.
 | `src/fb.c` | HDMI framebuffer 1024×768, text console with an 8×16 font |
 | `src/console.c` | output to UART + HDMI, `kprintf`, colors, input |
 | `src/usb.c` | DWC2 USB host driver: init, root port, DMA transfers, split transactions, enumeration, hubs, hot-plug |
-| `src/eth.c` | Ethernet: LAN9514 over USB bulk endpoints, raw frames |
+| `src/eth.c` | Ethernet: LAN9514 (3B) and LAN7515 (3B+) over USB bulk endpoints, raw frames |
 | `src/net.c` | messages between RoboOS boards (names, who, send with confirmation, inbox) |
 | `src/kbd.c` | HID keyboard: boot protocol, scan code translation, autorepeat |
 | `src/sd.c` | SD card driver (Arasan SDHCI, GPIO48-53 ALT3), read + write |
