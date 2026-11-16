@@ -51,6 +51,8 @@ int fb_ready(void)  { return fb != 0; }
 u32 fb_width(void)  { return width; }
 u32 fb_height(void) { return height; }
 void fb_setcolor(u32 fg) { cur_fg = fg; }
+int fb_cols(void)   { return cols; }
+int fb_rows(void)   { return rows; }
 
 static void draw_cell(int x, int y)
 {
@@ -126,11 +128,32 @@ void fb_putc(char c)
     } else {
         text[cy][cx] = (u8)c;
         tcol[cy][cx] = cur_fg;
-        draw_cell(cx, cy);
+        if (shown[cy][cx] != (u8)c || (c != ' ' && scol[cy][cx] != cur_fg))
+            draw_cell(cx, cy);                     /* unchanged cells cost nothing */
         if (++cx >= cols) {
             cx = 0;
             if (++cy >= rows) scroll();
         }
     }
+    draw_cursor(1);
+}
+
+void fb_goto(int x, int y)
+{
+    if (!fb) return;
+    draw_cursor(0);
+    cx = x < 0 ? 0 : x >= cols ? cols - 1 : x;
+    cy = y < 0 ? 0 : y >= rows ? rows - 1 : y;
+    draw_cursor(1);
+}
+
+void fb_clreol(void)
+{
+    if (!fb) return;
+    for (int x = cx; x < cols; x++)
+        if (text[cy][x] != ' ' || shown[cy][x] != ' ') {
+            text[cy][x] = ' ';
+            draw_cell(x, cy);
+        }
     draw_cursor(1);
 }

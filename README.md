@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.6**
+Current version: **0.7**
 
 ## Supported boards
 
@@ -71,6 +71,26 @@ robo@rpi3:~$ basic
 - File names when saving: 8.3 (max 8 characters + extension).
 
 Examples on the card: `APPS/blink.bas`, `APPS/button.bas`, `APPS/knight.bas`.
+
+### Text editor
+
+`edit <file>` opens a full-screen editor, so `.bas` and text files can be written and
+changed right on the RPi (`edit /RUN/blink.bas`, then `run blink`).
+
+| Key | Action |
+|-----|--------|
+| arrows, Home, End, Page Up, Page Down | move the cursor |
+| Backspace, Delete, Enter, Tab | edit (Tab inserts spaces) |
+| Ctrl+S | save |
+| Ctrl+Q | quit (asks if there are unsaved changes) |
+| Ctrl+K / Ctrl+U | cut the current line / paste it above the cursor line |
+| Ctrl+L | redraw the screen |
+
+- Files up to 1 MB. New files are saved with 8.3 names (max 8 characters + extension);
+  a file with a long name can be viewed but not saved.
+- Line ends are kept as they were (CR LF or LF); new files use CR LF.
+- On a UART terminal the editor uses the HDMI text size (128x48), so make the terminal
+  window at least that big; without HDMI it uses 80x24.
 
 ### C programs (SDK)
 
@@ -159,6 +179,7 @@ If you connect after boot, press Enter.
 | `usb debug on\|off` | verbose USB and keyboard report logging |
 | `ls [path]` | list a directory on the SD card |
 | `cat <file>` | print a text file (`"quotes"` for names with spaces) |
+| `edit <file>` | full-screen text editor |
 | `run <program>` | run a `.bin` or `.bas` program |
 | `basic [file]` | BASIC interpreter |
 | `sd [init]` | SD card info / re-initialize after swapping the card |
@@ -191,6 +212,7 @@ raises an exception; it is printed and the system returns to the shell.
 | `src/ctx.S` | setjmp/longjmp to abort programs |
 | `src/board.c` | board detection: name, ACT LED, USB topology |
 | `src/lineedit.c` | line editor: cursor keys, history, Tab hook (shell + BASIC) |
+| `src/edit.c` | full-screen text editor |
 | `src/shell.c` | commands |
 | `src/font.c` | font generated from DejaVu Sans Mono (`tools/mkfont.py`) |
 
@@ -244,7 +266,7 @@ qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial stdio -device usb-kbd
 - other keyboard layouts (a font with accented characters too)
 - interrupts + timer → multitasking
 - I2C / SPI / PWM in the API and in BASIC
-- a full-screen text editor
+- editor: search, go to line, save as
 - more cores (spin table at 0xE0–0xF0)
 
 ## Credits

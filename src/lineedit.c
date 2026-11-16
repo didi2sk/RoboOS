@@ -7,39 +7,8 @@
  */
 #include "kernel.h"
 
-enum { K_NONE, K_UP, K_DOWN, K_LEFT, K_RIGHT, K_HOME, K_END, K_DEL };
-
 static void back(int n) { while (n-- > 0) con_putc('\b'); }
 static void put_n(const char *s, int n) { for (int i = 0; i < n; i++) con_putc(s[i]); }
-
-/* ESC was read: decode "[A", "[3~", "OH", ... */
-static int read_escape(void)
-{
-    int c = con_getc();
-    if (c != '[' && c != 'O') return K_NONE;
-    c = con_getc();
-    if ((c >= '0' && c <= '9') || c == ';') {
-        int n = 0, first = -1;
-        while ((c >= '0' && c <= '9') || c == ';') {
-            if (c == ';') { if (first < 0) first = n; n = 0; }
-            else n = n * 10 + (c - '0');
-            c = con_getc();
-        }
-        if (first < 0) first = n;
-        if (c != '~') return K_NONE;
-        return first == 1 || first == 7 ? K_HOME : first == 4 || first == 8 ? K_END
-             : first == 3 ? K_DEL : K_NONE;
-    }
-    switch (c) {
-    case 'A': return K_UP;
-    case 'B': return K_DOWN;
-    case 'C': return K_RIGHT;
-    case 'D': return K_LEFT;
-    case 'H': return K_HOME;
-    case 'F': return K_END;
-    }
-    return K_NONE;
-}
 
 /* remove the character at position cur and redraw the tail */
 static void del_at(char *line, int *len, int cur)
@@ -58,9 +27,9 @@ int line_edit(char *line, int max, struct le_hist *h,
     if (max > LE_MAX) max = LE_MAX;
 
     for (;;) {
-        int c = con_getc(), key = K_NONE;
-        if (c == 27) { key = read_escape(); if (!key) continue; }
-        else if (c == 1) key = K_HOME;                   /* Ctrl+A */
+        int c = con_getkey(), key = c >= 256 ? c : 0;
+        if (key == K_PGUP || key == K_PGDN) continue;
+        if (c == 1) key = K_HOME;                   /* Ctrl+A */
         else if (c == 5) key = K_END;                    /* Ctrl+E */
 
         if (key == K_LEFT)       { if (cur) { back(1); cur--; } }

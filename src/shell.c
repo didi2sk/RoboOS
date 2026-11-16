@@ -269,6 +269,12 @@ static void cmd_run(int argc, char **argv)
     app_start(path);
 }
 
+static void cmd_edit(int argc, char **argv)
+{
+    if (argc < 2) { need("edit <file>   (Ctrl+S save, Ctrl+Q quit)"); return; }
+    editor_main(argv[1]);
+}
+
 static void cmd_basic(int argc, char **argv)
 {
     basic_main(argc > 1 ? argv[1] : 0);
@@ -309,6 +315,7 @@ static const struct cmd cmds[] = {
     { "usb",    "[reset|test|debug]",   "USB devices, keyboard test",      cmd_usb    },
     { "ls",     "[path]",               "list a directory on the SD card", cmd_ls     },
     { "cat",    "<file>",               "print a text file",               cmd_cat    },
+    { "edit",   "<file>",               "full-screen text editor",         cmd_edit   },
     { "run",    "<program>",            "run a .bin / .bas program",       cmd_run    },
     { "basic",  "[file]",               "BASIC interpreter",               cmd_basic  },
     { "sd",     "[init]",               "SD card info / re-initialize",    cmd_sd     },

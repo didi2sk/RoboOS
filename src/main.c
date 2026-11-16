@@ -2,7 +2,7 @@
 #include "usb.h"
 #include "sd.h"
 
-#define VERSION "0.6"
+#define VERSION "0.7"
 
 static void status(int good)
 {

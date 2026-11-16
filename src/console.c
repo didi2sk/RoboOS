@@ -101,3 +101,68 @@ int con_getc(void)
     while ((c = con_trygetc()) < 0) ;
     return c;
 }
+
+/* keys: plain characters, or K_xxx for cursor keys ("ESC [ A", "ESC [ 3 ~", "ESC O H", ...) */
+int con_getkey(void)
+{
+    for (;;) {
+        int c = con_getc();
+        if (c != 27) return c;
+        c = con_getc();
+        if (c != '[' && c != 'O') continue;
+        c = con_getc();
+        if ((c >= '0' && c <= '9') || c == ';') {
+            int n = 0, first = -1;
+            while ((c >= '0' && c <= '9') || c == ';') {
+                if (c == ';') { if (first < 0) first = n; n = 0; }
+                else n = n * 10 + (c - '0');
+                c = con_getc();
+            }
+            if (first < 0) first = n;
+            if (c != '~') continue;
+            switch (first) {
+            case 1: case 7: return K_HOME;
+            case 4: case 8: return K_END;
+            case 3: return K_DEL;
+            case 5: return K_PGUP;
+            case 6: return K_PGDN;
+            }
+            continue;
+        }
+        switch (c) {
+        case 'A': return K_UP;
+        case 'B': return K_DOWN;
+        case 'C': return K_RIGHT;
+        case 'D': return K_LEFT;
+        case 'H': return K_HOME;
+        case 'F': return K_END;
+        }
+    }
+}
+
+/* ---------------- cursor control (full-screen programs) ---------------- */
+static void uart_puts(const char *s) { while (*s) uart_putc(*s++); }
+static void uart_num(int v)
+{
+    char t[8]; int k = 0;
+    do { t[k++] = '0' + v % 10; v /= 10; } while (v);
+    while (k) uart_putc(t[--k]);
+}
+
+void con_goto(int x, int y)
+{
+    uart_puts("\033["); uart_num(y + 1); uart_putc(';'); uart_num(x + 1); uart_putc('H');
+    fb_goto(x, y);
+}
+
+void con_clreol(void)
+{
+    uart_puts("\033[K");
+    fb_clreol();
+}
+
+void con_size(int *cols, int *rows)
+{
+    if (fb_ready()) { *cols = fb_cols(); *rows = fb_rows(); }
+    else            { *cols = 80; *rows = 24; }
+}

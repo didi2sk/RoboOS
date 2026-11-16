@@ -49,11 +49,13 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
 | `src/app.c` | loads `.bin` at 0x01000000, API table (`sdk/robos.h`), Ctrl+C via `ctx_save/ctx_restore` (`src/ctx.S`), autostart `/RUN` |
 | `src/basic.c` | line-numbered integer BASIC, text `.BAS` files, SAVE/LOAD, GPIO statements |
 | `src/lineedit.c` | shared line editor (shell, BASIC prompt, INPUT): cursor keys, insert/delete, history, Tab hook; redraws with `\b` + chars only |
+| `src/edit.c` | full-screen editor (`edit <file>`): flat buffer at 0x02000000 (1 MB) + save scratch above it; draws via `con_goto`/`con_clreol`, only changed rows (UART is slow) |
 | `src/shell.c` | commands, Tab completion |
 | `sdk/` | program SDK: `start.S` header (`ROBOAPP1` magic at +8, image end at +16), `crt0.c`, `app.ld`, examples |
 
 Memory: kernel at 0x80000, BSS ends ~0x120000, DMA block at 0x200000 (2 MB, uncached),
-programs at 0x01000000-0x02000000.
+programs at 0x01000000-0x02000000, editor text at 0x02000000 (1 MB) + save scratch up to 0x02300000.
+Keys: `con_getkey()` decodes escape sequences into `K_UP`... (kbd.c sends the same sequences as a terminal).
 
 ## Hard-won lessons (do not regress)
 
@@ -82,5 +84,5 @@ programs at 0x01000000-0x02000000.
 - verify SD/BASIC/loader on real hardware; Zero 2 W and Pi 2 bring-up
 - license (MIT suggested, not chosen yet)
 - Slovak keyboard layout + font with diacritics
-- I2C / SPI / PWM in API and BASIC, interrupts + timer, multitasking, full-screen editor
+- I2C / SPI / PWM in API and BASIC, interrupts + timer, multitasking, editor search / go to line / save as
 - optional AArch32 port for Pi 2 v1.1 / Zero

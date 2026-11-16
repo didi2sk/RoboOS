@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.6**
+Aktuálna verzia: **0.7**
 
 ## Podporované dosky
 
@@ -72,6 +72,26 @@ robo@rpi3:~$ basic
 - Mená súborov pri ukladaní: 8.3 (max. 8 znakov + prípona).
 
 Ukážky na karte: `APPS/blink.bas`, `APPS/button.bas`, `APPS/knight.bas`.
+
+### Textový editor
+
+`edit <súbor>` otvorí celoobrazovkový editor, takže `.bas` a textové súbory sa dajú písať
+a meniť priamo na RPi (`edit /RUN/blink.bas`, potom `run blink`).
+
+| Klávesa | Akcia |
+|---------|-------|
+| šípky, Home, End, Page Up, Page Down | pohyb kurzora |
+| Backspace, Delete, Enter, Tab | úpravy (Tab vkladá medzery) |
+| Ctrl+S | uložiť |
+| Ctrl+Q | koniec (pri neuložených zmenách sa opýta) |
+| Ctrl+K / Ctrl+U | vystrihnúť aktuálny riadok / vložiť ho nad riadok s kurzorom |
+| Ctrl+L | prekresliť obrazovku |
+
+- Súbory do 1 MB. Nové súbory sa ukladajú s menom 8.3 (max 8 znakov + prípona);
+  súbor s dlhým menom sa dá prezerať, ale nie uložiť.
+- Konce riadkov ostávajú, aké boli (CR LF alebo LF); nové súbory majú CR LF.
+- Na UART termináli používa editor rozmer HDMI textu (128x48), takže okno terminálu
+  musí byť aspoň také veľké; bez HDMI používa 80x24.
 
 ### Programy v C (SDK)
 
@@ -162,6 +182,7 @@ Systém komunikuje po anglicky.
 | `usb debug on\|off` | podrobný výpis USB a reportov klávesnice |
 | `ls [cesta]` | obsah priečinka na SD karte |
 | `cat <súbor>` | vypíše textový súbor (`"úvodzovky"` pre mená s medzerami) |
+| `edit <súbor>` | celoobrazovkový textový editor |
 | `run <program>` | spustí program `.bin` alebo `.bas` |
 | `basic [súbor]` | interpreter BASICu |
 | `sd [init]` | info o SD karte / znovu inicializovať po výmene karty |
@@ -194,6 +215,7 @@ vyvolá výnimku; tá sa vypíše a systém sa vráti do shellu.
 | `src/ctx.S` | setjmp/longjmp na ukončenie programov |
 | `src/board.c` | rozpoznanie dosky: názov, ACT LED, zapojenie USB |
 | `src/lineedit.c` | editor riadku: kurzorové klávesy, história, Tab (shell + BASIC) |
+| `src/edit.c` | celoobrazovkový textový editor |
 | `src/shell.c` | príkazy |
 | `src/font.c` | font vygenerovaný z DejaVu Sans Mono (`tools/mkfont.py`) |
 
@@ -247,7 +269,7 @@ qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial stdio -device usb-kbd
 - ďalšie rozloženia klávesnice (aj font s diakritikou)
 - prerušenia + časovač → multitasking
 - I2C / SPI / PWM v API aj v BASICu
-- celoobrazovkový textový editor
+- editor: hľadanie, skok na riadok, uložiť ako
 - ďalšie jadrá (spin table na 0xE0–0xF0)
 
 ## Poďakovanie
