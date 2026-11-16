@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.8**
+Aktuálna verzia: **0.9**
 
 ## Podporované dosky
 
@@ -66,6 +66,7 @@ robo@rpi3:~$ basic
 - Príkazy v programe: `PRINT`/`?`, `INPUT`, `LET`, `IF..THEN..ELSE`, `GOTO`, `GOSUB`/`RETURN`,
   `FOR..TO..STEP`/`NEXT`, `DIM`, `END`, `REM`/`'`, `CLS`, `RANDOMIZE`; viac príkazov oddeľ `:`.
 - GPIO: `PINMODE pin, OUT|IN|PULLUP|PULLDOWN`, `GPIO pin, HIGH|LOW`, `GPIO(pin)`, `LED ON|OFF`, `WAIT ms`.
+- Sieť: `NETSEND`, `NETOK`, `NETAVAIL`, `NETRECV` (pozri časť o sieti).
 - Funkcie: `ABS()`, `RND(n)`, `MIN(a,b)`, `MAX(a,b)`, `MILLIS`, `MICROS`, `INKEY`, `TEMP`, `CHR$()` (v PRINT).
 - Iba celé čísla (64-bit). Kľúčové slová musia byť oddelené medzerami. Súbory `.bas` sú
   obyčajný text, dajú sa písať aj na PC.
@@ -112,9 +113,10 @@ void loop(void)
 `cd sdk && make` preloží každý `examples/*.c` na `bin/*.bin`; tie skopíruj na kartu
 (do `/RUN` pre autostart). API: `pinMode`, `digitalWrite`, `digitalRead`, `delay`,
 `delayMicroseconds`, `millis`, `micros`, `print`, `println`, `printf`, `getKey`,
-`clearScreen`, `textColor`, `actLed`, `cpuTemperature`, `stopRequested`, `exit`
+`clearScreen`, `textColor`, `actLed`, `cpuTemperature`, `stopRequested`, `exit`,
+`netSend`, `netReceive`, `netName`
 (viď `sdk/robos.h`). Program môže mať `setup()` + `loop()` alebo `main()`.
-Ukážky: `hello`, `blink`, `button`, `knight`.
+Ukážky: `hello`, `blink`, `button`, `knight`, `chat`.
 
 Programy sa nahrávajú na adresu 0x01000000 (max. 16 MB). Ak program spadne, vypíše sa
 výnimka a systém sa vráti do shellu.
@@ -122,16 +124,40 @@ výnimka a systém sa vráti do shellu.
 **GPIO má 3,3 V** (nie 5 V ako Arduino Uno), max. asi 16 mA na pin.
 LED zapájaj cez odpor 220–330 Ω, relé a motory cez tranzistor alebo modul.
 
-## Ethernet (experimentálne)
+## Sieť: správy medzi RoboOS doskami
 
-Pi 3B a Pi 2 majú ethernetový čip LAN9514 (USB zariadenie za hubom na doske).
-RoboOS má preň ovládač; zatiaľ vie nadviazať linku a posielať a prijímať surové
-ethernetové rámce. IP/UDP ešte nie je.
+Pi 3B má ethernetový čip LAN9514 (USB zariadenie za hubom na doske). Zapoj dosky do
+toho istého switchu alebo routera a môžu si posielať krátke textové správy.
+Protokol je vlastný, na surových ethernetových rámcoch (EtherType `88b5`); IP/UDP
+zatiaľ nie je, takže PC mu nerozumie.
 
-- `net` ukáže čip, MAC adresu, stav linky (rýchlosť, duplex) a počítadlá.
-- `net test [sekundy]` každú sekundu pošle broadcast rámec (EtherType `88b5`, text
-  `RoboOS hello`) a vypisuje prijaté rámce. Spusti ho na dvoch doskách v tej istej sieti
-  a každá ukáže rámce tej druhej označené `RoboOS!`.
+```
+robo@rpi3:~$ net who
+  rpi3-1c2d        b8:27:eb:11:1c:2d  seen 0 s ago
+robo@rpi3:~$ net send rpi3-1c2d hello
+delivered
+```
+
+- Každá doska má meno: predvolene `rpi3-` + koniec jej MAC adresy.
+  `net name <nové>` ho zmení a uloží do `/NAME.TXT` na SD karte.
+- `net who` sa opýta, kto je v sieti. `net send <meno> <text>` pošle správu a čaká na
+  potvrdenie (3 pokusy); `net send all <text>` ide všetkým, bez potvrdenia.
+- Správa, ktorá príde, keď si v shelli na prompte, sa vypíše ako `[NET] meno: text`.
+  Kým beží program, správy čakajú v schránke (posledných 8) na program.
+- `net` ukáže meno, čip, MAC adresu, stav linky a počítadlá. `net test [sekundy]`
+  vypisuje všetky rámce na linke, `net loop on` vracia odoslané správy späť na tú istú
+  dosku (skúšanie s jednou doskou alebo v QEMU).
+- BASIC: `NETSEND "meno", 42` alebo `NETSEND "ALL", "text"`; `NETOK` povie, či posledné
+  odoslanie prešlo; `NETAVAIL` je počet čakajúcich správ a `NETRECV` vráti najstaršiu
+  ako číslo. Príklad: jedna doska posiela tlačidlo, druhá rozsvieti LED:
+
+  ```
+  10 PINMODE 27, PULLUP : REM doska A        10 PINMODE 17, OUT : REM doska B
+  20 NETSEND "ALL", GPIO(27) : WAIT 100      20 IF NETAVAIL THEN GPIO 17, NETRECV = 0
+  30 GOTO 20                                 30 GOTO 20
+  ```
+- Programy v C: `netSend(to, text)`, `netReceive(from, text, max)`, `netName()`;
+  pozri `sdk/examples/chat.c` (`run chat` = chat medzi doskami).
 
 Nie je na Zero 2 W a 3A+ (nemajú Ethernet) ani na 3B+ (iný čip, LAN7515).
 
@@ -193,8 +219,11 @@ Systém komunikuje po anglicky.
 | `usb reset` | znovu inicializuje USB a vyhľadá zariadenia |
 | `usb test` | 8 s test klávesnice (štatistika prenosov, surové reporty) |
 | `usb debug on\|off` | podrobný výpis USB a reportov klávesnice |
-| `net` | stav Ethernetu (čip, MAC, linka, počítadlá) |
-| `net test [s]` | posiela testovacie rámce a vypisuje prijaté |
+| `net` | stav siete (meno, čip, MAC, linka, počítadlá) |
+| `net who` | zoznam RoboOS dosiek v sieti |
+| `net send <meno\|all> <text>` | pošle správu |
+| `net name [nové]` | ukáže / zmení meno tejto dosky |
+| `net test [s]`, `net loop on\|off` | test rámcov, loopback |
 | `ls [cesta]` | obsah priečinka na SD karte |
 | `cat <súbor>` | vypíše textový súbor (`"úvodzovky"` pre mená s medzerami) |
 | `edit <súbor>` | celoobrazovkový textový editor |
@@ -223,6 +252,7 @@ vyvolá výnimku; tá sa vypíše a systém sa vráti do shellu.
 | `src/console.c` | výstup na UART + HDMI, `kprintf`, farby, vstup |
 | `src/usb.c` | USB host ovládač DWC2: inicializácia, root port, DMA prenosy, split transakcie, enumerácia, huby, hot-plug |
 | `src/eth.c` | Ethernet: LAN9514 cez USB bulk endpointy, surové rámce |
+| `src/net.c` | správy medzi RoboOS doskami (mená, who, odoslanie s potvrdením, schránka) |
 | `src/kbd.c` | HID klávesnica: boot protocol, preklad scan kódov, autorepeat |
 | `src/sd.c` | ovládač SD karty (Arasan SDHCI, GPIO48-53 ALT3), čítanie aj zápis |
 | `src/fat.c` | FAT16/FAT32: dlhé mená, čítanie, zápis (mená 8.3), obe kópie FAT |

@@ -189,6 +189,7 @@ static struct var *get_var(const char *name)
 /* ---------------- expressions ---------------- */
 
 static i64 expr(void);
+static i64 net_ok;                     /* NETOK: last NETSEND went through (-1 / 0) */
 
 static i64 element(struct var *v, i64 idx, int create)
 {
@@ -247,6 +248,19 @@ static i64 primary(void)
         opt_parens(); check_break();
         if (kh == kt) return 0;
         char c = keyq[kt]; kt = (kt + 1) % 16; return (u8)c;
+    }
+    if (!strcmp(name, "NETAVAIL")) { opt_parens(); check_break(); return net_avail(); }
+    if (!strcmp(name, "NETOK"))    { opt_parens(); return net_ok; }
+    if (!strcmp(name, "NETRECV")) {                      /* oldest message as a number */
+        char t[NET_TEXT_MAX + 1];
+        opt_parens(); check_break();
+        if (net_recv(0, t, sizeof(t)) < 0) return 0;
+        const char *s = t;
+        int neg = 0; i64 v = 0;
+        while (*s == ' ') s++;
+        if (*s == '-') { neg = 1; s++; }
+        while (is_digit(*s)) v = v * 10 + (*s++ - '0');
+        return neg ? -v : v;
     }
     if (!strcmp(name, "ABS")) { expect('('); i64 v = expr(); expect(')'); return v < 0 ? -v : v; }
     if (!strcmp(name, "RND")) {
@@ -485,6 +499,36 @@ static void st_gpio(void)
     gpio_set((int)p, v != 0);
 }
 
+/* NETSEND "name" | "ALL", "text" | number */
+static void st_netsend(void)
+{
+    char to[NET_NAME_MAX], text[NET_TEXT_MAX + 1];
+    int n = 0;
+    skip();
+    if (*pc != '"') error("SYNTAX ERROR");
+    pc++;
+    while (*pc && *pc != '"') { if (n < NET_NAME_MAX - 1) to[n++] = *pc; pc++; }
+    if (*pc == '"') pc++;
+    to[n] = 0;
+    expect(',');
+    skip();
+    n = 0;
+    if (*pc == '"') {
+        pc++;
+        while (*pc && *pc != '"') { if (n < NET_TEXT_MAX) text[n++] = *pc; pc++; }
+        if (*pc == '"') pc++;
+    } else {
+        i64 v = expr();
+        char d[24]; int k = 0;
+        u64 a = v < 0 ? (u64)-v : (u64)v;
+        do { d[k++] = '0' + a % 10; a /= 10; } while (a);
+        if (v < 0) text[n++] = '-';
+        while (k) text[n++] = d[--k];
+    }
+    text[n] = 0;
+    net_ok = net_send(to, text) >= 0 ? -1 : 0;
+}
+
 static void st_wait(void)
 {
     i64 ms = expr();
@@ -551,6 +595,7 @@ static void statement(void)
     if (kw("GPIO"))    { st_gpio(); return; }
     if (kw("LED"))     { board_led(expr() != 0); return; }
     if (kw("WAIT") || kw("DELAY")) { st_wait(); return; }
+    if (kw("NETSEND")) { st_netsend(); return; }
     if (kw("RANDOMIZE")) { rng ^= timer_us() * 2654435761UL; if (!at_end()) rng ^= (u64)expr(); return; }
     if (is_alpha(*pc)) { st_let(); return; }
     error("SYNTAX ERROR");
@@ -736,6 +781,7 @@ static void help(void)
              "  GPIO:     PINMODE pin, OUT|IN|PULLUP|PULLDOWN   GPIO pin, HIGH|LOW\n"
              "            LED ON|OFF   WAIT ms   GPIO(pin)\n"
              "  Functions: ABS() RND(n) MIN(,) MAX(,) MILLIS MICROS INKEY TEMP CHR$() (in PRINT)\n"
+             "  Network:  NETSEND \"name\"|\"ALL\", \"text\"|number   NETAVAIL   NETRECV   NETOK\n"
              "  Operators: + - * / MOD  = <> < > <= >=  AND OR NOT   (integers only)\n"
              "  SAVE \"/RUN/NAME\" = start automatically after boot. Ctrl+C stops a program.\n");
 }

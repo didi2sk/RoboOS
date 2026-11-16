@@ -30,11 +30,13 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
 - RPi 3B: boot, HDMI, UART, MMU, USB keyboards **work** (incl. Apple A1243 keyboard with built-in
   HS hub, and an RGB gaming keyboard). Hot-plug works.
 - RPi 3B: SD init + FAT file writes **work** (owner tested after the CMD55 fix, v0.7).
-- Not yet verified on hardware: Ethernet (LAN9514 driver, v0.8 - QEMU has no such device, so it is
-  completely untested), program loader, BASIC, line editor / full-screen editor,
-  board detection, Zero 2 W (ACT LED GPIO29 active-low is an assumption), Pi 2 v1.2.
-- Owner also has a Zero 2 W and a Pi 2 (version v1.1 vs v1.2 not confirmed yet; v1.1 is 32-bit
-  and would need an AArch32 port). No Pi 4 / Pi 5.
+- RPi 3B: Ethernet (LAN9514, v0.8) **works**: init, link up 100 Mbit full duplex, `net test` received
+  235 frames with 0 errors and sent 10 (photo). The owner's LAN delivers VLAN-tagged frames (type 8100).
+- Not yet verified on hardware: RoboOS messages between two boards (v0.9, tested only with `net loop on`
+  in QEMU), program loader, BASIC, line editor / full-screen editor,
+  board detection, Zero 2 W (ACT LED GPIO29 active-low is an assumption).
+- Owner's boards: more than one Pi 3 (so two-board network tests are possible), a Zero 2 W, and a
+  Pi 2 that is the 32-bit v1.1 (cannot run RoboOS without an AArch32 port). No Pi 4 / Pi 5.
 - Debugging on hardware happens via photos of the HDMI screen - keep diagnostics printable on
   screen (`usb debug on`, `usb test`, `usb` tree with hub port status).
 
@@ -47,6 +49,7 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
 | `src/board.c` | revision -> board name, prompt host, ACT LED pin, `board_usb_direct()` |
 | `src/usb.c` | DWC2 host driver: polling, one channel (0), Buffer DMA, one packet per channel run |
 | `src/eth.c` | LAN9514 (0424:ec00) Ethernet: vendor control requests for registers, bulk IN/OUT for frames (`usb_bulk`), polled; `net`, `net test` |
+| `src/net.c` | RoboOS messages on raw frames (EtherType 0x88B5): names (`/NAME.TXT`), WHO/HERE, MSG with ACK + 3 tries, inbox of 8; polled every 5 ms from `con_trygetc()`; `net loop on` = loopback for QEMU tests |
 | `src/kbd.c` | HID boot keyboard, US layout, keypad, LEDs, autorepeat, runtime method lock |
 | `src/sd.c` / `src/fat.c` | Arasan SDHCI (GPIO48-53 ALT3), PIO single-block read/write; FAT16/32 with LFN read, 8.3 write |
 | `src/app.c` | loads `.bin` at 0x01000000, API table (`sdk/robos.h`), Ctrl+C via `ctx_save/ctx_restore` (`src/ctx.S`), autostart `/RUN` |
@@ -86,8 +89,8 @@ Keys: `con_getkey()` decodes escape sequences into `K_UP`... (kbd.c sends the sa
 
 ## Open ideas / next steps
 
-- verify Ethernet/BASIC/loader on real hardware; Zero 2 W and Pi 2 bring-up
-- network: owner wants RoboOS-to-RoboOS messages over raw frames first (EtherType 0x88b5), UDP/IP later
+- verify two-board messaging/BASIC/loader on real hardware; Zero 2 W bring-up
+- network: RoboOS-to-RoboOS messages over raw frames are in (owner wanted these first); UDP/IP later
 - license (MIT suggested, not chosen yet)
 - Slovak keyboard layout + font with diacritics
 - I2C / SPI / PWM in API and BASIC, interrupts + timer, multitasking, editor search / go to line / save as

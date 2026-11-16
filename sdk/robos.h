@@ -18,7 +18,7 @@ typedef unsigned long      size_t;
 
 #define APP_BASE    0x01000000UL
 #define APP_MAGIC   "ROBOAPP1"
-#define API_VERSION 1
+#define API_VERSION 2
 
 #define INPUT          0
 #define OUTPUT         1
@@ -52,6 +52,10 @@ struct robos_api {
     void     (*exit)(int code);
     /* misc */
     int      (*temperature)(void);                /* CPU temperature in milli-degrees C */
+    /* network (API version 2): messages between RoboOS boards */
+    int      (*netSend)(const char *to, const char *text);        /* "all" = everybody; 0 delivered, 1 sent to all, <0 error */
+    int      (*netReceive)(char *from, char *text, int max);      /* from[16]; returns length, -1 = nothing */
+    const char *(*netName)(void);                 /* this board's name */
 };
 
 extern const struct robos_api *api;
@@ -74,6 +78,9 @@ extern const struct robos_api *api;
 #define stopRequested()       (api->stopRequested)()
 #define exit(code)            (api->exit)(code)
 #define cpuTemperature()      (api->temperature)()
+#define netSend(to, text)      (api->netSend)(to, text)
+#define netReceive(f, t, max)  (api->netReceive)(f, t, max)
+#define netName()             (api->netName)()
 
 void *memset(void *d, int c, size_t n);
 void *memcpy(void *d, const void *s, size_t n);
