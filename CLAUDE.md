@@ -32,6 +32,8 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
 - RPi 3B: SD init + FAT file writes **work** (owner tested after the CMD55 fix, v0.7).
 - RPi 3B: Ethernet (LAN9514, v0.8) **works**: init, link up 100 Mbit full duplex, `net test` received
   235 frames with 0 errors and sent 10 (photo). The owner's LAN delivers VLAN-tagged frames (type 8100).
+- Pi 3B+ (owner has one, rev 0xa020d3): Ethernet is LAN7515/LAN7800 (0424:7800), added in v0.10 from the Linux
+  lan78xx driver - **not yet verified**. If `net` still finds nothing there, ask for a photo of `usb` (is 0424:7800 enumerated?).
 - Not yet verified on hardware: RoboOS messages between two boards (v0.9, tested only with `net loop on`
   in QEMU), program loader, BASIC, line editor / full-screen editor,
   board detection, Zero 2 W (ACT LED GPIO29 active-low is an assumption).
@@ -48,7 +50,7 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
 | `src/mmu.c` | identity map, 2 MB blocks: RAM cached, GPU RAM + 2 MB DMA block non-cached, peripherals device |
 | `src/board.c` | revision -> board name, prompt host, ACT LED pin, `board_usb_direct()` |
 | `src/usb.c` | DWC2 host driver: polling, one channel (0), Buffer DMA, one packet per channel run |
-| `src/eth.c` | LAN9514 (0424:ec00) Ethernet: vendor control requests for registers, bulk IN/OUT for frames (`usb_bulk`), polled; `net`, `net test` |
+| `src/eth.c` | Ethernet over USB: LAN9514 (0424:ec00, 3B) and LAN7515/LAN7800 (0424:7800, 3B+); vendor control requests 0xA0/0xA1 for registers, bulk IN/OUT for frames (`usb_bulk`), polled; `link_tick()` follows the link once a second (LAN78xx: MAC speed/duplex only while TX/RX are off, started on link-up) |
 | `src/net.c` | RoboOS messages on raw frames (EtherType 0x88B5): names (`/NAME.TXT`), WHO/HERE, MSG with ACK + 3 tries, inbox of 8; polled every 5 ms from `con_trygetc()`; `net loop on` = loopback for QEMU tests |
 | `src/kbd.c` | HID boot keyboard, US layout, keypad, LEDs, autorepeat, runtime method lock |
 | `src/sd.c` / `src/fat.c` | Arasan SDHCI (GPIO48-53 ALT3), PIO single-block read/write; FAT16/32 with LFN read, 8.3 write |
