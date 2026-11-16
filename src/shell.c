@@ -4,11 +4,9 @@
 #include "sd.h"
 
 #define LINE_MAX  128
-#define HIST_MAX  10
 #define ARGS_MAX  8
 
-static char hist[HIST_MAX][LINE_MAX];
-static int  hist_n;
+static struct le_hist hist;
 
 /* ---------------- helpers ---------------- */
 
@@ -333,7 +331,7 @@ static void cmd_help(int argc, char **argv)
         con_color(COL_DEFAULT); kprintf("%s\n", cmds[i].help);
     }
     con_color(COL_GRAY);
-    con_puts("  Tab = complete, Up/Down = history, Ctrl+C = cancel line\n");
+    con_puts("  Tab = complete, Up/Down = history, Left/Right/Home/End = cursor, Ctrl+C = cancel\n");
     con_color(COL_DEFAULT);
 }
 
@@ -347,12 +345,12 @@ static void prompt(void)
     con_color(COL_DEFAULT); con_puts("$ ");
 }
 
-static void erase_line(int n) { while (n--) con_puts("\b \b"); }
-
 static int complete(char *line, int len)
 {
     const struct cmd *hit = 0;
     int matches = 0;
+    if (!len || line[0] == ' ' || len >= LINE_MAX - 16) return len;
+    for (int i = 0; i < len; i++) if (line[i] == ' ') return len;   /* command name only */
     for (u32 i = 0; i < NCMDS; i++)
         if (!strncmp(cmds[i].name, line, len)) { hit = &cmds[i]; matches++; }
     if (matches == 1) {
@@ -367,51 +365,6 @@ static int complete(char *line, int len)
         line[len] = 0; con_puts(line);
     }
     return len;
-}
-
-static int read_line(char *line)
-{
-    int len = 0, hpos = hist_n;
-    for (;;) {
-        char c = (char)con_getc();
-        if (c == '\r' || c == '\n') {
-            con_putc('\n');
-            line[len] = 0;
-            return len;
-        } else if (c == 0x7F || c == '\b') {
-            if (len) { len--; erase_line(1); }
-        } else if (c == 3) {                       /* Ctrl+C */
-            con_puts("^C\n");
-            line[0] = 0;
-            return 0;
-        } else if (c == 12) {                      /* Ctrl+L */
-            con_clear(); prompt(); line[len] = 0; con_puts(line);
-        } else if (c == '\t') {
-            if (!len || line[0] == ' ') continue;
-            int sp = 0;
-            for (int i = 0; i < len; i++) if (line[i] == ' ') sp = 1;
-            if (!sp && len < LINE_MAX - 16) len = complete(line, len);
-        } else if (c == 27) {                      /* ESC [ A/B */
-            if (con_getc() != '[') continue;
-            char k = (char)con_getc();
-            int target = hpos;
-            int oldest = hist_n > HIST_MAX ? hist_n - HIST_MAX : 0;
-            if (k == 'A' && hpos > oldest) target = hpos - 1;
-            else if (k == 'B' && hpos < hist_n) target = hpos + 1;
-            if (target == hpos) continue;
-            hpos = target;
-            erase_line(len);
-            if (hpos == hist_n) len = 0;
-            else {
-                const char *h = hist[hpos % HIST_MAX];
-                for (len = 0; h[len]; len++) line[len] = h[len];
-            }
-            line[len] = 0; con_puts(line);
-        } else if (c >= 32 && c < 127 && len < LINE_MAX - 1) {
-            line[len++] = c;
-            con_putc(c);
-        }
-    }
 }
 
 static void execute(char *line)
@@ -443,14 +396,8 @@ void shell_run(void)
     char line[LINE_MAX];
     for (;;) {
         prompt();
-        int len = read_line(line);
-        if (!len) continue;
-        /* save to history (skip duplicate of the previous line) */
-        if (!hist_n || strcmp(hist[(hist_n - 1) % HIST_MAX], line)) {
-            memcpy(hist[hist_n % HIST_MAX], line, len + 1);
-            hist_n++;
-        }
-        execute(line);
+        if (line_edit(line, LINE_MAX, &hist, complete, prompt) > 0)
+            execute(line);
     }
 }
 

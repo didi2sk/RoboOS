@@ -48,7 +48,8 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
 | `src/sd.c` / `src/fat.c` | Arasan SDHCI (GPIO48-53 ALT3), PIO single-block read/write; FAT16/32 with LFN read, 8.3 write |
 | `src/app.c` | loads `.bin` at 0x01000000, API table (`sdk/robos.h`), Ctrl+C via `ctx_save/ctx_restore` (`src/ctx.S`), autostart `/RUN` |
 | `src/basic.c` | line-numbered integer BASIC, text `.BAS` files, SAVE/LOAD, GPIO statements |
-| `src/shell.c` | line editor (history, Tab), commands |
+| `src/lineedit.c` | shared line editor (shell, BASIC prompt, INPUT): cursor keys, insert/delete, history, Tab hook; redraws with `\b` + chars only |
+| `src/shell.c` | commands, Tab completion |
 | `sdk/` | program SDK: `start.S` header (`ROBOAPP1` magic at +8, image end at +16), `crt0.c`, `app.ld`, examples |
 
 Memory: kernel at 0x80000, BSS ends ~0x120000, DMA block at 0x200000 (2 MB, uncached),

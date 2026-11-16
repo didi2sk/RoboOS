@@ -103,10 +103,11 @@ static void scroll(void)
 
 static void draw_cursor(int on)
 {
+    if (!on) { draw_cell(cx, cy); return; }            /* the cursor may sit on a character */
     u8 *row = fb + (cy * 16 + 14) * pitch + cx * 8 * 4;
     for (int gy = 0; gy < 2; gy++, row += pitch)
         for (int gx = 0; gx < 8; gx++)
-            ((u32 *)row)[gx] = on ? cur_fg : bg;
+            ((u32 *)row)[gx] = cur_fg;
 }
 
 void fb_putc(char c)

@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.5**
+Aktuálna verzia: **0.6**
 
 ## Podporované dosky
 
@@ -111,8 +111,8 @@ kontrolujú každých 0,7 s). Pri štarte sa vypíše:
 
 - **Americké rozloženie (US)**. Funguje Shift, Caps Lock, Num Lock, Ctrl+C a Ctrl+L; LED Caps/Num Lock svietia podľa stavu.
 - Numerická klávesnica: číslice a `/ * - + .` pri zapnutom Num Lock (predvolené po štarte);
-  pri vypnutom Num Lock 8/2 = história hore/dole a `.` = Delete.
-- Šípky hore/dole = história, Backspace, Tab, autorepeat pri držaní klávesy.
+  pri vypnutom Num Lock 8/2 = história hore/dole, 4/6 = kurzor vľavo/vpravo, 7/1 = Home/End a `.` = Delete.
+- Šípky hore/dole = história, vľavo/vpravo/Home/End = kurzor, Backspace, Delete, Tab, autorepeat pri držaní klávesy.
 - Podporované sú klávesnice s HID *boot protocol* (prakticky všetky bežné,
   aj klávesnice so zabudovaným hubom ako Apple a herné klávesnice).
 
@@ -169,7 +169,9 @@ Systém komunikuje po anglicky.
 | `reboot` | reštart cez watchdog |
 | `halt` | zastaví systém |
 
-Editor riadku (UART aj klávesnica): **Tab** doplní príkaz, **šípky hore/dole** listujú
+Editor riadku (UART aj klávesnica, v shelli aj v BASICu): **šípky vľavo/vpravo**, **Home/End**
+(alebo Ctrl+A / Ctrl+E) hýbu kurzorom, takže sa dá vkladať a mazať kdekoľvek v riadku.
+**Tab** doplní príkaz, **šípky hore/dole** listujú
 históriu, **Ctrl+C** zruší riadok. Neplatný prístup do pamäte (napr. `mem 0xdeadbeef00`)
 vyvolá výnimku; tá sa vypíše a systém sa vráti do shellu.
 
@@ -191,7 +193,8 @@ vyvolá výnimku; tá sa vypíše a systém sa vráti do shellu.
 | `src/basic.c` | interpreter BASICu |
 | `src/ctx.S` | setjmp/longjmp na ukončenie programov |
 | `src/board.c` | rozpoznanie dosky: názov, ACT LED, zapojenie USB |
-| `src/shell.c` | editor riadku a príkazy |
+| `src/lineedit.c` | editor riadku: kurzorové klávesy, história, Tab (shell + BASIC) |
+| `src/shell.c` | príkazy |
 | `src/font.c` | font vygenerovaný z DejaVu Sans Mono (`tools/mkfont.py`) |
 
 ### Ako funguje USB

@@ -78,6 +78,14 @@ int  con_getc(void);        /* blocking: UART or USB keyboard */
 int  con_trygetc(void);     /* -1 if nothing */
 void kprintf(const char *fmt, ...);
 
+/* lineedit.c - line editor with cursor keys and history */
+#define LE_MAX  160
+#define LE_HIST 10
+struct le_hist { char line[LE_HIST][LE_MAX]; int n; };
+/* returns the length, -1 on Ctrl+C; h, complete and prompt (for Ctrl+L) may be 0 */
+int  line_edit(char *line, int max, struct le_hist *h,
+               int (*complete)(char *line, int len), void (*prompt)(void));
+
 /* gpio */
 void gpio_func(int pin, int fn);     /* 0=in 1=out 4=alt0 ... */
 void gpio_set(int pin, int on);

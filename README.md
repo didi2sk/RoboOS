@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.5**
+Current version: **0.6**
 
 ## Supported boards
 
@@ -110,8 +110,8 @@ hub ports are checked every 0.7 s). At boot you will see:
 
 - **US layout**. Shift, Caps Lock, Num Lock, Ctrl+C and Ctrl+L work; the Caps/Num Lock LEDs follow.
 - Numeric keypad: digits and `/ * - + .` with Num Lock on (default after boot);
-  with Num Lock off, 8/2 = history up/down and `.` = Delete.
-- Up/Down = history, Backspace, Tab, autorepeat when a key is held.
+  with Num Lock off, 8/2 = history up/down, 4/6 = cursor left/right, 7/1 = Home/End and `.` = Delete.
+- Up/Down = history, Left/Right/Home/End = cursor, Backspace, Delete, Tab, autorepeat when a key is held.
 - Keyboards with the HID *boot protocol* are supported (practically all common ones,
   including keyboards with a built-in hub such as Apple's, and gaming keyboards).
 
@@ -166,7 +166,9 @@ If you connect after boot, press Enter.
 | `reboot` | reboot via watchdog |
 | `halt` | halt the system |
 
-Line editor (UART and keyboard): **Tab** completes a command, **Up/Down** browse
+Line editor (UART and keyboard, in the shell and in BASIC): **Left/Right**, **Home/End**
+(or Ctrl+A / Ctrl+E) move the cursor, so you can insert and delete anywhere in the line.
+**Tab** completes a command, **Up/Down** browse
 history, **Ctrl+C** cancels the line. An invalid memory access (e.g. `mem 0xdeadbeef00`)
 raises an exception; it is printed and the system returns to the shell.
 
@@ -188,7 +190,8 @@ raises an exception; it is printed and the system returns to the shell.
 | `src/basic.c` | BASIC interpreter |
 | `src/ctx.S` | setjmp/longjmp to abort programs |
 | `src/board.c` | board detection: name, ACT LED, USB topology |
-| `src/shell.c` | line editor and commands |
+| `src/lineedit.c` | line editor: cursor keys, history, Tab hook (shell + BASIC) |
+| `src/shell.c` | commands |
 | `src/font.c` | font generated from DejaVu Sans Mono (`tools/mkfont.py`) |
 
 ### How USB works
