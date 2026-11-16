@@ -43,7 +43,7 @@
 #define CMD_SEND_CSD      0x09010000
 #define CMD_READ_SINGLE   0x11220010
 #define CMD_WRITE_SINGLE  0x18220000
-#define CMD_APP_CMD       0x37000000
+#define CMD_APP_CMD       0x37020000   /* R1 - always wait for the answer */
 #define CMD_SET_BUS_WIDTH (0x06020000 | CMD_NEED_APP)
 #define CMD_SEND_OP_COND  (0x29020000 | CMD_NEED_APP)
 #define CMD_SEND_SCR      (0x33220010 | CMD_NEED_APP)
@@ -63,6 +63,8 @@
 
 #define C0_HCTL_DWIDTH    0x00000002
 #define C1_SRST_HC        0x01000000
+#define C1_SRST_CMD       0x02000000
+#define C1_SRST_DATA      0x04000000
 #define C1_TOUNIT_MAX     0x000e0000
 #define C1_CLK_EN         0x00000004
 #define C1_CLK_STABLE     0x00000002
@@ -98,16 +100,27 @@ static int wait_status(u32 mask, u32 ms)
     return (mmio_read(INTERRUPT) & INT_ERROR_MASK) ? SD_ERROR : SD_OK;
 }
 
+/* after a failed command the CMD/DAT state machines stay busy until reset */
+static void reset_lines(void)
+{
+    mmio_write(CONTROL1, mmio_read(CONTROL1) | C1_SRST_CMD | C1_SRST_DATA);
+    u64 end = timer_us() + 100000;
+    while ((mmio_read(CONTROL1) & (C1_SRST_CMD | C1_SRST_DATA)) && timer_us() < end) ;
+}
+
 static int wait_int(u32 mask, u32 ms)
 {
     u32 m = mask | INT_ERROR_MASK, r;
     u64 end = timer_us() + (u64)ms * 1000;
     while (!(mmio_read(INTERRUPT) & m))
-        if (timer_us() > end) { dbg_int = mmio_read(INTERRUPT); return SD_TIMEOUT; }
+        if (timer_us() > end) { dbg_int = mmio_read(INTERRUPT); reset_lines(); return SD_TIMEOUT; }
     r = mmio_read(INTERRUPT);
     dbg_int = r;
-    if (r & (INT_CMD_TIMEOUT | INT_DATA_TIMEOUT)) { mmio_write(INTERRUPT, r); return SD_TIMEOUT; }
-    if (r & INT_ERROR_MASK) { mmio_write(INTERRUPT, r); return SD_ERROR; }
+    if (r & INT_ERROR_MASK) {
+        mmio_write(INTERRUPT, r);
+        reset_lines();
+        return (r & (INT_CMD_TIMEOUT | INT_DATA_TIMEOUT)) ? SD_TIMEOUT : SD_ERROR;
+    }
     mmio_write(INTERRUPT, mask);
     return SD_OK;
 }
@@ -119,7 +132,10 @@ static u32 sd_cmd(u32 code, u32 arg, int *err)
     *err = SD_OK;
     if (code & CMD_NEED_APP) {
         int e;
-        sd_cmd(CMD_APP_CMD | (rca ? CMD_RSPNS_48 : 0), rca, &e);
+        /* CMD55 answers with R1 even before the card has an address. Not waiting
+         * for that answer made the next command collide with it on real cards
+         * (INT=30000: command timeout + CRC = CMD line conflict). */
+        sd_cmd(CMD_APP_CMD, rca, &e);
         if (e) { *err = e; return 0; }
         code &= ~CMD_NEED_APP;
     }
