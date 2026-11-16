@@ -404,6 +404,36 @@ int usb_interrupt_in(struct usb_dev *d, u8 ep, u16 mps, u8 *pid, void *data, u16
     return got;
 }
 
+/*
+ * Bulk transfer in one channel run: the core sends/receives all the packets
+ * and keeps the data toggle; the next PID is read back from HCTSIZ.
+ */
+int usb_bulk(struct usb_dev *d, u8 ep, int in, u8 *pid, void *data, u32 len, u32 ms)
+{
+    if (d->tt_hub) return USB_ERR;                   /* bulk through a TT: not supported */
+    u32 mps = d->speed == USB_SPEED_HS ? 512 : 64;
+    u32 pkts = len ? (len + mps - 1) / mps : 1;
+    u32 size = in ? pkts * mps : len;
+    if (pkts > 128) return USB_ERR;
+    u32 hcchar = mps | ((u32)(ep & 0xF) << 11) | (in ? (1u << 15) : 0)
+               | (d->speed == USB_SPEED_LS ? (1u << 17) : 0)
+               | ((u32)EP_BULK << 18) | (1u << 20) | ((u32)d->addr << 22);
+    if (!in && len) memcpy(DMA_BUF, data, len);
+    u32 st = run_channel(hcchar, size | (pkts << 19) | ((u32)*pid << 29), 0, ms);
+    u32 tsz = mmio_read(HCTSIZ);
+    *pid = (tsz >> 29) & 3;                          /* toggle for the next transfer */
+    if (!st) return USB_TIMEOUT;
+    if (st & HCINT_XFERCOMPL) {
+        u32 got = in ? size - (tsz & 0x7FFFF) : len;
+        if (in) memcpy(data, DMA_BUF, got);
+        return (int)got;
+    }
+    if (st & HCINT_STALL) return USB_STALL;
+    if (st & HCINT_NAK)   return USB_NAK;
+    if (st & HCINT_AHBERR) kprintf("USB: AHB/DMA error\n");
+    return USB_ERR;
+}
+
 /* ======================= enumeration ======================= */
 
 static void get_string(struct usb_dev *d, u8 idx, char *out, int max)
@@ -502,7 +532,7 @@ static struct usb_dev *enumerate(u8 speed, struct usb_dev *parent, u8 port)
     if (d->dev_class == 9) {
         d->is_hub = 1;
         hub_init(d);
-    } else {
+    } else if (!eth_attach(d, cfg, r)) {
         kbd_attach(d, cfg, r);
     }
     return d;
@@ -641,6 +671,7 @@ static void remove_dev(struct usb_dev *d)
         if (usb_devs[i].used && usb_devs[i].parent == d->addr && &usb_devs[i] != d)
             remove_dev(&usb_devs[i]);
     if (kbd_is(d)) kbd_reset();
+    if (eth_is(d)) eth_reset();
     con_color(COL_GRAY); kprintf("\n[USB] disconnected: %s\n", d->name); con_color(COL_DEFAULT);
     d->used = 0;
 }
@@ -742,6 +773,7 @@ int usb_init(void)
     usb_nfails = 0;
     next_addr = 1;
     kbd_reset();
+    eth_reset();
 
     core_ok = 0;
     if (!core_init()) return -1;

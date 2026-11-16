@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.7**
+Current version: **0.8**
 
 ## Supported boards
 
@@ -121,6 +121,19 @@ exception and returns to the shell.
 **GPIO is 3.3 V** (not 5 V like an Arduino Uno), max about 16 mA per pin.
 Use a 220-330 Ω resistor for LEDs and a transistor/module for relays and motors.
 
+## Ethernet (experimental)
+
+The Pi 3B and Pi 2 have a LAN9514 Ethernet chip (a USB device behind the onboard hub).
+RoboOS has a driver for it; so far it can bring the link up and send and receive raw
+Ethernet frames. There is no IP/UDP yet.
+
+- `net` shows the chip, MAC address, link state (speed, duplex) and counters.
+- `net test [seconds]` sends a broadcast frame (EtherType `88b5`, text `RoboOS hello`)
+  every second and lists the frames that arrive. Run it on two boards in the same network
+  and each one shows the other's frames marked `RoboOS!`.
+
+Not available on the Zero 2 W and 3A+ (no Ethernet) and on the 3B+ (different chip, LAN7515).
+
 ## USB keyboard
 
 You can plug the keyboard in before power-on or while the system is running (hot-plug:
@@ -177,6 +190,8 @@ If you connect after boot, press Enter.
 | `usb reset` | reinitialize USB and rescan devices |
 | `usb test` | 8 s keyboard test (transfer statistics, raw reports) |
 | `usb debug on\|off` | verbose USB and keyboard report logging |
+| `net` | Ethernet status (chip, MAC, link, counters) |
+| `net test [s]` | send test frames and list received ones |
 | `ls [path]` | list a directory on the SD card |
 | `cat <file>` | print a text file (`"quotes"` for names with spaces) |
 | `edit <file>` | full-screen text editor |
@@ -204,6 +219,7 @@ raises an exception; it is printed and the system returns to the shell.
 | `src/fb.c` | HDMI framebuffer 1024×768, text console with an 8×16 font |
 | `src/console.c` | output to UART + HDMI, `kprintf`, colors, input |
 | `src/usb.c` | DWC2 USB host driver: init, root port, DMA transfers, split transactions, enumeration, hubs, hot-plug |
+| `src/eth.c` | Ethernet: LAN9514 over USB bulk endpoints, raw frames |
 | `src/kbd.c` | HID keyboard: boot protocol, scan code translation, autorepeat |
 | `src/sd.c` | SD card driver (Arasan SDHCI, GPIO48-53 ALT3), read + write |
 | `src/fat.c` | FAT16/FAT32: long names, read, write (8.3 names), both FAT copies |

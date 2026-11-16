@@ -205,6 +205,86 @@ static void cmd_usb(int argc, char **argv)
     if (kbd_present()) kprintf("keyboard: %s, mode %s\n", kbd_name(), kbd_mode());
 }
 
+/* ---------------- network ---------------- */
+
+static void put_mac(const u8 *m)
+{
+    kprintf("%02x:%02x:%02x:%02x:%02x:%02x", m[0], m[1], m[2], m[3], m[4], m[5]);
+}
+
+static void net_status(void)
+{
+    int code, full = 0; u32 hc;
+    const char *bad = eth_error(&code, &hc);
+    kprintf("chip:  LAN95xx id %08x\n", eth_chip());
+    if (bad) { kprintf("init:  FAILED at %s (%d, HCINT %x)\n", bad, code, hc); return; }
+    kprintf("MAC:   "); put_mac(eth_mac()); con_putc('\n');
+    int sp = eth_link(&full);
+    if (sp) kprintf("link:  up, %d Mbit %s duplex\n", sp, full ? "full" : "half");
+    else    kprintf("link:  down (cable? auto-negotiation takes a few seconds)\n");
+    kprintf("stats: rx %u ok %u bad %u err, tx %u ok %u err",
+            eth_stat.rx_ok, eth_stat.rx_bad, eth_stat.rx_err, eth_stat.tx_ok, eth_stat.tx_err);
+    if (eth_stat.rx_err || eth_stat.tx_err)
+        kprintf(" (last %d, HCINT %x)", eth_stat.last_err, eth_stat.last_hcint);
+    con_putc('\n');
+}
+
+/* send a broadcast test frame every second and list what arrives */
+static void net_test(u32 secs)
+{
+    static u8 f[1600];
+    u8 tx[64];
+    u32 shown = 0, sent = 0;
+    u64 end = timer_us() + (u64)secs * 1000000, next = 0;
+
+    con_color(COL_YELLOW);
+    kprintf("  Network test %u s: sending a broadcast frame (type 88b5) every second,\n"
+            "  listing received frames. Ctrl+C stops.\n", secs);
+    con_color(COL_DEFAULT);
+    while (timer_us() < end) {
+        if (timer_us() >= next) {
+            next = timer_us() + 1000000;
+            memset(tx, 0, sizeof(tx));
+            memset(tx, 0xFF, 6);
+            memcpy(tx + 6, eth_mac(), 6);
+            tx[12] = 0x88; tx[13] = 0xB5;                /* local experimental EtherType */
+            memcpy(tx + 14, "RoboOS hello", 12);
+            tx[27] = (u8)sent++;
+            eth_send(tx, 60);
+        }
+        int n = eth_recv(f, sizeof(f));
+        if (n >= 14) {
+            if (shown < 24) {
+                kprintf("  %4u B  ", n); put_mac(f + 6); kprintf(" -> "); put_mac(f);
+                kprintf("  type %02x%02x", f[12], f[13]);
+                if (f[12] == 0x88 && f[13] == 0xB5) { con_color(COL_GREEN); kprintf("  RoboOS!"); con_color(COL_DEFAULT); }
+                con_putc('\n');
+            } else if (shown == 24) {
+                kprintf("  ... (more frames are only counted)\n");
+            }
+            shown++;
+        }
+        if (con_trygetc() == 3) break;
+    }
+    net_status();
+    kprintf("       rx polls with no data: %u\n", eth_stat.rx_empty);
+}
+
+static void cmd_net(int argc, char **argv)
+{
+    if (!eth_present()) { kprintf("no Ethernet chip found (LAN9514 on Pi 3B / Pi 2 only)\n"); return; }
+    if (argc > 1 && !strcmp(argv[1], "test")) {
+        u64 s = 10;
+        if (argc > 2) parse_num(argv[2], &s);
+        if (eth_error(0, 0)) { net_status(); return; }
+        net_test((u32)s);
+    } else if (argc > 1) {
+        need("net [test [seconds]]");
+    } else {
+        net_status();
+    }
+}
+
 /* ---------------- SD card ---------------- */
 
 static int need_fs(void)
@@ -313,6 +393,7 @@ static const struct cmd cmds[] = {
     { "gpio",   "[pin op]",             "pin states / in out hi lo toggle read", cmd_gpio },
     { "mem",    "<addr> [length]",      "memory hexdump",                  cmd_mem    },
     { "usb",    "[reset|test|debug]",   "USB devices, keyboard test",      cmd_usb    },
+    { "net",    "[test [s]]",           "Ethernet status / frame test",    cmd_net    },
     { "ls",     "[path]",               "list a directory on the SD card", cmd_ls     },
     { "cat",    "<file>",               "print a text file",               cmd_cat    },
     { "edit",   "<file>",               "full-screen text editor",         cmd_edit   },

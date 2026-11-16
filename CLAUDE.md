@@ -29,7 +29,9 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
 
 - RPi 3B: boot, HDMI, UART, MMU, USB keyboards **work** (incl. Apple A1243 keyboard with built-in
   HS hub, and an RGB gaming keyboard). Hot-plug works.
-- Not yet verified on hardware: SD card driver + FAT read/write, program loader, BASIC (v0.4),
+- RPi 3B: SD init + FAT file writes **work** (owner tested after the CMD55 fix, v0.7).
+- Not yet verified on hardware: Ethernet (LAN9514 driver, v0.8 - QEMU has no such device, so it is
+  completely untested), program loader, BASIC, line editor / full-screen editor,
   board detection, Zero 2 W (ACT LED GPIO29 active-low is an assumption), Pi 2 v1.2.
 - Owner also has a Zero 2 W and a Pi 2 (version v1.1 vs v1.2 not confirmed yet; v1.1 is 32-bit
   and would need an AArch32 port). No Pi 4 / Pi 5.
@@ -44,6 +46,7 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
 | `src/mmu.c` | identity map, 2 MB blocks: RAM cached, GPU RAM + 2 MB DMA block non-cached, peripherals device |
 | `src/board.c` | revision -> board name, prompt host, ACT LED pin, `board_usb_direct()` |
 | `src/usb.c` | DWC2 host driver: polling, one channel (0), Buffer DMA, one packet per channel run |
+| `src/eth.c` | LAN9514 (0424:ec00) Ethernet: vendor control requests for registers, bulk IN/OUT for frames (`usb_bulk`), polled; `net`, `net test` |
 | `src/kbd.c` | HID boot keyboard, US layout, keypad, LEDs, autorepeat, runtime method lock |
 | `src/sd.c` / `src/fat.c` | Arasan SDHCI (GPIO48-53 ALT3), PIO single-block read/write; FAT16/32 with LFN read, 8.3 write |
 | `src/app.c` | loads `.bin` at 0x01000000, API table (`sdk/robos.h`), Ctrl+C via `ctx_save/ctx_restore` (`src/ctx.S`), autostart `/RUN` |
@@ -83,7 +86,8 @@ Keys: `con_getkey()` decodes escape sequences into `K_UP`... (kbd.c sends the sa
 
 ## Open ideas / next steps
 
-- verify SD/BASIC/loader on real hardware; Zero 2 W and Pi 2 bring-up
+- verify Ethernet/BASIC/loader on real hardware; Zero 2 W and Pi 2 bring-up
+- network: owner wants RoboOS-to-RoboOS messages over raw frames first (EtherType 0x88b5), UDP/IP later
 - license (MIT suggested, not chosen yet)
 - Slovak keyboard layout + font with diacritics
 - I2C / SPI / PWM in API and BASIC, interrupts + timer, multitasking, editor search / go to line / save as
