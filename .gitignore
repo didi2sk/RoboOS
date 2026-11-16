@@ -1,0 +1,7 @@
+# build output
+build/
+kernel8.elf
+/kernel8.img
+sd.img
+sdk/build/
+sdk/bin/
