@@ -280,7 +280,7 @@ static void cmd_sd(int argc, char **argv)
 {
     if (argc > 1 && !strcmp(argv[1], "init")) {
         int e = sd_init();
-        if (e) { kprintf("SD init failed: %s\n", sd_error(e)); return; }
+        if (e) { kprintf("SD init failed: "); sd_print_fail(e); return; }
         int m = fat_mount();
         if (m) kprintf("card OK, but no FAT16/FAT32 partition (%d)\n", m);
     }

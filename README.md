@@ -39,6 +39,8 @@ or GPIO47 (Pi 2 v1.2).
 ## Programs and autostart
 
 The SD card is also RoboOS's disk (FAT32 or FAT16, read and write).
+RoboOS has its own SD driver (the firmware only loads `kernel8.img` and then steps aside).
+If the card is not found, `sd init` shows which step failed and the controller registers.
 
 - Everything in **`/RUN`** (`*.bin` and `*.bas`) starts automatically after boot,
   in alphabetical order. Press any key within 2 s to skip the autostart.

@@ -60,7 +60,8 @@ void kernel_main(void)
         kprintf("SD card: %s, %u MB\n", fat_type(), (u32)(fat_volume_bytes() >> 20));
     } else {
         status(0);
-        kprintf("SD card: %s\n", sde ? sd_error(sde) : "no FAT16/FAT32 partition");
+        con_puts("SD card: ");
+        if (sde) sd_print_fail(sde); else con_puts("no FAT16/FAT32 partition\n");
     }
     kprintf("  ARM memory: %u MB, booted in %u ms\n\n",
             (u32)(ram_end >> 20), (u32)(timer_us() / 1000));

@@ -40,6 +40,8 @@ alebo na GPIO47 (Pi 2 v1.2).
 ## Programy a autostart
 
 SD karta je zároveň disk RoboOS (FAT32 alebo FAT16, čítanie aj zápis).
+RoboOS má vlastný ovládač SD (firmvér len načíta `kernel8.img` a potom ustúpi).
+Ak sa karta nenájde, `sd init` ukáže, ktorý krok zlyhal, a registre radiča.
 
 - Všetko v **`/RUN`** (`*.bin` a `*.bas`) sa po štarte spustí samo, v abecednom poradí.
   Stlačením ľubovoľnej klávesy do 2 s sa autostart preskočí.

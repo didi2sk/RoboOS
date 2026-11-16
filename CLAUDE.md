@@ -64,6 +64,8 @@ programs at 0x01000000-0x02000000.
 - **Hub ports must be powered one at a time** (with pgood delay); powering all ports of the Apple keyboard hub at once made it drop off the bus.
 - Gaming keyboards attach late (>500 ms after port power) -> hot-plug polling of hub ports every 0.7 s, plus the root port on boards without an onboard hub.
 - HID init like a PC: GET_DESCRIPTOR(report), SET_PROTOCOL(boot), SET_IDLE(0), SET_REPORT(LEDs) - some keyboards stay dark/silent otherwise.
+- **SD on WiFi boards**: firmware leaves GPIO34-39 on ALT3 (Arasan -> WiFi chip); set them to input before
+  routing GPIO48-53 to ALT3, or the controller never sees the card (`sd init` timed out on hardware; fix not yet confirmed there).
 - In BASIC, compute an array index (which may allocate) before reading `v->arr` (evaluation-order bug fixed once).
 - The font covers ASCII 32-126 only - keep all on-screen strings ASCII.
 - Keep exceptions inside programs recoverable: exception stack is separate so `app_crashed()` can longjmp back.
