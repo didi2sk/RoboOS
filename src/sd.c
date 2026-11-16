@@ -3,7 +3,7 @@
  *
  * The firmware routes the SD slot (GPIO48-53) to the SDHOST controller;
  * we switch the pins to ALT3 so the card is driven by the Arasan controller.
- * PIO mode (no DMA), 512-byte single-block reads.
+ * PIO mode (no DMA), 512-byte single-block reads and writes.
  * Based on the well-known bare-metal sequence (bztsrc raspi3-tutorial, SD spec).
  */
 #include "kernel.h"

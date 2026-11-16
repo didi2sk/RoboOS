@@ -55,6 +55,7 @@ extern int usb_debug;
 void kbd_reset(void);
 int  kbd_attach(struct usb_dev *d, const u8 *cfg, int cfglen);
 int  kbd_present(void);
+int  kbd_is(const struct usb_dev *d);   /* is d the active keyboard? */
 const char *kbd_name(void);
 void kbd_poll(void);
 int  kbd_getc(void);              /* -1 if nothing */

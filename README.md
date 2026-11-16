@@ -8,6 +8,8 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
+Current version: **0.5**
+
 ## Supported boards
 
 One `kernel8.img` runs on every board with the 64-bit BCM2837 chip; the board is

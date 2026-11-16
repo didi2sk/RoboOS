@@ -640,7 +640,7 @@ static void remove_dev(struct usb_dev *d)
     for (int i = 0; i < USB_MAX_DEVS; i++)                   /* najprv deti */
         if (usb_devs[i].used && usb_devs[i].parent == d->addr && &usb_devs[i] != d)
             remove_dev(&usb_devs[i]);
-    if (kbd_present() && !strcmp(kbd_name(), d->name) && !d->is_hub) kbd_reset();
+    if (kbd_is(d)) kbd_reset();
     con_color(COL_GRAY); kprintf("\n[USB] disconnected: %s\n", d->name); con_color(COL_DEFAULT);
     d->used = 0;
 }

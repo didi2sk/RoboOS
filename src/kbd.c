@@ -29,6 +29,7 @@ static void kbd_unlock(void);
 void kbd_reset(void) { kd = 0; k_use_getreport = 0; k_errors = 0; rep_key = 0; qh = qt = 0; kbd_unlock(); }
 
 int kbd_present(void) { return kd != 0; }
+int kbd_is(const struct usb_dev *d) { return kd && kd == d; }
 const char *kbd_name(void) { return kd ? kd->name : ""; }
 const char *kbd_mode(void);
 

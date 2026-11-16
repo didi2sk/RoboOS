@@ -1,5 +1,5 @@
 /*
- * Read-only FAT16 / FAT32 with long file names.
+ * FAT16 / FAT32: read with long file names, write whole files with 8.3 names.
  * Supports an MBR partition table (first FAT partition) or a bare FAT volume.
  */
 #include "kernel.h"
