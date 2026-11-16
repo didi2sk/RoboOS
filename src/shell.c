@@ -272,15 +272,51 @@ static void net_test(u32 secs)
 
 static void cmd_net(int argc, char **argv)
 {
-    if (!eth_present()) { kprintf("no Ethernet chip found (LAN9514 on Pi 3B / Pi 2 only)\n"); return; }
+    static const char *usage = "net [who | send <name|all> <text> | name [new] | loop on|off | test [s]]";
+    if (argc > 1 && !strcmp(argv[1], "loop")) {
+        net_loop(!(argc > 2 && !strcmp(argv[2], "off")));
+        kprintf("loopback %s\n", net_looping() ? "on: messages you send come back to this board" : "off");
+        return;
+    }
+    if (argc > 1 && !strcmp(argv[1], "name")) {
+        if (argc > 2) {
+            int r = net_set_name(argv[2]);
+            if (r < 0) { kprintf("bad name: 1-15 letters, digits, - or _ (not 'all')\n"); return; }
+            if (r > 0) kprintf("(not saved: no SD card or write error)\n");
+        }
+        kprintf("name:  %s\n", net_name());
+        return;
+    }
+    if (argc > 1 && !strcmp(argv[1], "who")) { net_who(); return; }
+    if (argc > 1 && !strcmp(argv[1], "send")) {
+        char text[NET_TEXT_MAX + 1];
+        int n = 0;
+        if (argc < 4) { need(usage); return; }
+        for (int i = 3; i < argc; i++) {
+            if (i > 3 && n < NET_TEXT_MAX) text[n++] = ' ';
+            for (const char *s = argv[i]; *s && n < NET_TEXT_MAX; s++) text[n++] = *s;
+        }
+        text[n] = 0;
+        int r = net_send(argv[2], text);
+        if (r < 0) con_color(COL_RED);
+        kprintf("%s\n", net_error(r));
+        con_color(COL_DEFAULT);
+        return;
+    }
+    if (!eth_present()) {
+        kprintf("no Ethernet chip found (LAN9514 on Pi 3B / Pi 2 only)\n");
+        kprintf("name:  %s%s\n", net_name(), net_looping() ? "  (loopback on)" : "");
+        return;
+    }
     if (argc > 1 && !strcmp(argv[1], "test")) {
         u64 s = 10;
         if (argc > 2) parse_num(argv[2], &s);
         if (eth_error(0, 0)) { net_status(); return; }
         net_test((u32)s);
     } else if (argc > 1) {
-        need("net [test [seconds]]");
+        need(usage);
     } else {
+        kprintf("name:  %s%s\n", net_name(), net_looping() ? "  (loopback on)" : "");
         net_status();
     }
 }
@@ -393,7 +429,7 @@ static const struct cmd cmds[] = {
     { "gpio",   "[pin op]",             "pin states / in out hi lo toggle read", cmd_gpio },
     { "mem",    "<addr> [length]",      "memory hexdump",                  cmd_mem    },
     { "usb",    "[reset|test|debug]",   "USB devices, keyboard test",      cmd_usb    },
-    { "net",    "[test [s]]",           "Ethernet status / frame test",    cmd_net    },
+    { "net",    "[who|send|name|test]", "network: status, messages",       cmd_net    },
     { "ls",     "[path]",               "list a directory on the SD card", cmd_ls     },
     { "cat",    "<file>",               "print a text file",               cmd_cat    },
     { "edit",   "<file>",               "full-screen text editor",         cmd_edit   },
@@ -484,8 +520,10 @@ void shell_run(void)
     char line[LINE_MAX];
     for (;;) {
         prompt();
-        if (line_edit(line, LINE_MAX, &hist, complete, prompt) > 0)
-            execute(line);
+        net_notify(1);                 /* messages show up while waiting at the prompt */
+        int len = line_edit(line, LINE_MAX, &hist, complete, prompt);
+        net_notify(0);
+        if (len > 0) execute(line);
     }
 }
 

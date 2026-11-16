@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.8**
+Current version: **0.9**
 
 ## Supported boards
 
@@ -65,6 +65,7 @@ robo@rpi3:~$ basic
 - Statements: `PRINT`/`?`, `INPUT`, `LET`, `IF..THEN..ELSE`, `GOTO`, `GOSUB`/`RETURN`,
   `FOR..TO..STEP`/`NEXT`, `DIM`, `END`, `REM`/`'`, `CLS`, `RANDOMIZE`; separate statements with `:`.
 - GPIO: `PINMODE pin, OUT|IN|PULLUP|PULLDOWN`, `GPIO pin, HIGH|LOW`, `GPIO(pin)`, `LED ON|OFF`, `WAIT ms`.
+- Network: `NETSEND`, `NETOK`, `NETAVAIL`, `NETRECV` (see the network section).
 - Functions: `ABS()`, `RND(n)`, `MIN(a,b)`, `MAX(a,b)`, `MILLIS`, `MICROS`, `INKEY`, `TEMP`, `CHR$()` (in PRINT).
 - Integers only (64-bit). Keywords must be separated by spaces. `.bas` files are plain text,
   so you can also write them on a PC.
@@ -111,9 +112,10 @@ void loop(void)
 `cd sdk && make` turns every `examples/*.c` into `bin/*.bin`; copy those to the card
 (`/RUN` for autostart). API: `pinMode`, `digitalWrite`, `digitalRead`, `delay`,
 `delayMicroseconds`, `millis`, `micros`, `print`, `println`, `printf`, `getKey`,
-`clearScreen`, `textColor`, `actLed`, `cpuTemperature`, `stopRequested`, `exit`
+`clearScreen`, `textColor`, `actLed`, `cpuTemperature`, `stopRequested`, `exit`,
+`netSend`, `netReceive`, `netName`
 (see `sdk/robos.h`). A program can use `setup()` + `loop()` or `main()`.
-Examples: `hello`, `blink`, `button`, `knight`.
+Examples: `hello`, `blink`, `button`, `knight`, `chat`.
 
 Programs are loaded at 0x01000000 (max 16 MB). A crash inside a program prints the
 exception and returns to the shell.
@@ -121,16 +123,40 @@ exception and returns to the shell.
 **GPIO is 3.3 V** (not 5 V like an Arduino Uno), max about 16 mA per pin.
 Use a 220-330 Ω resistor for LEDs and a transistor/module for relays and motors.
 
-## Ethernet (experimental)
+## Network: messages between RoboOS boards
 
-The Pi 3B and Pi 2 have a LAN9514 Ethernet chip (a USB device behind the onboard hub).
-RoboOS has a driver for it; so far it can bring the link up and send and receive raw
-Ethernet frames. There is no IP/UDP yet.
+The Pi 3B has a LAN9514 Ethernet chip (a USB device behind the onboard hub). Plug the
+boards into the same switch or router and they can send each other short text messages.
+The protocol is RoboOS's own, on raw Ethernet frames (EtherType `88b5`); there is no
+IP/UDP yet, so a PC does not understand it.
 
-- `net` shows the chip, MAC address, link state (speed, duplex) and counters.
-- `net test [seconds]` sends a broadcast frame (EtherType `88b5`, text `RoboOS hello`)
-  every second and lists the frames that arrive. Run it on two boards in the same network
-  and each one shows the other's frames marked `RoboOS!`.
+```
+robo@rpi3:~$ net who
+  rpi3-1c2d        b8:27:eb:11:1c:2d  seen 0 s ago
+robo@rpi3:~$ net send rpi3-1c2d hello
+delivered
+```
+
+- Every board has a name: by default `rpi3-` + the end of its MAC address.
+  `net name <new>` changes it and saves it to `/NAME.TXT` on the SD card.
+- `net who` asks who is on the network. `net send <name> <text>` sends a message and
+  waits for the confirmation (3 tries); `net send all <text>` goes to everybody, unconfirmed.
+- A message that arrives while you are at the shell prompt is printed as `[NET] name: text`.
+  While a program runs, messages wait in an inbox (the last 8) for the program.
+- `net` shows the name, chip, MAC address, link state and counters. `net test [seconds]`
+  lists all frames on the wire, `net loop on` makes sent messages come back to the same
+  board (try things with one board, or in QEMU).
+- BASIC: `NETSEND "name", 42` or `NETSEND "ALL", "text"`; `NETOK` tells if the last send
+  went through; `NETAVAIL` is the number of waiting messages and `NETRECV` returns the
+  oldest one as a number. Example: one board sends its button, the other lights an LED:
+
+  ```
+  10 PINMODE 27, PULLUP : REM board A        10 PINMODE 17, OUT : REM board B
+  20 NETSEND "ALL", GPIO(27) : WAIT 100      20 IF NETAVAIL THEN GPIO 17, NETRECV = 0
+  30 GOTO 20                                 30 GOTO 20
+  ```
+- C programs: `netSend(to, text)`, `netReceive(from, text, max)`, `netName()`;
+  see `sdk/examples/chat.c` (`run chat` = a chat between the boards).
 
 Not available on the Zero 2 W and 3A+ (no Ethernet) and on the 3B+ (different chip, LAN7515).
 
@@ -190,8 +216,11 @@ If you connect after boot, press Enter.
 | `usb reset` | reinitialize USB and rescan devices |
 | `usb test` | 8 s keyboard test (transfer statistics, raw reports) |
 | `usb debug on\|off` | verbose USB and keyboard report logging |
-| `net` | Ethernet status (chip, MAC, link, counters) |
-| `net test [s]` | send test frames and list received ones |
+| `net` | network status (name, chip, MAC, link, counters) |
+| `net who` | list the RoboOS boards on the network |
+| `net send <name\|all> <text>` | send a message |
+| `net name [new]` | show / change this board's name |
+| `net test [s]`, `net loop on\|off` | frame test, loopback |
 | `ls [path]` | list a directory on the SD card |
 | `cat <file>` | print a text file (`"quotes"` for names with spaces) |
 | `edit <file>` | full-screen text editor |
@@ -220,6 +249,7 @@ raises an exception; it is printed and the system returns to the shell.
 | `src/console.c` | output to UART + HDMI, `kprintf`, colors, input |
 | `src/usb.c` | DWC2 USB host driver: init, root port, DMA transfers, split transactions, enumeration, hubs, hot-plug |
 | `src/eth.c` | Ethernet: LAN9514 over USB bulk endpoints, raw frames |
+| `src/net.c` | messages between RoboOS boards (names, who, send with confirmation, inbox) |
 | `src/kbd.c` | HID keyboard: boot protocol, scan code translation, autorepeat |
 | `src/sd.c` | SD card driver (Arasan SDHCI, GPIO48-53 ALT3), read + write |
 | `src/fat.c` | FAT16/FAT32: long names, read, write (8.3 names), both FAT copies |

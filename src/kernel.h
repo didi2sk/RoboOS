@@ -118,6 +118,21 @@ int  app_resolve(const char *name, char *out, int max);
 void app_autostart(void);
 void app_crashed(void);
 
+/* net.c - RoboOS messages over raw Ethernet frames */
+#define NET_NAME_MAX 16
+#define NET_TEXT_MAX 200
+void net_poll(void);                    /* called from the console idle loop */
+void net_notify(int on);                /* print incoming messages right away (shell prompt) */
+const char *net_name(void);
+int  net_set_name(const char *name);    /* 0 = saved to /NAME.TXT, 1 = set only, -1 = bad name */
+int  net_send(const char *to, const char *text);   /* 0 delivered, 1 sent to all, <0 error */
+const char *net_error(int e);
+int  net_recv(char *from, char *text, int max);    /* text length, -1 = no message */
+int  net_avail(void);
+void net_who(void);                     /* ask who is there and print the answers */
+void net_loop(int on);                  /* loopback: sent frames come back (self-test) */
+int  net_looping(void);
+
 /* edit.c */
 void editor_main(const char *path);
 

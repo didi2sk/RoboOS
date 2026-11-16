@@ -92,6 +92,7 @@ int con_trygetc(void)
     if (uart_has_char()) return (u8)uart_getc();
     kbd_poll();
     usb_hotplug();
+    net_poll();
     return kbd_getc();
 }
 

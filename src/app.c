@@ -116,6 +116,9 @@ static const struct robos_api api_table = {
     .stopRequested = a_stop,
     .exit = a_exit,
     .temperature = a_temp,
+    .netSend = net_send,
+    .netReceive = net_recv,
+    .netName = net_name,
 };
 
 /* called from the exception handler: a crash inside a program ends the program */
