@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.7**
+Aktuálna verzia: **0.8**
 
 ## Podporované dosky
 
@@ -122,6 +122,19 @@ výnimka a systém sa vráti do shellu.
 **GPIO má 3,3 V** (nie 5 V ako Arduino Uno), max. asi 16 mA na pin.
 LED zapájaj cez odpor 220–330 Ω, relé a motory cez tranzistor alebo modul.
 
+## Ethernet (experimentálne)
+
+Pi 3B a Pi 2 majú ethernetový čip LAN9514 (USB zariadenie za hubom na doske).
+RoboOS má preň ovládač; zatiaľ vie nadviazať linku a posielať a prijímať surové
+ethernetové rámce. IP/UDP ešte nie je.
+
+- `net` ukáže čip, MAC adresu, stav linky (rýchlosť, duplex) a počítadlá.
+- `net test [sekundy]` každú sekundu pošle broadcast rámec (EtherType `88b5`, text
+  `RoboOS hello`) a vypisuje prijaté rámce. Spusti ho na dvoch doskách v tej istej sieti
+  a každá ukáže rámce tej druhej označené `RoboOS!`.
+
+Nie je na Zero 2 W a 3A+ (nemajú Ethernet) ani na 3B+ (iný čip, LAN7515).
+
 ## USB klávesnica
 
 Klávesnicu môžeš zapojiť pred zapnutím aj počas behu (hot-plug: porty hubov sa
@@ -180,6 +193,8 @@ Systém komunikuje po anglicky.
 | `usb reset` | znovu inicializuje USB a vyhľadá zariadenia |
 | `usb test` | 8 s test klávesnice (štatistika prenosov, surové reporty) |
 | `usb debug on\|off` | podrobný výpis USB a reportov klávesnice |
+| `net` | stav Ethernetu (čip, MAC, linka, počítadlá) |
+| `net test [s]` | posiela testovacie rámce a vypisuje prijaté |
 | `ls [cesta]` | obsah priečinka na SD karte |
 | `cat <súbor>` | vypíše textový súbor (`"úvodzovky"` pre mená s medzerami) |
 | `edit <súbor>` | celoobrazovkový textový editor |
@@ -207,6 +222,7 @@ vyvolá výnimku; tá sa vypíše a systém sa vráti do shellu.
 | `src/fb.c` | HDMI framebuffer 1024×768, textová konzola s fontom 8×16 |
 | `src/console.c` | výstup na UART + HDMI, `kprintf`, farby, vstup |
 | `src/usb.c` | USB host ovládač DWC2: inicializácia, root port, DMA prenosy, split transakcie, enumerácia, huby, hot-plug |
+| `src/eth.c` | Ethernet: LAN9514 cez USB bulk endpointy, surové rámce |
 | `src/kbd.c` | HID klávesnica: boot protocol, preklad scan kódov, autorepeat |
 | `src/sd.c` | ovládač SD karty (Arasan SDHCI, GPIO48-53 ALT3), čítanie aj zápis |
 | `src/fat.c` | FAT16/FAT32: dlhé mená, čítanie, zápis (mená 8.3), obe kópie FAT |
