@@ -371,15 +371,7 @@ static void st_print(void)
 
 static void read_input_line(char *buf, int max)
 {
-    int n = 0;
-    for (;;) {
-        int c = con_getc();
-        if (c == 3) { kprintf("^C\n"); running = 0; ctx_restore(&err_ctx, 1); }
-        if (c == '\r' || c == '\n') { con_putc('\n'); break; }
-        if ((c == 0x7F || c == '\b') && n) { n--; con_puts("\b \b"); continue; }
-        if (c >= 32 && c < 127 && n < max - 1) { buf[n++] = (char)c; con_putc((char)c); }
-    }
-    buf[n] = 0;
+    if (line_edit(buf, max, 0, 0, 0) < 0) { running = 0; ctx_restore(&err_ctx, 1); }
 }
 
 static void assign(struct var *v, int has_index, i64 idx, i64 val)
@@ -816,17 +808,8 @@ void basic_main(const char *file)
     for (;;) {
         if (ctx_save(&err_ctx)) { running = 0; open_line = 0; continue; }
         con_color(COL_GREEN); con_puts("] "); con_color(COL_DEFAULT);
-        int n = 0;
-        for (;;) {
-            int c = con_getc();
-            if (c == 3) { con_puts("^C\n"); n = -1; break; }
-            if (c == '\r' || c == '\n') { con_putc('\n'); break; }
-            if (c == 27) { con_getc(); con_getc(); continue; }      /* ignore arrows */
-            if ((c == 0x7F || c == '\b') && n) { n--; con_puts("\b \b"); continue; }
-            if (c >= 32 && c < 127 && n < LINE_LEN - 1) { inbuf[n++] = (char)c; con_putc((char)c); }
-        }
-        if (n <= 0) continue;
-        inbuf[n] = 0;
+        static struct le_hist hist;
+        if (line_edit(inbuf, LINE_LEN, &hist, 0, 0) <= 0) continue;
         open_line = 0;
         int bye = immediate();
         if (open_line) { con_putc('\n'); open_line = 0; }

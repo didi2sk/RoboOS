@@ -102,8 +102,11 @@ static void emit(u8 key, u8 mods)
     case 0x29: return;                                       /* ignore Esc */
     case 0x52: push(27); push('['); push('A'); return;       /* up */
     case 0x51: push(27); push('['); push('B'); return;       /* down */
-    case 0x4F: case 0x50: return;                            /* left/right not yet */
-    case 0x4C: c = 0x7F; break;                              /* Delete -> like Backspace */
+    case 0x4F: push(27); push('['); push('C'); return;       /* right */
+    case 0x50: push(27); push('['); push('D'); return;       /* left */
+    case 0x4A: push(27); push('['); push('H'); return;       /* Home */
+    case 0x4D: push(27); push('['); push('F'); return;       /* End */
+    case 0x4C: push(27); push('['); push('3'); push('~'); return;   /* Delete */
     }
     if (key >= 0x54 && key <= 0x63) {                       /* numeric keypad */
         static const char kp[] = "/*-+\n1234567890.";
@@ -112,7 +115,11 @@ static void emit(u8 key, u8 mods)
         } else switch (key) {                                /* Num Lock off: navigation */
             case 0x60: push(27); push('['); push('A'); return;   /* KP8 = up */
             case 0x5A: push(27); push('['); push('B'); return;   /* KP2 = down */
-            case 0x63: c = 0x7F; break;                          /* KP. = Delete */
+            case 0x5C: push(27); push('['); push('D'); return;   /* KP4 = left */
+            case 0x5E: push(27); push('['); push('C'); return;   /* KP6 = right */
+            case 0x5F: push(27); push('['); push('H'); return;   /* KP7 = Home */
+            case 0x59: push(27); push('['); push('F'); return;   /* KP1 = End */
+            case 0x63: push(27); push('['); push('3'); push('~'); return;   /* KP. = Delete */
             default:   return;
         }
     }
