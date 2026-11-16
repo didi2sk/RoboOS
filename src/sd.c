@@ -3,7 +3,7 @@
  *
  * The firmware routes the SD slot (GPIO48-53) to the SDHOST controller;
  * we switch the pins to ALT3 so the card is driven by the Arasan controller.
- * PIO mode (no DMA), 512-byte single-block reads.
+ * PIO mode (no DMA), 512-byte single-block reads and writes.
  * Based on the well-known bare-metal sequence (bztsrc raspi3-tutorial, SD spec).
  */
 #include "kernel.h"
@@ -79,6 +79,17 @@ static u32 rca, hc_ver, base_clk, ccs, bus4;
 static u64 sectors;
 static int ready;
 
+/* diagnostics: which init step failed and what the controller said */
+static const char *stage = "";
+static u32 dbg_int, dbg_status, dbg_resp;
+#define STAGE(s) (stage = (s))
+static int failed(int e)
+{
+    dbg_status = mmio_read(STATUS);
+    dbg_resp = mmio_read(RESP0);
+    return e;
+}
+
 static int wait_status(u32 mask, u32 ms)
 {
     u64 end = timer_us() + (u64)ms * 1000;
@@ -92,8 +103,9 @@ static int wait_int(u32 mask, u32 ms)
     u32 m = mask | INT_ERROR_MASK, r;
     u64 end = timer_us() + (u64)ms * 1000;
     while (!(mmio_read(INTERRUPT) & m))
-        if (timer_us() > end) return SD_TIMEOUT;
+        if (timer_us() > end) { dbg_int = mmio_read(INTERRUPT); return SD_TIMEOUT; }
     r = mmio_read(INTERRUPT);
+    dbg_int = r;
     if (r & (INT_CMD_TIMEOUT | INT_DATA_TIMEOUT)) { mmio_write(INTERRUPT, r); return SD_TIMEOUT; }
     if (r & INT_ERROR_MASK) { mmio_write(INTERRUPT, r); return SD_ERROR; }
     mmio_write(INTERRUPT, mask);
@@ -148,8 +160,13 @@ static void set_clock(u32 hz)
 
 static void pins_alt3(void)
 {
+    /* On boards with WiFi (3B, 3B+, 3A+, Zero 2 W) the firmware leaves GPIO34-39
+     * on ALT3 too: the Arasan controller is wired to the WiFi chip there. Two pin
+     * groups on one controller = it never sees the card's answers. Release them
+     * (same workaround as in Circle). */
+    for (int p = 34; p <= 39; p++) gpio_func(p, 0);
     /* GPIO47 = card detect (input), GPIO48-53 = CLK, CMD, DAT0-3 -> ALT3 */
-    gpio_func(47, 0);
+    if (board_type() != 0x04) gpio_func(47, 0);          /* Pi 2: GPIO47 is the ACT LED */
     for (int p = 48; p <= 53; p++) gpio_func(p, 7);
     mmio_write(GPPUD, 2);                    /* pull-up */
     delay_cycles(150);
@@ -166,9 +183,13 @@ int sd_init(void)
     u32 r;
     ready = 0; rca = 0; ccs = 0; bus4 = 0; sectors = 0;
 
+    STAGE("controller reset");
+    dbg_int = dbg_status = dbg_resp = 0;
     pins_alt3();
     hc_ver = (mmio_read(SLOTISR_VER) >> 16) & 0xFF;
 
+    u32 pwr[2] = { 0 /* SD card */, 3 /* on + wait */ };
+    mbox_prop(0x00028001, pwr, 2);
     u32 clk[2] = { 1 /* EMMC */, 0 };
     base_clk = mbox_prop(0x00030002, clk, 2) && clk[1] ? clk[1] : 41666666;
 
@@ -177,38 +198,45 @@ int sd_init(void)
     mmio_write(CONTROL1, mmio_read(CONTROL1) | C1_SRST_HC);
     u64 end = timer_us() + 1000000;
     while (mmio_read(CONTROL1) & C1_SRST_HC)
-        if (timer_us() > end) return SD_TIMEOUT;
+        if (timer_us() > end) return failed(SD_TIMEOUT);
     mmio_write(CONTROL1, mmio_read(CONTROL1) | C1_CLK_INTLEN | C1_TOUNIT_MAX);
     delay_us(10000);
 
     set_clock(400000);                       /* identification at 400 kHz */
     mmio_write(INT_EN, 0xFFFFFFFF);
     mmio_write(INT_MASK, 0xFFFFFFFF);
+    delay_us(2000);                          /* >= 74 clocks before the first command */
 
+    STAGE("CMD0 go idle");
     sd_cmd(CMD_GO_IDLE, 0, &e);
-    if (e) return e;
+    if (e) return failed(e);
+    STAGE("CMD8 interface condition");
     r = sd_cmd(CMD_SEND_IF_COND, 0x1AA, &e);
-    if (e || (r & 0xFFF) != 0x1AA) return SD_NOCARD;   /* only SD 2.0+ cards */
+    if (e || (r & 0xFFF) != 0x1AA) return failed(SD_NOCARD);   /* only SD 2.0+ cards */
 
-    for (int i = 0; i < 100; i++) {          /* up to ~1 s for the card to power up */
+    STAGE("ACMD41 power-up");
+    end = timer_us() + 2000000;              /* cards may take over 1 s to power up */
+    do {
         r = sd_cmd(CMD_SEND_OP_COND, ACMD41_ARG_HC, &e);
         if (!e && (r & ACMD41_CMD_COMPLETE)) break;
         delay_us(10000);
-    }
-    if (e || !(r & ACMD41_CMD_COMPLETE)) return SD_TIMEOUT;
-    if (!(r & ACMD41_VOLTAGE)) return SD_ERROR;
+    } while (timer_us() < end);
+    if (e || !(r & ACMD41_CMD_COMPLETE)) return failed(SD_TIMEOUT);
+    if (!(r & ACMD41_VOLTAGE)) return failed(SD_ERROR);
     ccs = (r & ACMD41_CMD_CCS) != 0;          /* SDHC/SDXC: block addressing */
 
+    STAGE("CMD2 card id");
     sd_cmd(CMD_ALL_SEND_CID, 0, &e);
-    if (e) return e;
+    if (e) return failed(e);
+    STAGE("CMD3 card address");
     rca = sd_cmd(CMD_SEND_REL_ADDR, 0, &e);
-    if (e) return e;
+    if (e) return failed(e);
 
     /* card size from CSD (CMD9). The controller strips the CRC byte:
      * RESP3..RESP0 hold CSD bits [127:8] shifted down by 8. */
     sd_cmd(CMD_SEND_CSD, rca, &e);
     if (!e) {
-        u32 r0 = mmio_read(RESP0), r1 = mmio_read(RESP1), r2 = mmio_read(RESP2), r3 = mmio_read(RESP3);
+        u32 r1 = mmio_read(RESP1), r2 = mmio_read(RESP2), r3 = mmio_read(RESP3);
         u32 structure = (r3 >> 22) & 3;
         if (structure == 1) {                /* CSD v2: C_SIZE bits [69:48] */
             u32 c_size = ((r1 >> 8) & 0x3FFFFF);
@@ -219,29 +247,32 @@ int sd_init(void)
             u32 mult = (r1 >> 7) & 0x7;
             sectors = ((u64)(c_size + 1) << (mult + 2)) << read_bl_len >> 9;
         }
-        (void)r0;
     }
 
     set_clock(25000000);                     /* default speed: 25 MHz */
+    STAGE("CMD7 select card");
     sd_cmd(CMD_CARD_SELECT, rca, &e);
-    if (e) return e;
+    if (e) return failed(e);
 
     /* SCR tells whether the card supports a 4-bit bus */
-    if (wait_status(SR_DAT_INHIBIT, 500)) return SD_TIMEOUT;
+    STAGE("ACMD51 read SCR");
+    if (wait_status(SR_DAT_INHIBIT, 500)) return failed(SD_TIMEOUT);
     mmio_write(BLKSIZECNT, (1 << 16) | 8);
     sd_cmd(CMD_SEND_SCR, 0, &e);
-    if (e) return e;
-    if (wait_int(INT_READ_RDY, 500)) return SD_TIMEOUT;
+    if (e) return failed(e);
+    if (wait_int(INT_READ_RDY, 500)) return failed(SD_TIMEOUT);
     u32 scr[2] = { 0, 0 };
+    end = timer_us() + 500000;
     for (int i = 0; i < 2; ) {
         if (mmio_read(STATUS) & SR_READ_AVAILABLE) scr[i++] = mmio_read(DATA);
-        else if (timer_us() > end + 2000000) return SD_TIMEOUT;
+        else if (timer_us() > end) return failed(SD_TIMEOUT);
     }
     /* SCR is big-endian: bus widths are bits [51:48] -> byte 1 of word 0 */
     if (scr[0] & SCR_SD_BUS_WIDTH_4) {
         sd_cmd(CMD_SET_BUS_WIDTH, rca | 2, &e);
         if (!e) { mmio_write(CONTROL0, mmio_read(CONTROL0) | C0_HCTL_DWIDTH); bus4 = 1; }
     }
+    STAGE("");
     ready = 1;
     return SD_OK;
 }
@@ -283,6 +314,12 @@ int  sd_ready(void)      { return ready; }
 u64  sd_sectors(void)    { return sectors; }
 int  sd_is_sdhc(void)    { return ccs; }
 int  sd_bus_width(void)  { return bus4 ? 4 : 1; }
+
+/* one line for the screen after a failed sd_init() */
+void sd_print_fail(int e)
+{
+    kprintf("%s at %s (INT=%x STATUS=%x RESP=%x)\n", sd_error(e), stage, dbg_int, dbg_status, dbg_resp);
+}
 
 const char *sd_error(int e)
 {

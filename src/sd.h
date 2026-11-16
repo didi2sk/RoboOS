@@ -15,8 +15,9 @@ u64  sd_sectors(void);
 int  sd_is_sdhc(void);
 int  sd_bus_width(void);
 const char *sd_error(int e);
+void sd_print_fail(int e);                       /* error + failed init step + registers */
 
-/* fat.c - read-only FAT16/FAT32 */
+/* fat.c - FAT16/FAT32 (read with long names, write 8.3) */
 #define FAT_MAX_NAME 64
 
 struct fat_file {

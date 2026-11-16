@@ -8,6 +8,8 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
+Current version: **0.5**
+
 ## Supported boards
 
 One `kernel8.img` runs on every board with the 64-bit BCM2837 chip; the board is
@@ -37,6 +39,8 @@ or GPIO47 (Pi 2 v1.2).
 ## Programs and autostart
 
 The SD card is also RoboOS's disk (FAT32 or FAT16, read and write).
+RoboOS has its own SD driver (the firmware only loads `kernel8.img` and then steps aside).
+If the card is not found, `sd init` shows which step failed and the controller registers.
 
 - Everything in **`/RUN`** (`*.bin` and `*.bas`) starts automatically after boot,
   in alphabetical order. Press any key within 2 s to skip the autostart.

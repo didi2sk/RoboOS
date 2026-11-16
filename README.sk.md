@@ -8,6 +8,8 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
+Aktuálna verzia: **0.5**
+
 ## Podporované dosky
 
 Jeden `kernel8.img` beží na všetkých doskách so 64-bitovým čipom BCM2837. Model sa
@@ -38,6 +40,8 @@ alebo na GPIO47 (Pi 2 v1.2).
 ## Programy a autostart
 
 SD karta je zároveň disk RoboOS (FAT32 alebo FAT16, čítanie aj zápis).
+RoboOS má vlastný ovládač SD (firmvér len načíta `kernel8.img` a potom ustúpi).
+Ak sa karta nenájde, `sd init` ukáže, ktorý krok zlyhal, a registre radiča.
 
 - Všetko v **`/RUN`** (`*.bin` a `*.bas`) sa po štarte spustí samo, v abecednom poradí.
   Stlačením ľubovoľnej klávesy do 2 s sa autostart preskočí.
