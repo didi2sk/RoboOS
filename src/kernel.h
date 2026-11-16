@@ -61,6 +61,10 @@ u32  fb_height(void);
 void fb_putc(char c);
 void fb_clear(void);
 void fb_setcolor(u32 fg);
+void fb_goto(int x, int y);
+void fb_clreol(void);
+int  fb_cols(void);
+int  fb_rows(void);
 
 /* console.c */
 #define COL_DEFAULT  0
@@ -77,6 +81,12 @@ void con_clear(void);
 int  con_getc(void);        /* blocking: UART or USB keyboard */
 int  con_trygetc(void);     /* -1 if nothing */
 void kprintf(const char *fmt, ...);
+/* special keys returned by con_getkey() next to plain characters */
+enum { K_UP = 256, K_DOWN, K_LEFT, K_RIGHT, K_HOME, K_END, K_DEL, K_PGUP, K_PGDN };
+int  con_getkey(void);      /* blocking; decodes escape sequences */
+void con_goto(int x, int y);            /* cursor to column x, row y (0-based) */
+void con_clreol(void);                  /* clear from the cursor to the end of the line */
+void con_size(int *cols, int *rows);    /* HDMI text size, 80x24 on UART only */
 
 /* lineedit.c - line editor with cursor keys and history */
 #define LE_MAX  160
@@ -107,6 +117,9 @@ int  app_start(const char *path);     /* .bin or .bas */
 int  app_resolve(const char *name, char *out, int max);
 void app_autostart(void);
 void app_crashed(void);
+
+/* edit.c */
+void editor_main(const char *path);
 
 /* basic.c */
 void basic_main(const char *file);

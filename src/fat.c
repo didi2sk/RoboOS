@@ -353,6 +353,15 @@ static int make_83(const char *s, u8 out[11], u8 *flags)
     return 0;
 }
 
+/* can fat_write_file() create this file name? */
+int fat_name_ok(const char *path)
+{
+    const char *name = path;
+    u8 n83[11], flags;
+    for (const char *p = path; *p; p++) if (*p == '/') name = p + 1;
+    return make_83(name, n83, &flags) == 0;
+}
+
 const char *fat_write_error(int e)
 {
     switch (e) {

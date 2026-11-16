@@ -107,6 +107,8 @@ static void emit(u8 key, u8 mods)
     case 0x4A: push(27); push('['); push('H'); return;       /* Home */
     case 0x4D: push(27); push('['); push('F'); return;       /* End */
     case 0x4C: push(27); push('['); push('3'); push('~'); return;   /* Delete */
+    case 0x4B: push(27); push('['); push('5'); push('~'); return;   /* Page Up */
+    case 0x4E: push(27); push('['); push('6'); push('~'); return;   /* Page Down */
     }
     if (key >= 0x54 && key <= 0x63) {                       /* numeric keypad */
         static const char kp[] = "/*-+\n1234567890.";
@@ -119,6 +121,8 @@ static void emit(u8 key, u8 mods)
             case 0x5E: push(27); push('['); push('C'); return;   /* KP6 = right */
             case 0x5F: push(27); push('['); push('H'); return;   /* KP7 = Home */
             case 0x59: push(27); push('['); push('F'); return;   /* KP1 = End */
+            case 0x61: push(27); push('['); push('5'); push('~'); return;   /* KP9 = Page Up */
+            case 0x5B: push(27); push('['); push('6'); push('~'); return;   /* KP3 = Page Down */
             case 0x63: push(27); push('['); push('3'); push('~'); return;   /* KP. = Delete */
             default:   return;
         }
