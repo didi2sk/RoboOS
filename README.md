@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.14**
+Current version: **0.15**
 
 ## Supported boards
 
@@ -69,7 +69,7 @@ robo@rpi3:~$ basic
 - Statements: `PRINT`/`?`, `INPUT`, `LET`, `IF..THEN..ELSE`, `GOTO`, `GOSUB`/`RETURN`,
   `FOR..TO..STEP`/`NEXT`, `DIM`, `END`, `REM`/`'`, `CLS`, `RANDOMIZE`; separate statements with `:`.
 - GPIO: `PINMODE pin, OUT|IN|PULLUP|PULLDOWN`, `GPIO pin, HIGH|LOW`, `GPIO(pin)`, `LED ON|OFF`, `WAIT ms`.
-- Sound: `SOUND Hz, ms`, `PLAY "notes"`, `VOLUME 0-100` (see the sound section).
+- Sound: `SOUND Hz, ms`, `PLAY "notes"`, `VOLUME 0-100`, `PLAYWAV "file.wav"` (see the sound section).
 - Network: `NETSEND`, `NETOK`, `NETAVAIL`, `NETRECV`; TCP/UDP: `TCPCONNECT`, `TCPLISTEN`,
   `TCPACCEPT`, `UDPOPEN`, `SOCKPRINT`, `UDPSEND`, `SOCKAVAIL`, `SOCKGET`, `SOCKNUM`, `SOCKCLOSE`
   (see the network sections).
@@ -125,7 +125,7 @@ void loop(void)
 `netSend`, `netReceive`, `netName`, and TCP/UDP: `tcpConnect`, `tcpListen`, `tcpAccept`,
 `udpOpen`, `sockWrite`, `sockPrint`, `sockRead`, `sockAvailable`, `udpSendTo`,
 `udpReceiveFrom`, `sockClose`, `sockError`, `ipAddress`, and sound: `tone(hz, ms)`, `noTone`,
-`playNotes`, `soundVolume`
+`playNotes`, `soundVolume`, `playWav`
 (see `sdk/robos.h`). A program can use `setup()` + `loop()` or `main()`.
 Examples: `hello`, `blink`, `button`, `knight`, `chat`, `tcpserv` (TCP server), `udpecho` (UDP),
 `music` (a tune and a siren).
@@ -262,8 +262,29 @@ any board.
   length, `O4` = octave (0-7, `<` `>` down / up), `T120` = tempo, `MS` / `MN` / `ML` =
   staccato / normal / legato.
 
-The volume changes the pulse width, so it also changes the sound a little. Playing recorded
-sound (WAV) is not supported yet.
+The volume changes the pulse width, so it also changes the sound a little.
+
+### I2S DAC module (better sound, WAV files)
+
+For real sound connect a small I2S DAC board (PCM5102A, UDA1334A; or a MAX98357A, which is
+a DAC with an amplifier for a speaker) and switch to it with `sound out i2s` (saved in
+`/SOUND.TXT`, so it stays after a reboot; `sound out jack` switches back).
+
+| DAC module | Raspberry Pi |
+|------------|--------------|
+| BCK (BCLK) | GPIO18 (pin 12) |
+| LCK (LRCK, WS) | GPIO19 (pin 35) |
+| DIN (DATA) | GPIO21 (pin 40) |
+| VIN / GND | 3.3 V or 5 V (see the module) / GND |
+| SCK, FMT (PCM5102A) | GND (the module makes its own clock; I2S format) |
+
+- Tones (`beep`, `play`, `SOUND`, `tone()`) are then sine waves with a real volume.
+- `playwav <file>` (shell), `PLAYWAV "file"` (BASIC), `playWav(path)` (C) play WAV files
+  from the card: PCM, 8 or 16 bit, mono or stereo, 8000-48000 Hz. Try
+  `playwav /APPS/chime.wav`. Ctrl+C stops.
+- The samples go to the DAC by DMA, so the sound keeps playing while RoboOS does other
+  things. `sound` shows how many pieces have been played and whether the DMA ever ran
+  empty ("restarts" - then the sound had a short gap).
 
 ## USB keyboard
 
@@ -339,7 +360,8 @@ If you connect after boot, press Enter.
 | `basic [file]` | BASIC interpreter |
 | `beep [Hz] [ms]` | a tone on the audio jack |
 | `play <notes>` | play music, e.g. `play T120 L4 C D E F G2` |
-| `sound [volume n\|out jack\|gpio\|off]` | sound output and volume |
+| `sound [volume n\|out jack\|gpio\|i2s\|off]` | sound output and volume |
+| `playwav <file>` | play a WAV file (I2S DAC) |
 | `sd [init]` | SD card info / re-initialize after swapping the card |
 | `clear` | clear the screen (also Ctrl+L) |
 | `reboot` | reboot via watchdog |
@@ -379,6 +401,7 @@ raises an exception; it is printed and the system returns to the shell.
 | `src/shell.c` | commands, Tab completion |
 | `src/path.c` | current directory, relative paths, `.` and `..` |
 | `src/sound.c` | tones from the PWM (audio jack or GPIO18/19), music strings |
+| `src/i2s.c` | I2S DAC: PCM peripheral + DMA, sine tones, WAV files |
 | `src/font.c` | font generated from DejaVu Sans Mono (`tools/mkfont.py`) |
 
 ### How USB works
@@ -438,7 +461,7 @@ qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial stdio -device usb-kbd
 - other keyboard layouts (a font with accented characters too)
 - interrupts + timer → multitasking
 - I2C / SPI / PWM (servos, LED dimming) in the API and in BASIC
-- sound: WAV playback (PWM + DMA)
+- sound: WAV on the audio jack too (PWM + DMA), MP3
 - editor: search, go to line, save as
 - a telnet-like remote shell, IPv6
 - more cores (spin table at 0xE0–0xF0)

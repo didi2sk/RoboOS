@@ -444,15 +444,29 @@ static void cmd_play(int argc, char **argv)
     else if (r) kprintf("^C\n");
 }
 
+static void cmd_playwav(int argc, char **argv)
+{
+    char path[PATH_MAX_LEN];
+    if (argc < 2) { need("playwav <file.wav>   (needs 'sound out i2s')"); return; }
+    if (!need_fs()) return;
+    if (path_abs(argv[1], path, sizeof(path))) { kprintf("path too long\n"); return; }
+    kprintf("playing %s (Ctrl+C stops)\n", path);
+    int r = sound_wav(path, idle_break);
+    if (r < 0) kprintf("cannot play: %s\n", i2s_wav_error(r));
+    else if (r) kprintf("^C\n");
+}
+
 static void cmd_sound(int argc, char **argv)
 {
     u64 v;
     if (argc > 2 && !strcmp(argv[1], "volume") && parse_num(argv[2], &v)) sound_volume((int)v);
     else if (argc > 2 && !strcmp(argv[1], "out") && !strcmp(argv[2], "jack")) sound_output(0);
     else if (argc > 2 && !strcmp(argv[1], "out") && !strcmp(argv[2], "gpio")) sound_output(1);
+    else if (argc > 2 && !strcmp(argv[1], "out") && !strcmp(argv[2], "i2s")) sound_output(2);
     else if (argc > 1 && !strcmp(argv[1], "off")) sound_stop();
-    else if (argc > 1) { need("sound [volume 0-100 | out jack|gpio | off]"); return; }
+    else if (argc > 1) { need("sound [volume 0-100 | out jack|gpio|i2s | off]"); return; }
     kprintf("output: %s\nvolume: %d %%\n", sound_pins(), sound_get_volume());
+    if (sound_output_mode() == 2) i2s_status();
 }
 
 static void cmd_basic(int argc, char **argv)
@@ -506,7 +520,8 @@ static const struct cmd cmds[] = {
     { "basic",  "[file]",               "BASIC interpreter",               cmd_basic  },
     { "beep",   "[Hz] [ms]",            "a tone on the audio jack",        cmd_beep   },
     { "play",   "<notes>",              "play music: play T120 C D E F G", cmd_play   },
-    { "sound",  "[volume|out|off]",     "sound settings: volume, jack/GPIO", cmd_sound },
+    { "sound",  "[volume|out|off]",     "sound: volume, out jack/gpio/i2s", cmd_sound },
+    { "playwav", "<file>",              "play a WAV file (I2S DAC)",       cmd_playwav },
     { "sd",     "[init]",               "SD card info / re-initialize",    cmd_sd     },
     { "clear",  "",                     "clear the screen",                cmd_clear  },
     { "reboot", "",                     "reboot via watchdog",             cmd_reboot },

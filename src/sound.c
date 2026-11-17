@@ -8,9 +8,14 @@
  * loudest). Boards without a jack (Zero 2 W, CM3) use GPIO18 / GPIO19 (ALT5),
  * where a piezo buzzer or a small amplifier can be connected.
  *
+ * With "sound out i2s" the same tones (as sine waves, with a real volume) and
+ * WAV files go to an I2S DAC module instead (i2s.c). The choice is kept in
+ * /SOUND.TXT.
+ *
  * PLAY understands music strings like QBasic: "T120 O4 L4 C D E8 F#8 G2 P4 > C".
  */
 #include "kernel.h"
+#include "sd.h"
 
 #define PWM_BASE    (MMIO_BASE + 0x20C000)
 #define PWM_CTL     (PWM_BASE + 0x00)
@@ -31,15 +36,33 @@
 #define CM_SRC_OSC  1                    /* 19.2 MHz crystal */
 #define PWM_CLOCK   9600000              /* 19.2 MHz / 2 */
 
-static int clock_on, out_gpio = -1, volume = 50, playing, freq_now;
+static int clock_on, out_gpio = -1, volume = 50, playing, freq_now, cfg_read;
+enum { OUT_JACK, OUT_GPIO, OUT_I2S };
 static int pin_a, pin_b, pin_fn;
 static u64 stop_at;
 
 /* output pins: the jack where there is one, else GPIO18/19 */
+static void read_config(void)
+{
+    struct fat_file f;
+    char b[8];
+    if (cfg_read || !fat_mounted()) return;
+    cfg_read = 1;
+    if (fat_open("/SOUND.TXT", &f) || f.is_dir) return;
+    int n = fat_read(&f, b, 4);
+    if (n >= 3 && b[0] == 'i' && b[1] == '2' && b[2] == 's') out_gpio = OUT_I2S;
+    else if (n >= 4 && b[0] == 'g' && b[1] == 'p' && b[2] == 'i' && b[3] == 'o') out_gpio = OUT_GPIO;
+    else if (n >= 4 && b[0] == 'j') out_gpio = OUT_JACK;
+}
+
+int sound_output_mode(void) { read_config(); return out_gpio < 0 ? OUT_JACK : out_gpio; }
+
 static void pick_pins(void)
 {
     int t = board_type();
+    read_config();
     if (out_gpio < 0) out_gpio = (t == 0x12 || t == 0x0A || t == 0x10);   /* Zero 2 W, CM3, CM3+ */
+    if (out_gpio == OUT_I2S) { pin_a = 0; return; }                  /* pins belong to i2s.c */
     if (out_gpio)          { pin_a = 18; pin_b = 19; pin_fn = 2; }   /* ALT5 */
     else if (t == 0x04)    { pin_a = 40; pin_b = 45; pin_fn = 4; }   /* Pi 2: ALT0 */
     else                   { pin_a = 40; pin_b = 41; pin_fn = 4; }   /* Pi 3: ALT0 */
@@ -65,6 +88,7 @@ static void start_clock(void)
 
 void sound_stop(void)
 {
+    if (i2s_running()) i2s_tone(0, 0);
     mmio_write(PWM_CTL, 0);
     playing = 0;
     freq_now = 0;
@@ -76,6 +100,12 @@ void sound_tone(int freq, int ms)
 {
     if (freq < 20 || freq > 20000 || !volume) { sound_stop(); return; }
     pick_pins();
+    if (out_gpio == OUT_I2S) {
+        i2s_volume(volume);
+        i2s_tone(freq, ms);
+        playing = 1; freq_now = freq; stop_at = 0;
+        return;
+    }
     start_clock();
     gpio_func(pin_a, pin_fn);
     gpio_func(pin_b, pin_fn);
@@ -94,24 +124,47 @@ void sound_tone(int freq, int ms)
 /* called from the console idle loop: ends timed tones */
 void sound_poll(void)
 {
+    if (i2s_running()) i2s_poll();
     if (playing && stop_at && timer_us() >= stop_at) sound_stop();
 }
 
 int  sound_playing(void) { return playing; }
-void sound_volume(int v) { volume = v < 0 ? 0 : v > 100 ? 100 : v; if (playing && freq_now) sound_tone(freq_now, 0); }
+void sound_volume(int v)
+{
+    volume = v < 0 ? 0 : v > 100 ? 100 : v;
+    i2s_volume(volume);
+    if (playing && freq_now && out_gpio != OUT_I2S) sound_tone(freq_now, 0);
+}
 int  sound_get_volume(void) { return volume; }
 
-void sound_output(int gpio)
+/* 0 = jack, 1 = GPIO18/19 (PWM), 2 = I2S DAC; saved in /SOUND.TXT */
+void sound_output(int mode)
 {
+    static const char *name[3] = { "jack\r\n", "gpio\r\n", "i2s\r\n" };
     if (playing) sound_stop();
-    if (pin_a) { gpio_func(pin_a, 0); gpio_func(pin_b, 0); }       /* release the old pins */
-    out_gpio = gpio;
+    mmio_write(PWM_CTL, 0);
+    if (pin_a) { gpio_func(pin_a, 0); gpio_func(pin_b, 0); pin_a = 0; }   /* release the old pins */
+    i2s_stop();
+    out_gpio = mode;
+    cfg_read = 1;
     pick_pins();
+    if (mode == OUT_I2S) { i2s_volume(volume); i2s_start(); }
+    if (fat_mounted()) fat_write_file("/SOUND.TXT", name[mode], (u32)strlen(name[mode]));
+}
+
+int sound_wav(const char *path, int (*idle)(void))
+{
+    pick_pins();
+    if (out_gpio != OUT_I2S) return -4;
+    if (!i2s_running()) i2s_start();
+    i2s_volume(volume);
+    return i2s_wav(path, idle);
 }
 
 const char *sound_pins(void)
 {
     pick_pins();
+    if (out_gpio == OUT_I2S) return "I2S DAC (GPIO18 BCLK, GPIO19 LRCLK, GPIO21 DIN)";
     return out_gpio ? "GPIO18 + GPIO19" : pin_b == 45 ? "3.5 mm jack (GPIO40 + GPIO45)" : "3.5 mm jack (GPIO40 + GPIO41)";
 }
 
@@ -127,6 +180,10 @@ static int wait_ms(u32 ms, int (*idle)(void))
 /* a tone for ms milliseconds, waiting until it ends; 1 = interrupted */
 int sound_beep(int freq, int ms, int (*idle)(void))
 {
+    if (sound_output_mode() == OUT_I2S && freq >= 20 && freq <= 20000) {
+        sound_tone(freq, ms);              /* the length is counted in samples */
+        return wait_ms((u32)ms, idle);
+    }
     sound_tone(freq, 0);
     int r = wait_ms((u32)ms, idle);
     sound_stop();

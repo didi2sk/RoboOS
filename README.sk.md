@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.14**
+Aktuálna verzia: **0.15**
 
 ## Podporované dosky
 
@@ -70,7 +70,7 @@ robo@rpi3:~$ basic
 - Príkazy v programe: `PRINT`/`?`, `INPUT`, `LET`, `IF..THEN..ELSE`, `GOTO`, `GOSUB`/`RETURN`,
   `FOR..TO..STEP`/`NEXT`, `DIM`, `END`, `REM`/`'`, `CLS`, `RANDOMIZE`; viac príkazov oddeľ `:`.
 - GPIO: `PINMODE pin, OUT|IN|PULLUP|PULLDOWN`, `GPIO pin, HIGH|LOW`, `GPIO(pin)`, `LED ON|OFF`, `WAIT ms`.
-- Zvuk: `SOUND Hz, ms`, `PLAY "noty"`, `VOLUME 0-100` (pozri časť o zvuku).
+- Zvuk: `SOUND Hz, ms`, `PLAY "noty"`, `VOLUME 0-100`, `PLAYWAV "subor.wav"` (pozri časť o zvuku).
 - Sieť: `NETSEND`, `NETOK`, `NETAVAIL`, `NETRECV`; TCP/UDP: `TCPCONNECT`, `TCPLISTEN`,
   `TCPACCEPT`, `UDPOPEN`, `SOCKPRINT`, `UDPSEND`, `SOCKAVAIL`, `SOCKGET`, `SOCKNUM`, `SOCKCLOSE`
   (pozri časti o sieti).
@@ -126,7 +126,7 @@ void loop(void)
 `netSend`, `netReceive`, `netName` a TCP/UDP: `tcpConnect`, `tcpListen`, `tcpAccept`,
 `udpOpen`, `sockWrite`, `sockPrint`, `sockRead`, `sockAvailable`, `udpSendTo`,
 `udpReceiveFrom`, `sockClose`, `sockError`, `ipAddress` a zvuk: `tone(hz, ms)`, `noTone`,
-`playNotes`, `soundVolume`
+`playNotes`, `soundVolume`, `playWav`
 (viď `sdk/robos.h`). Program môže mať `setup()` + `loop()` alebo `main()`.
 Ukážky: `hello`, `blink`, `button`, `knight`, `chat`, `tcpserv` (TCP server), `udpecho` (UDP),
 `music` (pesnička a siréna).
@@ -262,8 +262,29 @@ s reproduktorom); `sound out gpio` to isté zapne na hocijakej doske.
   dĺžka, `O4` = oktáva (0-7, `<` `>` nižšie / vyššie), `T120` = tempo, `MS` / `MN` / `ML` =
   staccato / normálne / legato.
 
-Hlasitosť mení šírku impulzu, takže trochu mení aj farbu zvuku. Prehrávanie nahratého
-zvuku (WAV) zatiaľ nie je.
+Hlasitosť mení šírku impulzu, takže trochu mení aj farbu zvuku.
+
+### I2S DAC modul (lepší zvuk, súbory WAV)
+
+Na skutočný zvuk pripoj malý I2S DAC modul (PCM5102A, UDA1334A; alebo MAX98357A, čo je DAC
+so zosilňovačom pre reproduktor) a prepni naň príkazom `sound out i2s` (uloží sa do
+`/SOUND.TXT`, takže platí aj po reštarte; `sound out jack` prepne späť).
+
+| DAC modul | Raspberry Pi |
+|-----------|--------------|
+| BCK (BCLK) | GPIO18 (pin 12) |
+| LCK (LRCK, WS) | GPIO19 (pin 35) |
+| DIN (DATA) | GPIO21 (pin 40) |
+| VIN / GND | 3,3 V alebo 5 V (podľa modulu) / GND |
+| SCK, FMT (PCM5102A) | GND (modul si hodiny vyrobí sám; formát I2S) |
+
+- Tóny (`beep`, `play`, `SOUND`, `tone()`) sú potom sínusové a so skutočnou hlasitosťou.
+- `playwav <súbor>` (shell), `PLAYWAV "súbor"` (BASIC), `playWav(cesta)` (C) prehrajú WAV
+  zo SD karty: PCM, 8 alebo 16 bitov, mono alebo stereo, 8000-48000 Hz. Skús
+  `playwav /APPS/chime.wav`. Ctrl+C zastaví.
+- Vzorky idú do DAC cez DMA, takže zvuk hrá, aj keď RoboOS robí niečo iné. `sound` ukáže,
+  koľko kúskov sa prehralo a či DMA niekedy vyprázdnilo („restarts“ - vtedy mal zvuk krátku
+  medzeru).
 
 ## USB klávesnica
 
@@ -341,7 +362,8 @@ Systém komunikuje po anglicky.
 | `basic [súbor]` | interpreter BASICu |
 | `beep [Hz] [ms]` | tón na zvukovom jacku |
 | `play <noty>` | zahrá melódiu, napr. `play T120 L4 C D E F G2` |
-| `sound [volume n\|out jack\|gpio\|off]` | výstup a hlasitosť zvuku |
+| `sound [volume n\|out jack\|gpio\|i2s\|off]` | výstup a hlasitosť zvuku |
+| `playwav <súbor>` | prehrá súbor WAV (I2S DAC) |
 | `sd [init]` | info o SD karte / znovu inicializovať po výmene karty |
 | `clear` | vymaže obrazovku (aj Ctrl+L) |
 | `reboot` | reštart cez watchdog |
@@ -381,6 +403,7 @@ vyvolá výnimku; tá sa vypíše a systém sa vráti do shellu.
 | `src/shell.c` | príkazy, dopĺňanie cez Tab |
 | `src/path.c` | aktuálny priečinok, relatívne cesty, `.` a `..` |
 | `src/sound.c` | tóny z PWM (zvukový jack alebo GPIO18/19), noty |
+| `src/i2s.c` | I2S DAC: periféria PCM + DMA, sínusové tóny, súbory WAV |
 | `src/font.c` | font vygenerovaný z DejaVu Sans Mono (`tools/mkfont.py`) |
 
 ### Ako funguje USB
@@ -441,7 +464,7 @@ qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial stdio -device usb-kbd
 - ďalšie rozloženia klávesnice (aj font s diakritikou)
 - prerušenia + časovač → multitasking
 - I2C / SPI / PWM (servá, stmievanie LED) v API aj v BASICu
-- zvuk: prehrávanie WAV (PWM + DMA)
+- zvuk: WAV aj na zvukovom jacku (PWM + DMA), MP3
 - editor: hľadanie, skok na riadok, uložiť ako
 - vzdialený shell (ako telnet), IPv6
 - ďalšie jadrá (spin table na 0xE0–0xF0)

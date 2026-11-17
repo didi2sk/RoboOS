@@ -18,7 +18,7 @@ typedef unsigned long      size_t;
 
 #define APP_BASE    0x01000000UL
 #define APP_MAGIC   "ROBOAPP1"
-#define API_VERSION 4
+#define API_VERSION 5
 
 #define INPUT          0
 #define OUTPUT         1
@@ -79,6 +79,9 @@ struct robos_api {
     void     (*noTone)(void);
     int      (*playNotes)(const char *music);     /* waits; "T120 O4 L4 C D E8 F#8 G2 P4 >C", 0 = ok */
     void     (*soundVolume)(int percent);         /* 0..100 */
+    /* API version 5: WAV files (PCM 8/16 bit, mono/stereo, 8-48 kHz) on an I2S DAC module
+     * ('sound out i2s' in the shell); waits until the end, 0 = ok, < 0 = error */
+    int      (*playWav)(const char *path);
 };
 
 extern const struct robos_api *api;
@@ -121,6 +124,7 @@ extern const struct robos_api *api;
 #define noTone()                        (api->noTone)()
 #define playNotes(m)                    (api->playNotes)(m)
 #define soundVolume(p)                  (api->soundVolume)(p)
+#define playWav(path)                   (api->playWav)(path)
 
 void *memset(void *d, int c, size_t n);
 void *memcpy(void *d, const void *s, size_t n);

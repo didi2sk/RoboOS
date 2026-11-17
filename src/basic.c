@@ -732,6 +732,14 @@ static void statement(void)
     if (kw("SOUND"))     { st_sound(); return; }
     if (kw("PLAY"))      { st_play(); return; }
     if (kw("VOLUME"))    { sound_volume((int)expr()); return; }
+    if (kw("PLAYWAV"))   {
+        char a[64], p[PATH_MAX_LEN];
+        str_lit(a, sizeof(a));
+        if (path_abs(a, p, sizeof(p))) error("BAD FILE NAME");
+        int r = sound_wav(p, b_idle);
+        if (r < 0) { kprintf("?%s\n", i2s_wav_error(r)); error("CANNOT PLAY"); }
+        return;
+    }
     if (kw("UDPSEND"))   { st_udpsend(); return; }
     if (kw("SOCKCLOSE")) { sock_close((int)expr()); return; }
     if (kw("RANDOMIZE")) { rng ^= timer_us() * 2654435761UL; if (!at_end()) rng ^= (u64)expr(); return; }
@@ -926,6 +934,7 @@ static void help(void)
              "  Functions: ABS() RND(n) MIN(,) MAX(,) MILLIS MICROS INKEY TEMP CHR$() (in PRINT)\n"
              "  Network:  NETSEND \"name\"|\"ALL\", \"text\"|number   NETAVAIL   NETRECV   NETOK\n"
              "  Sound:    SOUND Hz, ms (ms 0 = keep on, SOUND 0,0 = off)  PLAY \"T120 L4 C D E8 F#8 G2\"  VOLUME 0-100\n"
+             "            PLAYWAV \"file.wav\" (I2S DAC: 'sound out i2s' in the shell)\n"
              "  TCP/UDP:  H = TCPCONNECT(\"host\", port)  TCPLISTEN(port)  TCPACCEPT(H)  UDPOPEN(port[,\"host\",port])\n"
              "            SOCKPRINT H, items   UDPSEND H, \"host\", port, items   SOCKCLOSE H\n"
              "            SOCKAVAIL(H)  SOCKGET(H) (byte)  SOCKNUM(H) (number)   errors are < 0\n"
