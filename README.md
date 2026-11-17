@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.17**
+Current version: **0.18**
 
 ## Supported boards
 
@@ -72,6 +72,7 @@ robo@rpi3:~$ basic
 - Statements: `PRINT`/`?`, `INPUT`, `LET`, `IF..THEN..ELSE`, `GOTO`, `GOSUB`/`RETURN`,
   `FOR..TO..STEP`/`NEXT`, `DIM`, `END`, `REM`/`'`, `CLS`, `RANDOMIZE`; separate statements with `:`.
 - GPIO: `PINMODE pin, OUT|IN|PULLUP|PULLDOWN`, `GPIO pin, HIGH|LOW`, `GPIO(pin)`, `LED ON|OFF`, `WAIT ms`.
+- Pictures: `IMAGE "file", x, y [, w, h]` (see the pictures section).
 - Sound: `SOUND Hz, ms`, `PLAY "notes"`, `VOLUME 0-100`, `PLAYWAV "file.wav"` (see the sound section).
 - Network: `NETSEND`, `NETOK`, `NETAVAIL`, `NETRECV`; TCP/UDP: `TCPCONNECT`, `TCPLISTEN`,
   `TCPACCEPT`, `UDPOPEN`, `SOCKPRINT`, `UDPSEND`, `SOCKAVAIL`, `SOCKGET`, `SOCKNUM`, `SOCKCLOSE`
@@ -128,7 +129,7 @@ void loop(void)
 `netSend`, `netReceive`, `netName`, and TCP/UDP: `tcpConnect`, `tcpListen`, `tcpAccept`,
 `udpOpen`, `sockWrite`, `sockPrint`, `sockRead`, `sockAvailable`, `udpSendTo`,
 `udpReceiveFrom`, `sockClose`, `sockError`, `ipAddress`, and sound: `tone(hz, ms)`, `noTone`,
-`playNotes`, `soundVolume`, `playWav`
+`playNotes`, `soundVolume`, `playWav`, and pictures: `drawImage(path, x, y, w, h)`, `imageError`
 (see `sdk/robos.h`). A program can use `setup()` + `loop()` or `main()`.
 Examples: `hello`, `blink`, `button`, `knight`, `chat`, `tcpserv` (TCP server), `udpecho` (UDP),
 `music` (a tune and a siren).
@@ -138,6 +139,22 @@ exception and returns to the shell.
 
 **GPIO is 3.3 V** (not 5 V like an Arduino Uno), max about 16 mA per pin.
 Use a 220-330 Ω resistor for LEDs and a transistor/module for relays and motors.
+
+## Pictures
+
+RoboOS shows JPEG (also progressive), PNG (with transparency), BMP and GIF (the first frame)
+on the HDMI screen; a big picture is scaled down to fit, keeping its shape.
+
+- `view <picture>` shows it full screen; **Left/Right** (or Space) go to the previous / next
+  picture in the same directory, **Q** or Enter returns to the text screen as it was.
+  `view <dir>` starts with the first picture there.
+- **Boot picture**: a file `/SPLASH.PNG` (or `/SPLASH.JPG`, `/SPLASH.BMP`) is shown while
+  RoboOS starts; the boot messages appear behind it and show up after at least 2.5 s
+  (a key ends it sooner). The card comes with a RoboOS picture - put your own there
+  (best 1024x768), or delete it to boot straight to the text.
+- BASIC: `IMAGE "photo.jpg", x, y` draws a picture at x, y (pixels, 1024x768);
+  `IMAGE "photo.jpg", x, y, w, h` fits it into a w x h box. C: `drawImage(path, x, y, w, h)`.
+- Pictures are decoded in memory: a 12-megapixel phone photo takes a few seconds.
 
 ## Network: messages between RoboOS boards
 
@@ -362,6 +379,7 @@ If you connect after boot, press Enter.
 | `ls [path]` | list a directory on the SD card (default: the current one) |
 | `cd [dir]` | change directory (`..` = up, `/` = top, no argument = top) |
 | `pwd` | show the current directory |
+| `view [picture\|dir]` | show pictures full screen (JPEG, PNG, BMP, GIF) |
 | `mkdir <dir>` | make a directory |
 | `rm [-f] <file\|dir>` | delete a file or an empty directory (`-f` for boot files) |
 | `cat <file>` | print a text file (`"quotes"` for names with spaces) |
@@ -412,6 +430,8 @@ raises an exception; it is printed and the system returns to the shell.
 | `src/path.c` | current directory, relative paths, `.` and `..` |
 | `src/sound.c` | tones from the PWM (audio jack or GPIO18/19), music strings |
 | `src/i2s.c` | sound by DMA: I2S DAC (PCM peripheral) or the PWM, sine tones, WAV files |
+| `src/image.c` | pictures: decoding (stb_image in `src/stbimg.c`), scaling, `view`, boot picture |
+| `src/heap.c` | memory for big temporary work (decoding pictures) |
 | `src/font.c` | font generated from DejaVu Sans Mono (`tools/mkfont.py`) |
 
 ### How USB works
@@ -484,4 +504,5 @@ qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial stdio -device usb-kbd
 - The SD card init sequence follows the well-known bare-metal tutorials
   (bztsrc/raspi3-tutorial); the periodic split scheduling follows Circle/USPi.
 - TCP/IP: lwIP by Adam Dunkels and the lwIP developers (BSD license, `lwip/COPYING`).
+- Pictures: stb_image by Sean Barrett (public domain / MIT, `third_party/stb_image.h`).
 - The LAN7515 (Pi 3B+) register layout follows the Linux `lan78xx` driver.

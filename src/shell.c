@@ -576,6 +576,7 @@ static const struct cmd cmds[] = {
     { "ls",     "[path]",               "list a directory on the SD card", cmd_ls     },
     { "cd",     "[dir]",                "change directory (.. = up, / = top)", cmd_cd },
     { "pwd",    "",                     "show the current directory",      cmd_pwd    },
+    { "view",   "[picture|dir]",        "show pictures (JPEG PNG BMP GIF)", view_cmd  },
     { "mkdir",  "<dir>",                "make a directory",                cmd_mkdir  },
     { "rm",     "[-f] <file|dir>",      "delete a file or an empty directory", cmd_rm },
     { "cat",    "<file>",               "print a text file",               cmd_cat    },

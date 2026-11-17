@@ -3,4 +3,5 @@
 #define ROBO_STDLIB_H
 #include <stddef.h>
 int atoi(const char *s);
+int abs(int v);
 #endif

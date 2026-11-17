@@ -41,6 +41,8 @@ int memcmp(const void *a, const void *b, size_t n)
     return 0;
 }
 
+int abs(int v) { return v < 0 ? -v : v; }
+
 int atoi(const char *s)
 {
     int v = 0, neg = 0;

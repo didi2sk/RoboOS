@@ -32,6 +32,10 @@ all: kernel8.img
 build/%.o: src/%.c $(wildcard src/*.h) src/lwip_port/lwipopts.h | build
 	$(CC) $(COMMON) $(INCS) -c $< -o $@
 
+# stb_image: floating point allowed, its own warnings off
+build/stbimg.o: src/stbimg.c third_party/stb_image.h | build
+	$(CC) $(filter-out -mgeneral-regs-only,$(COMMON)) $(INCS) -w -c $< -o $@
+
 # third-party code: built with the same flags, minus the warnings it was not written for
 build/lwip/%.o: lwip/src/%.c src/lwip_port/lwipopts.h src/lwip_port/arch/cc.h
 	@mkdir -p $(dir $@)

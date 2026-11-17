@@ -62,6 +62,10 @@ void fb_putc(char c);
 void fb_clear(void);
 void fb_setcolor(u32 fg);
 void fb_goto(int x, int y);
+void fb_hold(int on);                    /* 1 = a picture owns the screen */
+void fb_redraw(void);
+u32 *fb_row(int y);                      /* pixels 0x00RRGGBB */
+void fb_text_px(int x, int y, const char *s, u32 fg, u32 bg);
 void fb_clreol(void);
 int  fb_cols(void);
 int  fb_rows(void);
@@ -186,6 +190,20 @@ void i2s_status(void);
 u32  i2s_segments(void);                 /* audio DMA segments played so far */
 int  sound_wav(const char *path, int (*idle)(void)); /* sound.c: I2S DAC or PWM (jack / GPIO) */
 int  sound_output_mode(void);            /* 0 jack, 1 gpio, 2 i2s */
+
+/* heap.c - memory for big temporary work */
+void *heap_alloc(size_t n);
+void *heap_realloc(void *p, size_t n);
+void  heap_free(void *p);
+void  heap_reset(void);
+u64   heap_free_bytes(void);
+
+/* image.c - pictures (JPEG, PNG, BMP, GIF) */
+int  img_draw(const char *path, int x, int y, int w, int h, int center);   /* 0 ok, < 0 error */
+const char *img_error(void);
+void img_splash_start(void);             /* /SPLASH.PNG|JPG|BMP at boot */
+void img_splash_end(void);
+void view_cmd(int argc, char **argv);
 
 /* path.c - current directory, relative paths */
 #define PATH_MAX_LEN 128

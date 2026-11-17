@@ -68,12 +68,14 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
 | `src/edit.c` | full-screen editor (`edit <file>`): flat buffer at 0x02000000 (1 MB) + save scratch above it; draws via `con_goto`/`con_clreol`, only changed rows (UART is slow) |
 | `src/sound.c` | tones: PWM in mark-space mode, range = 9.6 MHz / Hz (CM_PWMCTL src osc 19.2 MHz, DIVI 2), volume = duty (100 % -> 50 %); pins: Pi 3 jack GPIO40/41 ALT0, Pi 2 40/45, Zero 2 W / CM3 GPIO18/19 ALT5; `sound_poll()` from `con_trygetc()` ends timed tones; music strings like QBasic PLAY (checked before playing); stopped when a program / BASIC run / BASIC session ends. QEMU keeps the PWM register values (check with `mem 0x3f20c000`), but makes no sound - **not heard on hardware yet** |
 | `src/i2s.c` | audio by DMA with two sinks. PWM sink (v0.16, WAV on jack / GPIO18-19 via `pwm_wav()`): PWM clock PLLD/2 = 250 MHz, range = 250 MHz / rate, balanced mode, USEF1+USEF2 (FIFO alternates L/R words), DMAC ENAB + DREQ/PANIC 7, DMA PERMAP 5 to 0x7E20C018, samples (s+32768)*range>>16; afterwards PWM off and `clock_on = 0` in sound.c so tones re-init the osc clock. I2S sink (`sound out i2s`, saved in /SOUND.TXT): PCM at 0x3F203000 master, FLEN 64 / FSLEN 32, FSI + CLKI, ch1 pos 1, ch2 pos 33, 16-bit unpacked words (as Linux bcm2835-i2s for I2S NB_NF); clock PLLD 500 MHz MASH1 to rate*64; GPIO18-21 ALT0; DMA channel 5 (PERMAP 2, DREQ) through a chain of 32 x 2 KB segments at DMA block +0x180000 that ENDS at the last filled one (underrun = silence, poll restarts it; position from CONBLK_AD / SOURCE_AD). Tones: sine generator, length counted in samples; WAV streamed in the own loop of `i2s_wav()` (no FAT reads from `sound_poll`). QEMU DMA runs the chain instantly and has no PCM, so only the data path is testable - **not heard on hardware yet** |
+| `src/image.c` | pictures: stb_image 2.32 (`third_party/stb_image.h`, configured in `src/stbimg.c`, which the Makefile builds WITHOUT -mgeneral-regs-only and with -w) decodes JPEG/PNG/BMP/GIF to RGBA in the heap; box-filter downscale (max 4x4 samples), alpha blended over the screen; `view` (fb_hold + direct pixels, bar via `fb_text_px`), boot picture /SPLASH.* (kernel_main now inits the SD card BEFORE USB so the picture covers the boot; text waits behind `fb_hold`, released after >= 2.5 s or a key, before autostart); BASIC IMAGE, C drawImage (API v6) |
+| `src/heap.c` | bump allocator 0x04000000-0x10000000 (192 MB) with size headers for realloc; `heap_reset()` before each decode |
 | `src/path.c` | current directory (`cwd_get`/`cwd_set`, spelling taken from the card) and `path_abs()` (relative, `.`, `..` -> absolute); used by shell commands, `app_resolve` (cwd first, then /RUN, /APPS for bare names), BASIC LOAD/SAVE/DIR, edit |
 | `src/shell.c` | commands; Tab completes command names, then file/dir names (quotes names with spaces, rewrites the typed prefix in the card's spelling using `\b`) |
-| `sdk/` | program SDK (API version 5: messages, TCP/UDP, sound, WAV): `start.S` header (`ROBOAPP1` magic at +8, image end at +16), `crt0.c`, `app.ld`, examples |
+| `sdk/` | program SDK (API version 6: messages, TCP/UDP, sound, WAV, pictures): `start.S` header (`ROBOAPP1` magic at +8, image end at +16), `crt0.c`, `app.ld`, examples |
 
 Memory: kernel at 0x80000, BSS ends ~0x120000, DMA block at 0x200000 (2 MB, uncached),
-programs at 0x01000000-0x02000000, USB DMA: channel 0 buffer at the DMA block start, channel 1 (async bulk IN) +1 MB, I2S DMA control blocks + audio segments +0x180000 (~65 KB), editor text at 0x02000000 (1 MB) + save scratch up to 0x02300000.
+programs at 0x01000000-0x02000000, heap (pictures) 0x04000000-0x10000000, USB DMA: channel 0 buffer at the DMA block start, channel 1 (async bulk IN) +1 MB, I2S DMA control blocks + audio segments +0x180000 (~65 KB), editor text at 0x02000000 (1 MB) + save scratch up to 0x02300000.
 Keys: `con_getkey()` decodes escape sequences into `K_UP`... (kbd.c sends the same sequences as a terminal).
 
 ## Hard-won lessons (do not regress)
@@ -95,6 +97,9 @@ Keys: `con_getkey()` decodes escape sequences into `K_UP`... (kbd.c sends the sa
   an empty IN with a ZLP (BIR=0) so a short blocking transfer is fine; ECM uses `usb_bulk_in_async()` on channel 1,
   left running between polls.
 - lwIP: `ip_input` is an lwIP macro - do not name RoboOS functions like lwIP ones.
+- **Autorepeat after a long pause**: if nobody polled the keyboard for >100 ms (decoding a picture), the
+  release may have been missed - repeat only after a fresh report (kbd_poll); otherwise one key press jumped
+  two pictures in `view`.
 - In BASIC, compute an array index (which may allocate) before reading `v->arr` (evaluation-order bug fixed once).
 - The font covers ASCII 32-126 only - keep all on-screen strings ASCII.
 - Keep exceptions inside programs recoverable: exception stack is separate so `app_crashed()` can longjmp back.

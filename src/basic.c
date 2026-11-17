@@ -732,6 +732,16 @@ static void statement(void)
     if (kw("SOUND"))     { st_sound(); return; }
     if (kw("PLAY"))      { st_play(); return; }
     if (kw("VOLUME"))    { sound_volume((int)expr()); return; }
+    if (kw("IMAGE")) {                                    /* IMAGE "file", x, y [, w, h] */
+        char a[64], p[PATH_MAX_LEN];
+        i64 x = 0, y = 0, w = 0, h = 0;
+        str_lit(a, sizeof(a));
+        if (accept(',')) { x = expr(); expect(','); y = expr(); }
+        if (accept(',')) { w = expr(); expect(','); h = expr(); }
+        if (path_abs(a, p, sizeof(p))) error("BAD FILE NAME");
+        if (img_draw(p, (int)x, (int)y, (int)w, (int)h, 0)) { kprintf("?%s\n", img_error()); error("IMAGE ERROR"); }
+        return;
+    }
     int mk = 0;
     if ((mk = kw("MKDIR")) || kw("RMDIR") || kw("KILL")) {   /* MKDIR "dir", RMDIR "dir", KILL "file" */
         char a[64], p[PATH_MAX_LEN];
@@ -939,6 +949,7 @@ static void help(void)
     con_puts("  Lines:    10 PRINT \"HI\"   (type a number alone to delete a line)\n"
              "  Commands: RUN  LIST [a-b]  NEW  SAVE \"name\"  LOAD \"name\"  DIR [path]  BYE\n"
              "            MKDIR \"dir\"  RMDIR \"dir\"  KILL \"file\"  (also inside programs)\n"
+             "  Pictures: IMAGE \"file\", x, y [, w, h]   (JPEG PNG BMP GIF on the HDMI screen)\n"
              "  Program:  PRINT ?  INPUT  LET  IF..THEN..ELSE  GOTO  GOSUB  RETURN  FOR..TO..STEP  NEXT\n"
              "            DIM  END  REM '  CLS  RANDOMIZE   (separate statements with :)\n"
              "  GPIO:     PINMODE pin, OUT|IN|PULLUP|PULLDOWN   GPIO pin, HIGH|LOW\n"
