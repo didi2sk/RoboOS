@@ -12,6 +12,11 @@
  * control blocks that ends at the last filled segment: if nobody refills it in
  * time the DMA simply stops (silence) instead of replaying old sound, and the
  * next poll starts it again. Tones are generated (sine), WAV files streamed.
+ *
+ * The same DMA ring also feeds the PWM for WAV files on the 3.5 mm jack (or
+ * GPIO18/19): PWM clock 250 MHz (PLLD / 2), range = 250 MHz / sample rate
+ * (5669 steps = ~12.5 bit at 44.1 kHz), both channels from the PWM FIFO, which
+ * takes left and right words in turn (as Circle's PWM sound device).
  */
 #include "kernel.h"
 #include "sd.h"
@@ -60,6 +65,18 @@
 #define TI_PERMAP_PCM_TX (2u << 16)
 #define TI_NO_WIDE   (1u << 26)
 
+/* PWM as a DMA sink */
+#define PWM_BASE   (MMIO_BASE + 0x20C000)
+#define PWM_CTL    (PWM_BASE + 0x00)
+#define PWM_DMAC   (PWM_BASE + 0x08)
+#define PWM_RNG1   (PWM_BASE + 0x10)
+#define PWM_RNG2   (PWM_BASE + 0x20)
+#define PWM_FIFO_BUS 0x7E20C018u
+#define CM_PWMCTL  (MMIO_BASE + 0x1010A0)
+#define CM_PWMDIV  (MMIO_BASE + 0x1010A4)
+#define TI_PERMAP_PWM (5u << 16)
+#define PWM_HZ     250000000UL                 /* PLLD / 2 */
+
 #define NSEG       32
 #define SEG_FRAMES 256                         /* 5.8 ms at 44.1 kHz */
 #define SEG_WORDS  (SEG_FRAMES * 2)            /* one 32-bit word per channel */
@@ -76,6 +93,8 @@ extern char __dma_start[];
 #define BUS(p)    ((u32)(uintptr_t)(p) | 0xC0000000u)
 
 static int running, rate = 44100, volume = 50;
+enum { SINK_I2S = 1, SINK_PWM = 2 };
+static int sink, pwm_range;
 static int q_start, q_len;                     /* queued segments, oldest first */
 static u32 restarts, segments, dma_errors;
 
@@ -118,6 +137,18 @@ static void clock_set(int hz)
     rate = hz;
 }
 
+static void set_rate(int hz)
+{
+    if (sink == SINK_PWM) {                    /* the clock stays, the range changes */
+        pwm_range = (int)(PWM_HZ / (u32)hz);
+        mmio_write(PWM_RNG1, (u32)pwm_range);
+        mmio_write(PWM_RNG2, (u32)pwm_range);
+        rate = hz;
+    } else {
+        clock_set(hz);
+    }
+}
+
 static void dma_stop(void)
 {
     mmio_write(DMA_CS, DCS_RESET);
@@ -134,12 +165,15 @@ static void dma_start_at(int i)
 
 int i2s_running(void) { return running; }
 
+static void ring_init(void);
+
 int i2s_start(void)
 {
     if (running) return 0;
     if (!sine[64]) make_sine();
+    sink = SINK_I2S;
     for (int p = 18; p <= 21; p++) gpio_func(p, 4);          /* ALT0: PCM CLK, FS, DIN, DOUT */
-    clock_set(rate);
+    clock_set(44100);
 
     mmio_write(PCM_CS, 0);
     delay_us(100);
@@ -153,20 +187,27 @@ int i2s_start(void)
     delay_us(100);                                                       /* > 2 PCM clocks */
     mmio_write(PCM_DREQ, (0x10u << 24) | (0x30u << 8));                  /* TX panic, TX request */
 
+    ring_init();
+    mmio_write(PCM_CS, CS_EN | CS_STBY | CS_DMAEN | CS_TXON);
+    running = 1;
+    return 0;
+}
+
+/* the chain of control blocks for the current sink */
+static void ring_init(void)
+{
     mmio_write(DMA_ENABLE, mmio_read(DMA_ENABLE) | (1u << DMA_CH));
     dma_stop();
     for (int i = 0; i < NSEG; i++) {
         CBS[i].ti = TI_WAIT_RESP | TI_DEST_DREQ | TI_SRC_INC | TI_PERMAP_PCM_TX | TI_NO_WIDE;
         CBS[i].src = BUS(SEG(i));
         CBS[i].dst = PCM_FIFO_BUS;
+        if (sink == SINK_PWM) { CBS[i].ti = (CBS[i].ti & ~(0x1Fu << 16)) | TI_PERMAP_PWM; CBS[i].dst = PWM_FIFO_BUS; }
         CBS[i].len = SEG_BYTES;
         CBS[i].stride = 0;
         CBS[i].next = 0;
     }
     q_start = 0; q_len = 0;
-    mmio_write(PCM_CS, CS_EN | CS_STBY | CS_DMAEN | CS_TXON);
-    running = 1;
-    return 0;
 }
 
 void i2s_stop(void)
@@ -179,6 +220,7 @@ void i2s_stop(void)
     running = 0;
     gen_on = 0;
     wav_on = 0;
+    sink = 0;
 }
 
 /* ---------------- filling ---------------- */
@@ -193,6 +235,18 @@ static int wav_read(u8 *b, u32 n)
 }
 
 /* one segment: WAV data, a tone or silence; returns 0 when there is nothing to play */
+/* one frame into the segment: I2S takes signed 16-bit words, the PWM 0..range */
+static inline void put(volatile u32 *w, int i, int l, int r)
+{
+    if (sink == SINK_PWM) {
+        w[i * 2] = (u32)(((l + 32768) * pwm_range) >> 16);
+        w[i * 2 + 1] = (u32)(((r + 32768) * pwm_range) >> 16);
+    } else {
+        w[i * 2] = (u16)l;
+        w[i * 2 + 1] = (u16)r;
+    }
+}
+
 static int fill(volatile u32 *w)
 {
     int any = 0;
@@ -213,8 +267,7 @@ static int fill(volatile u32 *w)
                 }
                 l = l * volume / 100; r = r * volume / 100;
             }
-            w[i * 2] = (u16)l;
-            w[i * 2 + 1] = (u16)r;
+            put(w, i, l, r);
         }
         if (got) any = 1;
         if (got < SEG_FRAMES) wav_on = 0;                  /* end of the data */
@@ -228,8 +281,7 @@ static int fill(volatile u32 *w)
             phase += step;
             if (gen_left > 0 && !--gen_left) gen_on = 0;   /* exact length, counted in samples */
         }
-        w[i * 2] = (u16)v;
-        w[i * 2 + 1] = (u16)v;
+        put(w, i, v, v);
     }
     return was;
 }
@@ -306,16 +358,16 @@ const char *i2s_wav_error(int e)
     case -2: return "not a WAV file";
     case -3: return "only PCM WAV with 8 or 16 bits, mono or stereo, 8000-48000 Hz";
     case -4: return "the I2S output is not on ('sound out i2s')";
+    case -5: return "no sound output for WAV on this board";
     default: return "error";
     }
 }
 
-/* play a WAV file to the end; 0 = ok, 1 = stopped by idle(), < 0 = error */
-int i2s_wav(const char *path, int (*idle)(void))
+/* play a WAV file to the end on the current sink; 0 = ok, 1 = stopped, < 0 = error */
+static int wav_play(const char *path, int (*idle)(void))
 {
     u8 h[12], c[8], fmt[16];
     int have_fmt = 0;
-    if (!running) return -4;
     if (fat_open(path, &wf) || wf.is_dir) return -1;
     if (fat_read(&wf, h, 12) != 12 || memcmp_n(h, "RIFF", 4) || memcmp_n(h + 8, "WAVE", 4)) return -2;
     for (;;) {                                             /* walk the chunks up to "data" */
@@ -341,7 +393,7 @@ int i2s_wav(const char *path, int (*idle)(void))
 
     gen_on = 0;
     while (q_len) { pump(0); if (idle && idle()) return 1; }   /* let earlier sound finish */
-    if (hz != rate) clock_set(hz);
+    if (hz != rate) set_rate(hz);
     wav_on = 1;
     int stopped = 0;
     while (wav_on || q_len) {
@@ -350,14 +402,61 @@ int i2s_wav(const char *path, int (*idle)(void))
     }
     wav_on = 0;
     if (stopped) { dma_stop(); mmio_write(PCM_CS, mmio_read(PCM_CS) | CS_TXCLR); }
-    if (rate != 44100) { while (q_len) pump(0); clock_set(44100); }
+    if (rate != 44100 && sink == SINK_I2S) { while (q_len) pump(0); set_rate(44100); }
     return stopped;
 }
+
+int i2s_wav(const char *path, int (*idle)(void))
+{
+    if (!running || sink != SINK_I2S) return -4;
+    return wav_play(path, idle);
+}
+
+/* WAV on the PWM (jack or GPIO18/19 - sound.c has set the pins); the PWM is
+ * left switched off and its clock changed, the tone code sets them up again */
+int pwm_wav(const char *path, int (*idle)(void))
+{
+    struct fat_file probe;
+    if (fat_open(path, &probe) || probe.is_dir) return -1;
+    if (running) i2s_stop();
+    if (!sine[64]) make_sine();
+    sink = SINK_PWM;
+    mmio_write(PWM_CTL, 0);
+    mmio_write(PWM_DMAC, 0);
+    /* clock: PLLD 500 MHz / 2 */
+    mmio_write(CM_PWMCTL, CM_PASSWD | (mmio_read(CM_PWMCTL) & 0xFFFF & ~CM_ENAB));
+    u64 end = timer_us() + 10000;
+    while ((mmio_read(CM_PWMCTL) & CM_BUSY) && timer_us() < end) ;
+    mmio_write(CM_PWMDIV, CM_PASSWD | (2u << 12));
+    mmio_write(CM_PWMCTL, CM_PASSWD | CM_SRC_PLLD);
+    mmio_write(CM_PWMCTL, CM_PASSWD | CM_SRC_PLLD | CM_ENAB);
+    end = timer_us() + 10000;
+    while (!(mmio_read(CM_PWMCTL) & CM_BUSY) && timer_us() < end) ;
+    set_rate(44100);
+    mmio_write(PWM_CTL, 1u << 6);                                   /* clear the FIFO */
+    delay_us(10);
+    ring_init();
+    mmio_write(PWM_DMAC, (1u << 31) | (7u << 8) | 7u);             /* DMA on, panic 7, DREQ 7 */
+    mmio_write(PWM_CTL, (1u << 0) | (1u << 5) | (1u << 8) | (1u << 13));   /* PWEN + USEF, both */
+    running = 1;
+    int r = wav_play(path, idle);
+    dma_stop();
+    mmio_write(PWM_CTL, 0);
+    mmio_write(PWM_DMAC, 0);
+    running = 0;
+    sink = 0;
+    wav_on = 0;
+    rate = 44100;
+    return r;
+}
+
+u32 i2s_segments(void) { return segments; }
 
 void i2s_status(void)
 {
     u32 cs = mmio_read(PCM_CS);
-    kprintf("i2s:    %s, %d Hz, %u segments played, %u restarts, %u DMA errors%s\n",
-            running ? "on" : "off", rate, segments, restarts, dma_errors,
+    kprintf("dma:    %s, %d Hz%s, %u segments played, %u restarts, %u DMA errors%s\n",
+            running ? (sink == SINK_PWM ? "PWM" : "I2S") : "off", rate,
+            sink == SINK_PWM ? " (PWM range)" : "", segments, restarts, dma_errors,
             running && (cs & CS_TXERR) ? ", FIFO underrun seen" : "");
 }

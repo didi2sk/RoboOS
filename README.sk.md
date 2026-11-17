@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.15**
+Aktuálna verzia: **0.16**
 
 ## Podporované dosky
 
@@ -264,6 +264,13 @@ s reproduktorom); `sound out gpio` to isté zapne na hocijakej doske.
 
 Hlasitosť mení šírku impulzu, takže trochu mení aj farbu zvuku.
 
+**Súbory WAV** hrajú aj na jacku (alebo GPIO18/19): `playwav <súbor>` (shell),
+`PLAYWAV "súbor"` (BASIC), `playWav(cesta)` (C) - PCM, 8 alebo 16 bitov, mono alebo stereo,
+8000-48000 Hz, napr. `playwav /APPS/chime.wav`; Ctrl+C zastaví. PWM pritom beží na 250 MHz
+a vzorky k nemu idú cez DMA, takže zvuk hrá, aj keď RoboOS robí niečo iné; jack dá asi
+12 bitov kvality pri 44,1 kHz (ako rádio, s trochou šumu). Tóny sa potom vrátia
+k jednoduchému obdĺžnikovému signálu.
+
 ### I2S DAC modul (lepší zvuk, súbory WAV)
 
 Na skutočný zvuk pripoj malý I2S DAC modul (PCM5102A, UDA1334A; alebo MAX98357A, čo je DAC
@@ -279,10 +286,8 @@ so zosilňovačom pre reproduktor) a prepni naň príkazom `sound out i2s` (ulo�
 | SCK, FMT (PCM5102A) | GND (modul si hodiny vyrobí sám; formát I2S) |
 
 - Tóny (`beep`, `play`, `SOUND`, `tone()`) sú potom sínusové a so skutočnou hlasitosťou.
-- `playwav <súbor>` (shell), `PLAYWAV "súbor"` (BASIC), `playWav(cesta)` (C) prehrajú WAV
-  zo SD karty: PCM, 8 alebo 16 bitov, mono alebo stereo, 8000-48000 Hz. Skús
-  `playwav /APPS/chime.wav`. Ctrl+C zastaví.
-- Vzorky idú do DAC cez DMA, takže zvuk hrá, aj keď RoboOS robí niečo iné. `sound` ukáže,
+- Súbory WAV (rovnaké príkazy ako vyššie) hrajú v plnej 16-bitovej kvalite.
+- Vzorky idú do DAC cez DMA, takže zvuk hrá, aj keď RoboOS robí niečo iné. `sound` (pri I2S, alebo po WAV) ukáže,
   koľko kúskov sa prehralo a či DMA niekedy vyprázdnilo („restarts“ - vtedy mal zvuk krátku
   medzeru).
 
@@ -363,7 +368,7 @@ Systém komunikuje po anglicky.
 | `beep [Hz] [ms]` | tón na zvukovom jacku |
 | `play <noty>` | zahrá melódiu, napr. `play T120 L4 C D E F G2` |
 | `sound [volume n\|out jack\|gpio\|i2s\|off]` | výstup a hlasitosť zvuku |
-| `playwav <súbor>` | prehrá súbor WAV (I2S DAC) |
+| `playwav <súbor>` | prehrá súbor WAV (jack, GPIO18/19 alebo I2S DAC) |
 | `sd [init]` | info o SD karte / znovu inicializovať po výmene karty |
 | `clear` | vymaže obrazovku (aj Ctrl+L) |
 | `reboot` | reštart cez watchdog |
@@ -403,7 +408,7 @@ vyvolá výnimku; tá sa vypíše a systém sa vráti do shellu.
 | `src/shell.c` | príkazy, dopĺňanie cez Tab |
 | `src/path.c` | aktuálny priečinok, relatívne cesty, `.` a `..` |
 | `src/sound.c` | tóny z PWM (zvukový jack alebo GPIO18/19), noty |
-| `src/i2s.c` | I2S DAC: periféria PCM + DMA, sínusové tóny, súbory WAV |
+| `src/i2s.c` | zvuk cez DMA: I2S DAC (periféria PCM) alebo PWM, sínusové tóny, súbory WAV |
 | `src/font.c` | font vygenerovaný z DejaVu Sans Mono (`tools/mkfont.py`) |
 
 ### Ako funguje USB
@@ -464,7 +469,7 @@ qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial stdio -device usb-kbd
 - ďalšie rozloženia klávesnice (aj font s diakritikou)
 - prerušenia + časovač → multitasking
 - I2C / SPI / PWM (servá, stmievanie LED) v API aj v BASICu
-- zvuk: WAV aj na zvukovom jacku (PWM + DMA), MP3
+- zvuk: MP3, miešanie tónov s WAV
 - editor: hľadanie, skok na riadok, uložiť ako
 - vzdialený shell (ako telnet), IPv6
 - ďalšie jadrá (spin table na 0xE0–0xF0)
