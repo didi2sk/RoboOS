@@ -52,6 +52,9 @@ int  usb_interrupt_in(struct usb_dev *d, u8 ep, u16 mps, u8 *pid, void *data, u1
 /* bulk transfer to/from a device that needs no split transactions (HS, or FS/LS on the
  * root port); len up to 64 KB, IN ends on a short packet. Returns bytes or USB_xxx. */
 int  usb_bulk(struct usb_dev *d, u8 ep, int in, u8 *pid, void *data, u32 len, u32 ms);
+/* bulk IN left running on channel 1 between calls (devices that NAK when empty) */
+int  usb_bulk_in_async(struct usb_dev *d, u8 ep, u8 *pid, void *data, u32 len);
+void usb_bulk_in_cancel(void);
 const char *usb_speed_name(int s);
 extern int usb_debug;
 
@@ -77,6 +80,7 @@ u32  eth_chip(void);
 const char *eth_chip_name(void);                 /* "LAN9514 (SMSC)" / "LAN7515 (LAN7800)" */
 const char *eth_error(int *code, u32 *hcint);    /* 0 = fine, else the failed init step */
 int  eth_link(int *full);                        /* 0 = down, else 10 / 100 */
+int  eth_link_cached(void);                      /* last known speed, no USB traffic */
 int  eth_send(const void *frame, int len);       /* frame = dst, src, type, payload */
 int  eth_recv(void *buf, int max);               /* length, 0 = nothing, <0 = error */
 

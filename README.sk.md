@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.10**
+Aktuálna verzia: **0.11**
 
 ## Podporované dosky
 
@@ -129,8 +129,8 @@ LED zapájaj cez odpor 220–330 Ω, relé a motory cez tranzistor alebo modul.
 Pi 3B (LAN9514) a Pi 3B+ (LAN7515) majú ethernetový čip, ktorý je USB zariadenie za hubom
 na doske; RoboOS má ovládač pre oba. Zapoj dosky do
 toho istého switchu alebo routera a môžu si posielať krátke textové správy.
-Protokol je vlastný, na surových ethernetových rámcoch (EtherType `88b5`); IP/UDP
-zatiaľ nie je, takže PC mu nerozumie.
+Protokol je vlastný, na surových ethernetových rámcoch (EtherType `88b5`), takže PC mu
+nerozumie. Na komunikáciu s PC a internetom je TCP/IP (ďalšia časť).
 
 ```
 robo@rpi3:~$ net who
@@ -161,6 +161,38 @@ delivered
   pozri `sdk/examples/chat.c` (`run chat` = chat medzi doskami).
 
 Nie je na Zero 2 W a 3A+ (nemajú Ethernet). 3B a 3B+ sa medzi sebou dohovoria.
+
+## Sieť: TCP/IP
+
+RoboOS používa [lwIP](https://savannah.nongnu.org/projects/lwip/) 2.2.1 (v `lwip/`,
+licencia BSD), malý TCP/IP stack napísaný pre systémy bez operačného systému.
+Po štarte si doska vypýta od routera adresu (DHCP) a pošle mu pritom svoje meno, takže
+router ju v zozname zariadení ukáže pod jej RoboOS menom. Keď adresa príde, na prompte
+sa objaví `[NET] IP address ...`.
+
+```
+robo@rpi3:~$ ip
+host:    rpi3-9a4f
+link:    up
+address: 192.168.1.37 / 255.255.255.0  (DHCP)
+gateway: 192.168.1.1
+dns:     192.168.1.1
+robo@rpi3:~$ ping 192.168.1.1
+reply from 192.168.1.1: seq=1 ttl=64 time=0.9 ms
+```
+
+- `ip` ukáže adresu; `ip set <adresa> [maska] [brána]` nastaví pevnú adresu,
+  `ip dhcp` vráti DHCP. Voľba sa uloží do `/IP.TXT` na SD karte.
+- `ping <adresa alebo meno> [počet]` - mená sa prekladajú cez DNS.
+- `http on` spustí malú webovú stránku s menom dosky, verziou, dobou behu a teplotou
+  CPU: otvor `http://<adresa>/` v prehliadači. `http off` ju vypne.
+- Len IPv4. V API pre BASIC a C zatiaľ TCP/IP nie je.
+
+Sieť beží, kým RoboOS čaká na vstup (prompt shellu, `delay()`, `getKey()`, `WAIT`,
+`INKEY`), rovnako ako klávesnica: program, ktorý nič z toho nevolá, ju zablokuje.
+
+Funguje aj štandardný USB sieťový adaptér triedy CDC-ECM (takto sa sieť testuje v QEMU;
+na skutočných doskách to zatiaľ testované nie je).
 
 ## USB klávesnica
 
@@ -225,6 +257,9 @@ Systém komunikuje po anglicky.
 | `net send <meno\|all> <text>` | pošle správu |
 | `net name [nové]` | ukáže / zmení meno tejto dosky |
 | `net test [s]`, `net loop on\|off` | test rámcov, loopback |
+| `ip` | IP adresa, `ip dhcp`, `ip set <adresa> [maska] [brána]` |
+| `ping <adresa\|meno> [n]` | ping na iný počítač |
+| `http on\|off` | malá webová stránka s údajmi o doske |
 | `ls [cesta]` | obsah priečinka na SD karte |
 | `cat <súbor>` | vypíše textový súbor (`"úvodzovky"` pre mená s medzerami) |
 | `edit <súbor>` | celoobrazovkový textový editor |
@@ -254,6 +289,8 @@ vyvolá výnimku; tá sa vypíše a systém sa vráti do shellu.
 | `src/usb.c` | USB host ovládač DWC2: inicializácia, root port, DMA prenosy, split transakcie, enumerácia, huby, hot-plug |
 | `src/eth.c` | Ethernet: LAN9514 (3B) a LAN7515 (3B+) cez USB bulk endpointy, surové rámce |
 | `src/net.c` | správy medzi RoboOS doskami (mená, who, odoslanie s potvrdením, schránka) |
+| `src/ip.c` | TCP/IP: port lwIP, sieťové rozhranie, DHCP, `ip`, `ping`, `http` |
+| `lwip/` | TCP/IP stack lwIP 2.2.1 (bez úprav, licencia BSD) |
 | `src/kbd.c` | HID klávesnica: boot protocol, preklad scan kódov, autorepeat |
 | `src/sd.c` | ovládač SD karty (Arasan SDHCI, GPIO48-53 ALT3), čítanie aj zápis |
 | `src/fat.c` | FAT16/FAT32: dlhé mená, čítanie, zápis (mená 8.3), obe kópie FAT |
@@ -311,12 +348,21 @@ make sd.img
 qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial stdio -device usb-kbd \
     -drive file=sd.img,if=sd,format=raw
 ```
+So sieťou (QEMU emuluje USB sieťový adaptér, DHCP dá adresu 10.0.2.15):
+```
+qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial stdio -device usb-kbd \
+    -drive file=sd.img,if=sd,format=raw \
+    -device usb-net,netdev=n0 -netdev user,id=n0,hostfwd=tcp:127.0.0.1:8080-:80
+```
+(po `http on` je stránka dosky na PC na http://127.0.0.1:8080/).
+
 
 ## Nápady do budúcna
 - ďalšie rozloženia klávesnice (aj font s diakritikou)
 - prerušenia + časovač → multitasking
 - I2C / SPI / PWM v API aj v BASICu
 - editor: hľadanie, skok na riadok, uložiť ako
+- TCP/UDP v API pre BASIC a C, vzdialený shell (ako telnet)
 - ďalšie jadrá (spin table na 0xE0–0xF0)
 
 ## Poďakovanie
@@ -326,3 +372,5 @@ qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial stdio -device usb-kbd
 - Font konzoly je vykreslený z DejaVu Sans Mono (licencia Bitstream Vera).
 - Inicializácia SD karty vychádza zo známych bare-metal návodov
   (bztsrc/raspi3-tutorial); časovanie periodických split transakcií podľa Circle/USPi.
+- TCP/IP: lwIP od Adama Dunkelsa a vývojárov lwIP (licencia BSD, `lwip/COPYING`).
+- Registre LAN7515 (Pi 3B+) podľa linuxového ovládača `lan78xx`.

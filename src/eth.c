@@ -13,8 +13,12 @@
  *      Register layout as in Linux lan78xx. The MAC speed and duplex have to be set
  *      by hand after the link comes up, and only while TX and RX are disabled.
  *
+ *  - a standard USB CDC-ECM adapter (class 2, subclass 6): frames go over the
+ *    bulk endpoints as they are, no header. QEMU's "usb-net" offers ECM as its
+ *    second configuration, which is how the TCP/IP stack is tested in QEMU.
+ *
  * An empty bulk IN is answered with a zero-length packet (BIR = 0), which suits
- * our polling driver.
+ * our polling driver (ECM devices NAK instead: short timeout).
  */
 #include "usb.h"
 
@@ -93,11 +97,12 @@
 #define L_RX_RED       0x00400000
 #define L_RX_HARD_ERR  0x003F0000
 
-enum { FAM_NONE, FAM_SMSC, FAM_LAN78 };
+enum { FAM_NONE, FAM_SMSC, FAM_LAN78, FAM_ECM };
 static int fam;
 static u16 mii_addr_reg = MII_ADDR, mii_data_reg = MII_DATA;
 static int cur_speed, cur_full;          /* LAN78xx: what the MAC is set to (0 = link down) */
 static u64 next_tick;
+static int last_link;
 
 #define TX_FIRST_SEG  0x2000
 #define TX_LAST_SEG   0x1000
@@ -175,7 +180,7 @@ static int phy_write(u8 reg, u16 v)
     return reg_wait(mii_addr_reg, MII_BUSY, 100);
 }
 
-void eth_reset(void) { ed = 0; fam = FAM_NONE; cur_speed = 0; rx_len = rx_off = 0; stage = ""; chip_id = 0; }
+void eth_reset(void) { if (fam == FAM_ECM) usb_bulk_in_cancel(); last_link = 0; ed = 0; fam = FAM_NONE; cur_speed = 0; rx_len = rx_off = 0; stage = ""; chip_id = 0; }
 
 int eth_present(void) { return ed != 0; }
 int eth_is(const struct usb_dev *d) { return ed && ed == d; }
@@ -183,7 +188,8 @@ const u8 *eth_mac(void) { return mac; }
 u32 eth_chip(void) { return chip_id; }
 const char *eth_chip_name(void)
 {
-    return fam == FAM_SMSC ? "LAN9514 (SMSC)" : fam == FAM_LAN78 ? "LAN7515 (LAN7800)" : "none";
+    return fam == FAM_SMSC ? "LAN9514 (SMSC)" : fam == FAM_LAN78 ? "LAN7515 (LAN7800)"
+         : fam == FAM_ECM ? "USB CDC-ECM adapter" : "none";
 }
 
 /* 0 = initialized fine; otherwise the failed step for the screen */
@@ -308,13 +314,94 @@ static int lan78_init(void)
     return 1;                                /* TX/RX are started by link_update() */
 }
 
+/* ---- CDC-ECM ---- */
+static u8 ecm_cfg, ecm_comm, ecm_data, ecm_mac_str;
+
+/* look for an ECM function in a configuration descriptor; 1 = found (endpoints set) */
+static int ecm_parse(const u8 *c, int len)
+{
+    int cur_if = -1, cur_alt = 0, cur_class = 0, cur_sub = 0, comm = -1;
+    ep_in = ep_out = 0; ecm_mac_str = 0; ecm_data = 0;
+    for (int i = 0; i + 1 < len && c[i]; i += c[i]) {
+        if (c[i + 1] == 4 && i + 7 < len) {                       /* interface */
+            cur_if = c[i + 2]; cur_alt = c[i + 3]; cur_class = c[i + 5]; cur_sub = c[i + 6];
+            if (cur_class == 2 && cur_sub == 6) comm = cur_if;
+        } else if (c[i + 1] == 0x24 && i + 3 < len && c[i + 2] == 0x0F && cur_if == comm) {
+            ecm_mac_str = c[i + 3];                               /* Ethernet functional desc. */
+        } else if (c[i + 1] == 5 && i + 3 < len && cur_class == 0x0A && comm >= 0 &&
+                   (c[i + 3] & 3) == EP_BULK) {                   /* data interface endpoints */
+            ecm_data = (u8)cur_if;
+            (void)cur_alt;
+            if (c[i + 2] & 0x80) { if (!ep_in) ep_in = c[i + 2] & 0xF; }
+            else if (!ep_out) ep_out = c[i + 2] & 0xF;
+        }
+    }
+    ecm_comm = (u8)comm;
+    return comm >= 0 && ep_in && ep_out;
+}
+
+static int hexval(int c)
+{
+    return c >= '0' && c <= '9' ? c - '0' : c >= 'A' && c <= 'F' ? c - 'A' + 10 : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
+}
+
+static int ecm_init(struct usb_dev *d, const u8 *cfg, int len)
+{
+    static u8 c2[512];
+    int r;
+    if (ecm_parse(cfg, len)) {
+        ecm_cfg = cfg[5];
+    } else if (d->dev_class != 2) {          /* only a CDC device is asked for a 2nd configuration */
+        return 0;
+    } else {                                                      /* ECM in the 2nd configuration? */
+        r = usb_control(d, 0x80, 6, 0x0201, 0, c2, 9);
+        if (r < 9) return 0;
+        int total = c2[2] | (c2[3] << 8);
+        if (total > (int)sizeof(c2)) total = sizeof(c2);
+        r = usb_control(d, 0x80, 6, 0x0201, 0, c2, (u16)total);
+        if (r < 9 || !ecm_parse(c2, r)) return 0;
+        ecm_cfg = c2[5];
+        if (usb_control(d, 0x00, 9, ecm_cfg, 0, 0, 0) < 0) return 0;   /* SET_CONFIGURATION */
+    }
+    ed = d;
+    fam = FAM_ECM;
+    pid_in = pid_out = PID_DATA0;
+    rx_len = rx_off = 0;
+    memset(&eth_stat, 0, sizeof(eth_stat));
+    stage = ""; err_code = 0; err_hcint = 0;
+    chip_id = ((u32)d->vid << 16) | d->pid;
+
+    /* our MAC: the adapter's iMACAddress string ("525400123456"), else the board's */
+    u32 m[2] = { 0, 0 };
+    mbox_prop(0x00010003, m, 2);
+    memcpy(mac, m, 6);
+    if (ecm_mac_str) {
+        u8 b[64];
+        int n = usb_control(d, 0x80, 6, 0x0300 | ecm_mac_str, 0x0409, b, sizeof(b));
+        if (n >= 2 + 24) {
+            u8 t[6];
+            int ok = 1;
+            for (int i = 0; i < 6 && ok; i++) {
+                int h = hexval(b[2 + i * 4]), l = hexval(b[2 + i * 4 + 2]);
+                if (h < 0 || l < 0) ok = 0; else t[i] = (u8)(h << 4 | l);
+            }
+            if (ok) memcpy(mac, t, 6);
+        }
+    }
+    /* data interface alternate setting 1 = endpoints active; directed + broadcast + multicast */
+    if ((r = usb_control(d, 0x01, 0x0B, 1, ecm_data, 0, 0)) < 0) return fail("SET_INTERFACE", r);
+    usb_control(d, 0x21, 0x43, 0x000E, ecm_comm, 0, 0);
+    return 1;
+}
+
 int eth_attach(struct usb_dev *d, const u8 *cfg, int len)
 {
     int f = 0, r;
 
-    if (ed || d->vid != 0x0424) return 0;
-    if (d->pid == 0xEC00) f = FAM_SMSC;
-    else if (d->pid == 0x7800 || d->pid == 0x7850) f = FAM_LAN78;
+    if (ed) return 0;
+    if (d->vid == 0x0424 && d->pid == 0xEC00) f = FAM_SMSC;
+    else if (d->vid == 0x0424 && (d->pid == 0x7800 || d->pid == 0x7850)) f = FAM_LAN78;
+    else if (d->dev_class == 2 || d->dev_class == 0 || d->dev_class == 0xEF) return ecm_init(d, cfg, len);
     if (!f) return 0;
 
     ep_in = ep_out = 0;
@@ -377,6 +464,7 @@ static int link_update(int *full)
     u16 s = 0, sp = 0;
     u32 v;
     if (!ed || stage[0]) return 0;
+    if (fam == FAM_ECM) { if (full) *full = 1; return 100; }   /* no PHY to ask */
     phy_read(1, &s);                         /* link bit is latched: read twice */
     if (phy_read(1, &s) || !(s & 0x0004)) {
         if (fam == FAM_LAN78 && cur_speed) lan78_down();
@@ -402,7 +490,8 @@ static int link_update(int *full)
     return (sp & 0x08) ? 100 : 10;
 }
 
-int eth_link(int *full) { next_tick = timer_us() + 1000000; return link_update(full); }
+int eth_link(int *full) { next_tick = timer_us() + 1000000; return last_link = link_update(full); }
+int eth_link_cached(void) { return ed && !stage[0] ? last_link : 0; }
 
 /* once a second: follow the link (the MAC must know speed and duplex) */
 static void link_tick(void)
@@ -410,7 +499,7 @@ static void link_tick(void)
     u64 now = timer_us();
     if (now < next_tick) return;
     next_tick = now + 1000000;
-    link_update(0);
+    last_link = link_update(0);
 }
 
 int eth_send(const void *frame, int len)
@@ -420,12 +509,13 @@ int eth_send(const void *frame, int len)
     if (fam == FAM_LAN78 && !cur_speed) return -1;           /* link down: MAC is stopped */
     u32 a = TX_FIRST_SEG | TX_LAST_SEG | (u32)len, b = (u32)len;
     if (fam == FAM_LAN78) { a = (u32)len | L_TX_FCS; b = 0; }
+    int hdr = fam == FAM_ECM ? 0 : 8, mps = ed->speed == USB_SPEED_HS ? 512 : 64;
     memcpy(txbuf, &a, 4);
     memcpy(txbuf + 4, &b, 4);
-    memcpy(txbuf + 8, frame, len);
-    int total = len + 8;
+    memcpy(txbuf + hdr, frame, len);
+    int total = len + hdr;
     int r = usb_bulk(ed, ep_out, 0, &pid_out, txbuf, total, 100);
-    if (r >= 0 && total % 512 == 0)          /* a full last packet needs a terminator */
+    if (r >= 0 && total % mps == 0)          /* a full last packet needs a terminator */
         r = usb_bulk(ed, ep_out, 0, &pid_out, txbuf, 0, 100);
     if (r < 0) { eth_stat.tx_err++; eth_stat.last_err = r; eth_stat.last_hcint = usb_last_hcint(); return r; }
     eth_stat.tx_ok++;
@@ -470,9 +560,16 @@ int eth_recv(void *buf, int max)
         if (pass) break;
         rx_off = 0;
         rx_len = 0;
-        int r = usb_bulk(ed, ep_in, 1, &pid_in, rxbuf, sizeof(rxbuf), 5);
+        int r = fam == FAM_ECM ? usb_bulk_in_async(ed, ep_in, &pid_in, rxbuf, sizeof(rxbuf))
+                               : usb_bulk(ed, ep_in, 1, &pid_in, rxbuf, sizeof(rxbuf), 5);
         if (r == USB_NAK || r == USB_TIMEOUT || r == 0) { eth_stat.rx_empty++; return 0; }
         if (r < 0) { eth_stat.rx_err++; eth_stat.last_err = r; eth_stat.last_hcint = usb_last_hcint(); return r; }
+        if (fam == FAM_ECM) {                                /* one transfer = one frame */
+            if (r < 14 || r > max) { eth_stat.rx_bad++; return 0; }
+            memcpy(buf, rxbuf, r);
+            eth_stat.rx_ok++;
+            return r;
+        }
         rx_len = r;
     }
     return 0;

@@ -434,6 +434,60 @@ int usb_bulk(struct usb_dev *d, u8 ep, int in, u8 *pid, void *data, u32 len, u32
     return USB_ERR;
 }
 
+/*
+ * Bulk IN that stays queued between polls, on its own channel (1). For devices
+ * that NAK while they have nothing to send (CDC-ECM network adapters): the core
+ * retries the NAKs by itself, and the transfer is never cut short - halting a
+ * channel while data arrives loses it. Returns bytes, USB_NAK while still waiting.
+ */
+#define C1(off)    R(0x520 + (off))
+#define C1_BUF     (DMA_BUF + 0x100000)
+static int c1_busy;
+static u32 c1_size;
+
+void usb_bulk_in_cancel(void)
+{
+    if (!c1_busy) return;
+    mmio_write(C1(0x00), mmio_read(C1(0x00)) | (1u << 30) | (1u << 31));   /* CHDIS */
+    wait_clear(C1(0x00), 1u << 31, 10);
+    c1_busy = 0;
+}
+
+int usb_bulk_in_async(struct usb_dev *d, u8 ep, u8 *pid, void *data, u32 len)
+{
+    if (!c1_busy) {
+        if (d->tt_hub) return USB_ERR;
+        u32 mps = d->speed == USB_SPEED_HS ? 512 : 64;
+        u32 pkts = (len + mps - 1) / mps;
+        if (!pkts || pkts > 128) return USB_ERR;
+        c1_size = pkts * mps;
+        mmio_write(C1(0x08), 0xFFFFFFFF);                /* HCINT */
+        mmio_write(C1(0x0C), 0x7FF);                     /* HCINTMSK */
+        mmio_write(C1(0x04), 0);                         /* HCSPLT */
+        mmio_write(C1(0x10), c1_size | (pkts << 19) | ((u32)*pid << 29));
+        mmio_write(C1(0x14), BUS_ADDR(C1_BUF));
+        mmio_write(C1(0x00), mps | ((u32)(ep & 0xF) << 11) | (1u << 15)
+                   | (d->speed == USB_SPEED_LS ? (1u << 17) : 0)
+                   | ((u32)EP_BULK << 18) | (1u << 20) | ((u32)d->addr << 22) | (1u << 31));
+        c1_busy = 1;
+        return USB_NAK;
+    }
+    u32 st = mmio_read(C1(0x08));
+    if (!(st & HCINT_CHHLTD)) return USB_NAK;            /* still waiting for data */
+    c1_busy = 0;
+    u32 tsz = mmio_read(C1(0x10));
+    *pid = (tsz >> 29) & 3;
+    if (st & HCINT_XFERCOMPL) {
+        u32 got = c1_size - (tsz & 0x7FFFF);
+        if (got > len) got = len;
+        memcpy(data, C1_BUF, got);
+        return (int)got;
+    }
+    if (st & HCINT_STALL) return USB_STALL;
+    if (st & HCINT_NAK)   return USB_NAK;
+    return USB_ERR;
+}
+
 /* ======================= enumeration ======================= */
 
 static void get_string(struct usb_dev *d, u8 idx, char *out, int max)
@@ -776,6 +830,7 @@ int usb_init(void)
     eth_reset();
 
     core_ok = 0;
+    c1_busy = 0;                                         /* the core reset stops channel 1 */
     if (!core_init()) return -1;
     core_ok = 1;
     root_tries = 0;

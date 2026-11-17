@@ -1,0 +1,4 @@
+lwIP 2.2.1 (STABLE-2_2_1_RELEASE, https://github.com/lwip-tcpip/lwip), unmodified.
+Only the IPv4 core, the Ethernet layer and the headers are included; the port
+(lwipopts.h, arch/cc.h, the network interface) is in src/lwip_port/ and src/ip.c.
+License: BSD, see COPYING.
