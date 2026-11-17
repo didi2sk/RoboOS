@@ -48,8 +48,28 @@ extern volatile u32 mbox[64];
 int mbox_call(u8 ch);
 int mbox_prop(u32 tag, u32 *vals, int n);   /* one tag, n values in/out */
 
+/* smp.c - core 1 = USB + network; locks */
+int  smp_core(void);
+int  smp_start_io(void);
+int  io_core_active(void);
+void io_poll_all(void);
+void io_lock(void);
+void io_unlock(void);
+int  io_release(void);                  /* drop the io lock completely (to wait); returns depth */
+void io_reacquire(int depth);
+int  io_held(void);
+void con_lock(void);
+void con_unlock(void);
+void mbox_lock(void);
+void mbox_unlock(void);
+void smp_crashed(int core);
+u64  smp_io_loops(void);
+void kbd_poll(void);
+void usb_hotplug(void);
+
 /* mmu.c */
 void mmu_init(u64 ram_end);
+void mmu_enable(void);
 int  mmu_enabled(void);
 void dcache_clean_inval(void *addr, size_t len);
 
@@ -139,6 +159,7 @@ int  net_looping(void);
 
 /* ip.c - TCP/IP (lwIP) */
 void ip_poll(int notify);
+void ip_prepare(void);                   /* read /IP.TXT on core 0 before core 1 starts */
 void ipstack_input(const u8 *frame, int len);  /* a frame that is not a RoboOS message */
 int  ip_started(void);
 void ip_cmd(int argc, char **argv);

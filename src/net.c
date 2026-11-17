@@ -11,7 +11,8 @@
  *   MSG   text for one board (answered with ACK, retried 3 times) or for all
  *   ACK   message <id> arrived
  *
- * Frames are polled from the console idle loop (net_poll). Messages wait in a
+ * Frames are polled by the I/O core (core 1, smp.c), or from the console idle
+ * loop when there is none (net_poll). All of it runs under the io lock. Messages wait in a
  * small inbox; the shell prints them at its prompt, programs fetch them.
  */
 #include "usb.h"
@@ -36,7 +37,7 @@ static char myname[NET_NAME_MAX];
 static u8   mymac[6];
 static int  inited, name_from_file, notify, loop;
 static u16  next_id, pending_id;
-static int  acked;
+static volatile int acked;           /* set on the I/O core */
 
 /* loopback queue ("net loop on"): frames we send come back to us */
 static u8  lq[4][HDR + NET_TEXT_MAX + 4];
@@ -80,7 +81,7 @@ static void init(void)
         myname[n] = 0;
         inited = 1;
     }
-    if (!name_from_file && fat_mounted()) {              /* a saved name wins */
+    if (!name_from_file && fat_mounted() && smp_core() == 0) {   /* a saved name wins (FAT: core 0 only) */
         struct fat_file f;
         char b[NET_NAME_MAX + 2];
         name_from_file = 1;
@@ -100,17 +101,19 @@ int net_set_name(const char *name)
 {
     init();
     if (!name_ok(name)) return -1;
+    io_lock();                                           /* the I/O core sends the name */
     memset(myname, 0, sizeof(myname));
     memcpy(myname, name, strlen(name));
     name_from_file = 1;
+    io_unlock();
     if (fat_mounted()) return fat_write_file("/NAME.TXT", myname, (u32)strlen(myname)) ? 1 : 0;
     return 1;                                            /* set, but not saved */
 }
 
 void net_notify(int on) { notify = on; }
-void net_loop(int on)   { loop = on; lqh = lqt = 0; }
+void net_loop(int on)   { io_lock(); loop = on; lqh = lqt = 0; io_unlock(); }
 int  net_looping(void)  { return loop; }
-int  net_avail(void)    { return in_count; }
+int  net_avail(void)    { io_lock(); int n = in_count; io_unlock(); return n; }
 
 static int usable(void) { return loop || (eth_present() && !eth_error(0, 0)); }
 
@@ -247,7 +250,17 @@ static void pump(void)
     }
 }
 
+static int recv_locked(char *from, char *text, int max);
+
 int net_recv(char *from, char *text, int max)
+{
+    io_lock();
+    int r = recv_locked(from, text, max);
+    io_unlock();
+    return r;
+}
+
+static int recv_locked(char *from, char *text, int max)
 {
     if (!in_count) return -1;
     struct msg *m = &inbox[in_head];
@@ -269,24 +282,32 @@ void net_poll(void)
     static u64 next;
     u64 now = timer_us();
     if (now < next) return;
-    next = now + 5000;
+    next = now + (io_core_active() ? 1000 : 5000);     /* the I/O core can look more often */
     if (!usable()) return;
     init();
     pump();
     ip_poll(notify);
     if (notify) {
         char from[NET_NAME_MAX], text[NET_TEXT_MAX + 1];
-        while (net_recv(from, text, sizeof(text)) >= 0) {
+        while (recv_locked(from, text, sizeof(text)) >= 0) {
             con_color(COL_CYAN); kprintf("\n[NET] %s: ", from);
             con_color(COL_DEFAULT); kprintf("%s\n", text);
         }
     }
 }
 
-static void wait_ms(u32 ms, const int *flag)
+/* wait for an answer: the I/O core receives it (let go of the lock meanwhile),
+ * or without one, receive here */
+static void wait_ms(u32 ms, const volatile int *flag)
 {
     u64 end = timer_us() + (u64)ms * 1000;
-    while (timer_us() < end && !(flag && *flag)) pump();
+    if (io_core_active() && smp_core() == 0) {
+        int d = io_release();
+        while (timer_us() < end && !(flag && *flag)) delay_us(100);
+        io_reacquire(d);
+    } else {
+        while (timer_us() < end && !(flag && *flag)) pump();
+    }
 }
 
 const char *net_error(int e)
@@ -301,7 +322,17 @@ const char *net_error(int e)
     }
 }
 
+static int send_locked(const char *to, const char *text);
+
 int net_send(const char *to, const char *text)
+{
+    io_lock();
+    int r = send_locked(to, text);
+    io_unlock();
+    return r;
+}
+
+static int send_locked(const char *to, const char *text)
 {
     static u8 f[HDR + NET_TEXT_MAX + 4];
     if (!usable()) return -1;
@@ -329,7 +360,16 @@ int net_send(const char *to, const char *text)
     return -3;
 }
 
+static void who_locked(void);
+
 void net_who(void)
+{
+    io_lock();
+    who_locked();
+    io_unlock();
+}
+
+static void who_locked(void)
 {
     if (!usable()) { kprintf("%s\n", net_error(-1)); return; }
     init();

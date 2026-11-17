@@ -60,6 +60,10 @@ static void cmd_info(int argc, char **argv)
     if (t >= 0) kprintf("  Temperature  %d.%d C\n", t / 1000, (t % 1000) / 100);
     con_color(COL_CYAN); con_puts("System\n"); con_color(COL_DEFAULT);
     kprintf("  MMU/cache    %s\n", mmu_enabled() ? "enabled" : "disabled");
+    if (io_core_active())
+        kprintf("  Cores        0: shell + programs, 1: USB + network (%u rounds), 2-3: idle\n", (u32)smp_io_loops());
+    else
+        kprintf("  Cores        only core 0 is used (core 1 did not start)\n");
     if (fb_ready()) kprintf("  Display      %ux%u, 32 bpp\n", fb_width(), fb_height());
     else            kprintf("  Display      not available\n");
 }
@@ -189,20 +193,24 @@ static void cmd_usb(int argc, char **argv)
         kprintf("USB debug %s\n", usb_debug ? "on" : "off");
         return;
     }
+    io_lock();                           /* the USB controller is core 0's for a while */
     if (argc > 1 && !strcmp(argv[1], "test")) {
-        if (!kbd_present()) { kprintf("no keyboard connected\n"); return; }
-        kbd_selftest(8000);
+        if (!kbd_present()) kprintf("no keyboard connected\n");
+        else kbd_selftest(8000);
+        io_unlock();
         return;
     }
     if (argc > 1 && !strcmp(argv[1], "reset")) {
         kprintf("reinitializing USB...\n");
         kprintf("devices found: %d\n", usb_init());
     } else if (argc > 1) {
+        io_unlock();
         need("usb [reset|test|debug on|off]");
         return;
     }
     usb_print_tree();
     if (kbd_present()) kprintf("keyboard: %s, mode %s\n", kbd_name(), kbd_mode());
+    io_unlock();
 }
 
 /* ---------------- network ---------------- */
@@ -317,7 +325,9 @@ static void cmd_net(int argc, char **argv)
         u64 s = 10;
         if (argc > 2) parse_num(argv[2], &s);
         if (eth_error(0, 0)) { net_status(); return; }
+        io_lock();                       /* the frames are core 0's during the test */
         net_test((u32)s);
+        io_unlock();
     } else if (argc > 1) {
         need(usage);
     } else {

@@ -20,7 +20,14 @@ static u64 rep_next;
 /* character queue */
 static char q[64];
 static int  qh, qt;
-static void push(char c) { int n = (qh + 1) % 64; if (n != qt) { q[qh] = c; qh = n; } }
+/* filled on the I/O core, emptied on core 0: one writer, one reader */
+static void push(char c)
+{
+    int h = qh, n = (h + 1) % 64;
+    if (n == __atomic_load_n(&qt, __ATOMIC_ACQUIRE)) return;    /* full */
+    q[h] = c;
+    __atomic_store_n(&qh, n, __ATOMIC_RELEASE);
+}
 
 static const char lower[] = "abcdefghijklmnopqrstuvwxyz1234567890\n\033\b\t -=[]\\#;'`,./";
 static const char upper[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()\n\033\b\t _+{}|~:\"~<>?";
@@ -226,9 +233,10 @@ void kbd_poll(void)
 
 int kbd_getc(void)
 {
-    if (qh == qt) return -1;
-    char c = q[qt];
-    qt = (qt + 1) % 64;
+    int t = qt;
+    if (t == __atomic_load_n(&qh, __ATOMIC_ACQUIRE)) return -1;
+    char c = q[t];
+    __atomic_store_n(&qt, (t + 1) % 64, __ATOMIC_RELEASE);
     return (u8)c;
 }
 

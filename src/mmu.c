@@ -44,6 +44,14 @@ void mmu_init(u64 ram_end)
     for (i = 1; i < 4; i++)               /* 1-4 GB: ARM local peripherals */
         l1[i] = ((u64)i << 30) | PT_BLOCK | PT_AF | ATTR(MAIR_DEVICE) | PT_XN;
 
+    mmu_enable();
+    mmu_on = 1;
+}
+
+/* every core: the same tables and settings as core 0 */
+void mmu_enable(void)
+{
+    u64 *l1 = (u64 *)__pt_start;
     u64 mair = (0xFFUL << 0) | (0x04UL << 8) | (0x44UL << 16);
     u64 tcr  = 32               /* T0SZ: 4 GB address space */
              | (1UL << 8)       /* IRGN0 WB */
@@ -69,7 +77,6 @@ void mmu_init(u64 ram_end)
         "msr sctlr_el1, x0\n"
         "isb\n"
         :: "r"(mair), "r"(tcr), "r"((u64)l1) : "x0", "memory");
-    mmu_on = 1;
 }
 
 int mmu_enabled(void) { return mmu_on; }

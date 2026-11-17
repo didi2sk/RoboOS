@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.18**
+Current version: **0.19**
 
 ## Supported boards
 
@@ -255,8 +255,8 @@ C (`sdk/robos.h`): `tcpConnect`, `tcpListen`, `tcpAccept`, `udpOpen`, `sockWrite
 `udpSendTo`, `udpReceiveFrom`, `sockClose`, `sockError`, `ipAddress`. Examples:
 `tcpserv` (a TCP server for `nc <address> 23`) and `udpecho` (`nc -u <address> 5000`).
 
-The network runs while RoboOS waits for input (shell prompt, `delay()`, `getKey()`,
-`WAIT`, `INKEY`), like the keyboard: a program that never calls any of them blocks it.
+The network (and the USB keyboard) run on their own processor core, so the board answers
+pings, serves its web page and receives messages even while a program is busy computing.
 
 A standard USB network adapter of the CDC-ECM class works too (this is how QEMU
 tests the network; on real boards not tested yet).
@@ -404,9 +404,19 @@ raises an exception; it is printed and the system returns to the shell.
 
 ## How it works
 
+The Raspberry Pi 3 has four processor cores. RoboOS uses two of them:
+
+- **core 0**: the shell, BASIC and programs, the SD card, the screen and the sound;
+- **core 1**: all of USB (keyboard, hot-plug, the Ethernet chip) and the network
+  (TCP/IP, RoboOS messages) - all the time, whatever core 0 is doing.
+
+Cores 2 and 3 are not used yet. `info` shows how the cores are used. If core 1 does not
+start, core 0 does everything itself, as in older versions (the boot line says so).
+
 | File | What it does |
 |------|--------------|
-| `src/boot.S` | parks cores 1–3, EL2→EL1 switch, stack, exception vectors, BSS |
+| `src/boot.S` | EL2→EL1 switch, stacks, exception vectors, BSS; entry for cores 1-3 |
+| `src/smp.c` | wakes core 1 (USB + network), locks shared by the cores |
 | `src/mmu.c` | identity mapping with 2 MB blocks, enables D/I caches |
 | `src/mbox.c` | mailbox to the GPU firmware (board info, clocks, temperature, framebuffer) |
 | `src/uart.c` | PL011 UART0 on GPIO14/15 |
@@ -454,7 +464,8 @@ On the RPi3 the keyboard is not connected directly; the path looks like this:
 8. **Powering hub ports one at a time**: the hub inside an Apple keyboard dropped off
    the bus when all ports were powered at once (inrush current).
 
-The driver runs without interrupts (polling) and uses one DMA channel. DMA buffers live
+The driver runs without interrupts (polling, on core 1) and uses one DMA channel (and a
+second one for network adapters that keep a transfer waiting). DMA buffers live
 in a 2 MB block mapped non-cacheable.
 
 Boards without an onboard hub (Zero 2 W, 3A+) have the keyboard right on the root port;
@@ -494,7 +505,7 @@ qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial stdio -device usb-kbd
 - sound: MP3, mixing tones with WAV
 - editor: search, go to line, save as
 - a telnet-like remote shell, IPv6
-- more cores (spin table at 0xE0–0xF0)
+- cores 2 and 3 for programs (run a function on another core)
 
 ## Credits
 

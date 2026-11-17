@@ -2,7 +2,7 @@
 #include "usb.h"
 #include "sd.h"
 
-#define VERSION "0.18"
+#define VERSION "0.19"
 
 const char *os_version(void) { return VERSION; }
 
@@ -78,6 +78,12 @@ void kernel_main(void)
         con_puts("SD card: ");
         if (sde) sd_print_fail(sde); else con_puts("no FAT16/FAT32 partition\n");
     }
+    net_name();                          /* /NAME.TXT and /IP.TXT are read here, on core 0 */
+    ip_prepare();
+    int io = smp_start_io();             /* core 1 takes over USB + network */
+    status(io);
+    if (io) con_puts("Core 1: USB + network\n");
+    else    con_puts("Core 1 did not start - core 0 does USB + network\n");
     kprintf("  ARM memory: %u MB, booted in %u ms\n\n",
             (u32)(ram_end >> 20), (u32)(timer_us() / 1000));
     con_puts("  Type 'help' for a list of commands.\n\n");
@@ -104,6 +110,15 @@ static const char *ec_name(u32 ec)
 void exc_handler(u64 type, u64 esr, u64 elr, u64 far)
 {
     u32 ec = (esr >> 26) & 0x3F;
+    int core = smp_core();
+    if (core) {                    /* the I/O core: core 0 takes its work over */
+        smp_crashed(core);
+        con_color(COL_RED);
+        kprintf("\n!!! EXCEPTION on core %d: %s (EC=0x%x) ELR=0x%lx FAR=0x%lx\n", core, ec_name(ec), ec, elr, far);
+        kprintf("    core %d stopped; core 0 now does USB and network itself\n", core);
+        con_color(COL_DEFAULT);
+        for (;;) __asm__ volatile("wfe");
+    }
     con_color(COL_RED);
     kprintf("\n!!! EXCEPTION #%u: %s (EC=0x%x)\n", (u32)type, ec_name(ec), ec);
     kprintf("    ESR=0x%lx  ELR=0x%lx  FAR=0x%lx\n", esr, elr, far);

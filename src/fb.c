@@ -21,6 +21,7 @@ static u32  scol[MAX_ROWS][MAX_COLS];
 
 int fb_init(u32 w, u32 h)
 {
+    mbox_lock();
     mbox[0] = 35 * 4;
     mbox[1] = 0;
     mbox[2] = 0x48003; mbox[3] = 8; mbox[4] = 8;  mbox[5] = w;  mbox[6] = h;   /* physical size */
@@ -32,12 +33,15 @@ int fb_init(u32 w, u32 h)
     mbox[30] = 0x40008; mbox[31] = 4; mbox[32] = 4; mbox[33] = 0;              /* pitch */
     mbox[34] = 0;
 
-    if (!mbox_call(MBOX_CH_PROP) || mbox[20] != 32 || mbox[28] == 0)
+    if (!mbox_call(MBOX_CH_PROP) || mbox[20] != 32 || mbox[28] == 0) {
+        mbox_unlock();
         return 0;
+    }
 
     width  = mbox[5];
     height = mbox[6];
     pitch  = mbox[33];
+    mbox_unlock();
     fb     = (u8 *)(uintptr_t)(mbox[28] & 0x3FFFFFFF);   /* bus -> ARM address */
     if (pitch == 0) pitch = width * 4;
 

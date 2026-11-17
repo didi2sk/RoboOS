@@ -53,10 +53,11 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
 
 | File | Role |
 |------|------|
-| `src/boot.S` | park cores 1-3, EL3/EL2 -> EL1, stack below 0x80000, vectors, BSS; exceptions use a separate 16 KB stack |
+| `src/boot.S` | EL3/EL2 -> EL1, core 0 stack below 0x80000, vectors, BSS; exceptions use a separate 16 KB stack PER CORE; `secondary_entry` for cores 1-3 (same EL drop, stack = core_stacks + n*64 KB, then `secondary_main`) |
+| `src/smp.c` | v0.19: core 1 = I/O core. Woken via the spin table (write secondary_entry to 0xE0, dc civac, sev; QEMU raspi3b emulates the same). Core 1 loop: io_lock -> kbd_poll + usb_hotplug + net_poll (lwIP, RoboOS messages) -> io_unlock, 200 us pause. Recursive spinlocks (`__atomic`, need MMU on; no-ops before mmu_init): io lock (USB controller, eth, lwIP, sockets, messages), console lock (whole kprintf/con_* calls), mbox lock (mailbox buffer). Lock order io -> console / mbox. Core-0 entry points (ip.c wrappers `*_l`, net.c `*_locked`, eth_link/eth_set_gigabit, shell usb / net test) take the io lock; every WAIT for the network uses `io_release()` / `io_reacquire()` so core 1 can run (and a longjmp on Ctrl+C never leaks the lock). FAT is core 0 only: /NAME.TXT and /IP.TXT are read in kernel_main before core 1 starts (`net_name()`, `ip_prepare()`). Key queue in kbd.c is single-producer/single-consumer with atomics. A crash on core 1 (`exc_handler`) releases its locks and core 0 falls back to polling in `con_trygetc()` (also used when core 1 does not start). `info` shows the cores |
 | `src/mmu.c` | identity map, 2 MB blocks: RAM cached, GPU RAM + 2 MB DMA block non-cached, peripherals device |
 | `src/board.c` | revision -> board name, prompt host, ACT LED pin, `board_usb_direct()` |
-| `src/usb.c` | DWC2 host driver: polling, one channel (0), Buffer DMA, one packet per channel run |
+| `src/usb.c` | DWC2 host driver: polling (on core 1 since v0.19), one channel (0), Buffer DMA, one packet per channel run |
 | `src/eth.c` | Ethernet over USB: LAN9514 (0424:ec00, 3B), LAN7515/LAN7800 (0424:7800, 3B+) and any CDC-ECM adapter (QEMU usb-net); vendor control requests 0xA0/0xA1 for registers, bulk IN/OUT for frames (`usb_bulk`), polled; `link_tick()` follows the link once a second (LAN78xx: MAC speed/duplex only while TX/RX are off, started on link-up) |
 | `src/net.c` | RoboOS messages on raw frames (EtherType 0x88B5): names (`/NAME.TXT`), WHO/HERE, MSG with ACK + 3 tries, inbox of 8; polled every 5 ms from `con_trygetc()`; `net loop on` = loopback for QEMU tests |
 | `src/ip.c` | sockets for programs (handles 1..8, 4 KB rx ring each, TCP flow control by refusing data, UDP records len/addr/port; blocking calls take an `idle()` that polls the network: app.c `poll_input`, BASIC `check_break`; closed when a program / BASIC run ends); TCP/IP glue for lwIP 2.2.1 (`lwip/`, unmodified, NO_SYS raw API; port in `src/lwip_port/`: lwipopts.h, arch/cc.h, tiny string/stdlib/stdio shims): netif -> `eth_send`, non-0x88B5 frames from `net.c` -> lwIP, `sys_check_timeouts()` from `net_poll`; DHCP (hostname = board name), `/IP.TXT` static config, `ip`, `ping` (raw ICMP, DNS), `http on` (one page) |
@@ -100,6 +101,10 @@ Keys: `con_getkey()` decodes escape sequences into `K_UP`... (kbd.c sends the sa
 - **Autorepeat after a long pause**: if nobody polled the keyboard for >100 ms (decoding a picture), the
   release may have been missed - repeat only after a fresh report (kbd_poll); otherwise one key press jumped
   two pictures in `view`.
+- **Never call idle() / con_trygetc-with-Ctrl+C while holding the io lock**: a program's Ctrl+C longjmps out and
+  the lock would stay taken forever (core 1 stuck). Release it first (`io_release`), reacquire after.
+- QEMU-only (pre-existing since v0.11): `usb reset` with `-device usb-net` aborts QEMU (`usb_ep_get: Assertion
+  dev != NULL`) - the ECM channel-1 transfer survives the core reset in QEMU's dwc2. Test `usb reset` without usb-net.
 - In BASIC, compute an array index (which may allocate) before reading `v->arr` (evaluation-order bug fixed once).
 - The font covers ASCII 32-126 only - keep all on-screen strings ASCII.
 - Keep exceptions inside programs recoverable: exception stack is separate so `app_crashed()` can longjmp back.
@@ -112,7 +117,8 @@ Keys: `con_getkey()` decodes escape sequences into `K_UP`... (kbd.c sends the sa
 
 ## Open ideas / next steps
 
-- verify two-board messaging/BASIC/loader/TCP-IP on real hardware; Zero 2 W bring-up
+- verify two-board messaging/BASIC/loader/TCP-IP and the I/O core (v0.19) on real hardware; Zero 2 W bring-up
+- cores 2-3: a "run this function on core N" API for programs; later preemptive multitasking
 - `make sd.img` also copies `sd/APPS/*.bas`; examples: tcpserv.c, udpecho.c, music.c, ledsrv.bas, udptemp.bas, sound.bas
 - network: RoboOS messages over raw frames (v0.9) and TCP/IP via lwIP (v0.11: DHCP, ping, DNS, one web page)
   are in, TCP/UDP for BASIC and C since v0.12; all TCP/IP is tested only in QEMU. Next: a remote shell
@@ -123,5 +129,5 @@ Keys: `con_getkey()` decodes escape sequences into `K_UP`... (kbd.c sends the sa
 - Slovak keyboard layout + font with diacritics
 - sound: tones (v0.14), I2S DAC + WAV (v0.15), WAV on the PWM jack / GPIO by DMA (v0.16) are in; none heard
   on hardware yet
-- I2C / SPI / PWM in API and BASIC, interrupts + timer, multitasking, editor search / go to line / save as
+- I2C / SPI / PWM in API and BASIC, interrupts + timer, editor search / go to line / save as
 - optional AArch32 port for Pi 2 v1.1 / Zero
