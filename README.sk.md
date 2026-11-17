@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.12**
+Aktuálna verzia: **0.13**
 
 ## Podporované dosky
 
@@ -45,7 +45,11 @@ Ak sa karta nenájde, `sd init` ukáže, ktorý krok zlyhal, a registre radiča.
 
 - Všetko v **`/RUN`** (`*.bin` a `*.bas`) sa po štarte spustí samo, v abecednom poradí.
   Stlačením ľubovoľnej klávesy do 2 s sa autostart preskočí.
-- `run <meno>` spustí program z `/`, `/RUN` alebo `/APPS`; prípona je nepovinná.
+- `run <meno>` spustí program z aktuálneho priečinka, z `/RUN` alebo `/APPS`; prípona je
+  nepovinná.
+- Pohyb po karte: `cd APPS`, `cd ..`, `cd /`, `pwd`; prompt ukazuje, kde si
+  (`robo@rpi3:/APPS$`). Všetky príkazy aj BASIC (`LOAD`, `SAVE`, `DIR`) berú cesty relatívne
+  k aktuálnemu priečinku. **Tab** dopĺňa mená súborov a priečinkov.
 - **Ctrl+C** zastaví bežiaci program a vráti sa do shellu.
 
 ### BASIC – programovanie priamo na RPi
@@ -301,7 +305,9 @@ Systém komunikuje po anglicky.
 | `ip` | IP adresa, `ip dhcp`, `ip set <adresa> [maska] [brána]` |
 | `ping <adresa\|meno> [n]` | ping na iný počítač |
 | `http on\|off` | malá webová stránka s údajmi o doske |
-| `ls [cesta]` | obsah priečinka na SD karte |
+| `ls [cesta]` | obsah priečinka na SD karte (bez cesty: aktuálneho) |
+| `cd [priečinok]` | zmena priečinka (`..` = vyššie, `/` = navrch, bez argumentu = navrch) |
+| `pwd` | ukáže aktuálny priečinok |
 | `cat <súbor>` | vypíše textový súbor (`"úvodzovky"` pre mená s medzerami) |
 | `edit <súbor>` | celoobrazovkový textový editor |
 | `run <program>` | spustí program `.bin` alebo `.bas` |
@@ -313,7 +319,8 @@ Systém komunikuje po anglicky.
 
 Editor riadku (UART aj klávesnica, v shelli aj v BASICu): **šípky vľavo/vpravo**, **Home/End**
 (alebo Ctrl+A / Ctrl+E) hýbu kurzorom, takže sa dá vkladať a mazať kdekoľvek v riadku.
-**Tab** doplní príkaz, **šípky hore/dole** listujú
+**Tab** doplní príkaz a za ním meno súboru alebo priečinka (mená s medzerou dostanú
+"úvodzovky"; pri viacerých možnostiach ich vypíše), **šípky hore/dole** listujú
 históriu, **Ctrl+C** zruší riadok. Neplatný prístup do pamäte (napr. `mem 0xdeadbeef00`)
 vyvolá výnimku; tá sa vypíše a systém sa vráti do shellu.
 
@@ -341,7 +348,8 @@ vyvolá výnimku; tá sa vypíše a systém sa vráti do shellu.
 | `src/board.c` | rozpoznanie dosky: názov, ACT LED, zapojenie USB |
 | `src/lineedit.c` | editor riadku: kurzorové klávesy, história, Tab (shell + BASIC) |
 | `src/edit.c` | celoobrazovkový textový editor |
-| `src/shell.c` | príkazy |
+| `src/shell.c` | príkazy, dopĺňanie cez Tab |
+| `src/path.c` | aktuálny priečinok, relatívne cesty, `.` a `..` |
 | `src/font.c` | font vygenerovaný z DejaVu Sans Mono (`tools/mkfont.py`) |
 
 ### Ako funguje USB

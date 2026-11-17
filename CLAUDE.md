@@ -66,7 +66,8 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
 | `src/basic.c` | line-numbered integer BASIC, text `.BAS` files, SAVE/LOAD, GPIO statements |
 | `src/lineedit.c` | shared line editor (shell, BASIC prompt, INPUT): cursor keys, insert/delete, history, Tab hook; redraws with `\b` + chars only |
 | `src/edit.c` | full-screen editor (`edit <file>`): flat buffer at 0x02000000 (1 MB) + save scratch above it; draws via `con_goto`/`con_clreol`, only changed rows (UART is slow) |
-| `src/shell.c` | commands, Tab completion |
+| `src/path.c` | current directory (`cwd_get`/`cwd_set`, spelling taken from the card) and `path_abs()` (relative, `.`, `..` -> absolute); used by shell commands, `app_resolve` (cwd first, then /RUN, /APPS for bare names), BASIC LOAD/SAVE/DIR, edit |
+| `src/shell.c` | commands; Tab completes command names, then file/dir names (quotes names with spaces, rewrites the typed prefix in the card's spelling using `\b`) |
 | `sdk/` | program SDK (API version 3: messages, TCP/UDP): `start.S` header (`ROBOAPP1` magic at +8, image end at +16), `crt0.c`, `app.ld`, examples |
 
 Memory: kernel at 0x80000, BSS ends ~0x120000, DMA block at 0x200000 (2 MB, uncached),

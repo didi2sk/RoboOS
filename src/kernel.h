@@ -160,6 +160,12 @@ const char *ip_address(void);
 /* edit.c */
 void editor_main(const char *path);
 
+/* path.c - current directory, relative paths */
+#define PATH_MAX_LEN 128
+const char *cwd_get(void);
+int  cwd_set(const char *path);                 /* 0 ok, -1 not found, -2 not a dir, -3 too long */
+int  path_abs(const char *in, char *out, int max);   /* relative / . / .. -> absolute; 0 = ok */
+
 /* basic.c */
 void basic_main(const char *file);
 int  basic_run_file(const char *path);

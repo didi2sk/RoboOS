@@ -171,7 +171,18 @@ int app_resolve(const char *name, char *out, int max)
                                      { "/RUN/", "" }, { "/RUN/", ".bin" }, { "/RUN/", ".bas" },
                                      { "/APPS/", "" }, { "/APPS/", ".bin" }, { "/APPS/", ".bas" } };
     struct fat_file f;
-    for (int i = 0; i < 9; i++) {
+    char abs[PATH_MAX_LEN];
+    int plain = 1;                                       /* a bare name: also look in /RUN, /APPS */
+    for (const char *s = name; *s; s++) if (*s == '/') plain = 0;
+    if (path_abs(name, abs, sizeof(abs))) return -1;
+    for (int i = 0; i < 3; i++) {                        /* the current directory first */
+        int n = 0;
+        for (const char *s = abs; *s && n < max - 1; s++) out[n++] = *s;
+        for (const char *s = fmt[i][1]; *s && n < max - 1; s++) out[n++] = *s;
+        out[n] = 0;
+        if (!fat_open(out, &f) && !f.is_dir) return 0;
+    }
+    for (int i = 3; plain && i < 9; i++) {
         int n = 0;
         for (const char *s = fmt[i][0]; *s && n < max - 1; s++) out[n++] = *s;
         for (const char *s = name; *s && n < max - 1; s++) out[n++] = *s;
