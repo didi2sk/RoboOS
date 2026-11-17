@@ -66,9 +66,10 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
 | `src/basic.c` | line-numbered integer BASIC, text `.BAS` files, SAVE/LOAD, GPIO statements |
 | `src/lineedit.c` | shared line editor (shell, BASIC prompt, INPUT): cursor keys, insert/delete, history, Tab hook; redraws with `\b` + chars only |
 | `src/edit.c` | full-screen editor (`edit <file>`): flat buffer at 0x02000000 (1 MB) + save scratch above it; draws via `con_goto`/`con_clreol`, only changed rows (UART is slow) |
+| `src/sound.c` | tones: PWM in mark-space mode, range = 9.6 MHz / Hz (CM_PWMCTL src osc 19.2 MHz, DIVI 2), volume = duty (100 % -> 50 %); pins: Pi 3 jack GPIO40/41 ALT0, Pi 2 40/45, Zero 2 W / CM3 GPIO18/19 ALT5; `sound_poll()` from `con_trygetc()` ends timed tones; music strings like QBasic PLAY (checked before playing); stopped when a program / BASIC run / BASIC session ends. QEMU keeps the PWM register values (check with `mem 0x3f20c000`), but makes no sound - **not heard on hardware yet** |
 | `src/path.c` | current directory (`cwd_get`/`cwd_set`, spelling taken from the card) and `path_abs()` (relative, `.`, `..` -> absolute); used by shell commands, `app_resolve` (cwd first, then /RUN, /APPS for bare names), BASIC LOAD/SAVE/DIR, edit |
 | `src/shell.c` | commands; Tab completes command names, then file/dir names (quotes names with spaces, rewrites the typed prefix in the card's spelling using `\b`) |
-| `sdk/` | program SDK (API version 3: messages, TCP/UDP): `start.S` header (`ROBOAPP1` magic at +8, image end at +16), `crt0.c`, `app.ld`, examples |
+| `sdk/` | program SDK (API version 4: messages, TCP/UDP, sound): `start.S` header (`ROBOAPP1` magic at +8, image end at +16), `crt0.c`, `app.ld`, examples |
 
 Memory: kernel at 0x80000, BSS ends ~0x120000, DMA block at 0x200000 (2 MB, uncached),
 programs at 0x01000000-0x02000000, USB DMA: channel 0 buffer at the DMA block start, channel 1 (async bulk IN) +1 MB, editor text at 0x02000000 (1 MB) + save scratch up to 0x02300000.
@@ -106,7 +107,7 @@ Keys: `con_getkey()` decodes escape sequences into `K_UP`... (kbd.c sends the sa
 ## Open ideas / next steps
 
 - verify two-board messaging/BASIC/loader/TCP-IP on real hardware; Zero 2 W bring-up
-- `make sd.img` also copies `sd/APPS/*.bas`; examples: tcpserv.c, udpecho.c, ledsrv.bas, udptemp.bas
+- `make sd.img` also copies `sd/APPS/*.bas`; examples: tcpserv.c, udpecho.c, music.c, ledsrv.bas, udptemp.bas, sound.bas
 - network: RoboOS messages over raw frames (v0.9) and TCP/IP via lwIP (v0.11: DHCP, ping, DNS, one web page)
   are in, TCP/UDP for BASIC and C since v0.12; all TCP/IP is tested only in QEMU. Next: a remote shell
 - `tools/qemu_net_test.py`: `@tcp:23:line|line` / `@udp:5000:text` talk to the board from the host; the host
@@ -114,5 +115,6 @@ Keys: `con_getkey()` decodes escape sequences into `K_UP`... (kbd.c sends the sa
 - BASIC gotcha when testing: `run x.bas` leaves that program in BASIC memory; typed lines merge with it
 - license (MIT suggested, not chosen yet)
 - Slovak keyboard layout + font with diacritics
+- sound: WAV playback via PWM FIFO + DMA (owner asked for sound; tones done in v0.14)
 - I2C / SPI / PWM in API and BASIC, interrupts + timer, multitasking, editor search / go to line / save as
 - optional AArch32 port for Pi 2 v1.1 / Zero

@@ -18,7 +18,7 @@ typedef unsigned long      size_t;
 
 #define APP_BASE    0x01000000UL
 #define APP_MAGIC   "ROBOAPP1"
-#define API_VERSION 3
+#define API_VERSION 4
 
 #define INPUT          0
 #define OUTPUT         1
@@ -74,6 +74,11 @@ struct robos_api {
     void     (*sockClose)(int h);
     const char *(*sockError)(int err);            /* text for a negative result */
     const char *(*ipAddress)(void);               /* this board, e.g. "192.168.1.37" */
+    /* sound (API version 4): square-wave tones on the 3.5 mm jack (GPIO18/19 on boards without one) */
+    void     (*tone)(int hz, int ms);             /* starts and returns at once; ms 0 = until noTone() */
+    void     (*noTone)(void);
+    int      (*playNotes)(const char *music);     /* waits; "T120 O4 L4 C D E8 F#8 G2 P4 >C", 0 = ok */
+    void     (*soundVolume)(int percent);         /* 0..100 */
 };
 
 extern const struct robos_api *api;
@@ -112,6 +117,10 @@ extern const struct robos_api *api;
 #define sockClose(h)                    (api->sockClose)(h)
 #define sockError(e)                    (api->sockError)(e)
 #define ipAddress()                     (api->ipAddress)()
+#define tone(hz, ms)                    (api->tone)(hz, ms)
+#define noTone()                        (api->noTone)()
+#define playNotes(m)                    (api->playNotes)(m)
+#define soundVolume(p)                  (api->soundVolume)(p)
 
 void *memset(void *d, int c, size_t n);
 void *memcpy(void *d, const void *s, size_t n);

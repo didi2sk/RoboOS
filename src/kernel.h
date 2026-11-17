@@ -160,6 +160,18 @@ const char *ip_address(void);
 /* edit.c */
 void editor_main(const char *path);
 
+/* sound.c - tones on the 3.5 mm jack (PWM) or GPIO18/19 */
+void sound_tone(int freq, int ms);       /* start; ms > 0 ends by itself, 0 = until sound_stop */
+void sound_stop(void);
+void sound_poll(void);                   /* from the console idle loop */
+int  sound_playing(void);
+int  sound_beep(int freq, int ms, int (*idle)(void));        /* waits; 1 = interrupted */
+int  sound_play(const char *music, int (*idle)(void), int *err);   /* 0 ok, 1 stopped, -1 error */
+void sound_volume(int v);                /* 0..100 */
+int  sound_get_volume(void);
+void sound_output(int gpio);             /* 0 = jack, 1 = GPIO18/19 */
+const char *sound_pins(void);
+
 /* path.c - current directory, relative paths */
 #define PATH_MAX_LEN 128
 const char *cwd_get(void);

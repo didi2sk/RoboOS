@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.13**
+Aktuálna verzia: **0.14**
 
 ## Podporované dosky
 
@@ -70,6 +70,7 @@ robo@rpi3:~$ basic
 - Príkazy v programe: `PRINT`/`?`, `INPUT`, `LET`, `IF..THEN..ELSE`, `GOTO`, `GOSUB`/`RETURN`,
   `FOR..TO..STEP`/`NEXT`, `DIM`, `END`, `REM`/`'`, `CLS`, `RANDOMIZE`; viac príkazov oddeľ `:`.
 - GPIO: `PINMODE pin, OUT|IN|PULLUP|PULLDOWN`, `GPIO pin, HIGH|LOW`, `GPIO(pin)`, `LED ON|OFF`, `WAIT ms`.
+- Zvuk: `SOUND Hz, ms`, `PLAY "noty"`, `VOLUME 0-100` (pozri časť o zvuku).
 - Sieť: `NETSEND`, `NETOK`, `NETAVAIL`, `NETRECV`; TCP/UDP: `TCPCONNECT`, `TCPLISTEN`,
   `TCPACCEPT`, `UDPOPEN`, `SOCKPRINT`, `UDPSEND`, `SOCKAVAIL`, `SOCKGET`, `SOCKNUM`, `SOCKCLOSE`
   (pozri časti o sieti).
@@ -79,7 +80,8 @@ robo@rpi3:~$ basic
 - Mená súborov pri ukladaní: 8.3 (max. 8 znakov + prípona).
 
 Ukážky na karte: `APPS/blink.bas`, `APPS/button.bas`, `APPS/knight.bas`,
-`APPS/ledsrv.bas` (LED ovládaná cez TCP), `APPS/udptemp.bas` (teplota cez UDP).
+`APPS/ledsrv.bas` (LED ovládaná cez TCP), `APPS/udptemp.bas` (teplota cez UDP),
+`APPS/sound.bas` (tóny a pesnička).
 
 ### Textový editor
 
@@ -123,9 +125,11 @@ void loop(void)
 `clearScreen`, `textColor`, `actLed`, `cpuTemperature`, `stopRequested`, `exit`,
 `netSend`, `netReceive`, `netName` a TCP/UDP: `tcpConnect`, `tcpListen`, `tcpAccept`,
 `udpOpen`, `sockWrite`, `sockPrint`, `sockRead`, `sockAvailable`, `udpSendTo`,
-`udpReceiveFrom`, `sockClose`, `sockError`, `ipAddress`
+`udpReceiveFrom`, `sockClose`, `sockError`, `ipAddress` a zvuk: `tone(hz, ms)`, `noTone`,
+`playNotes`, `soundVolume`
 (viď `sdk/robos.h`). Program môže mať `setup()` + `loop()` alebo `main()`.
-Ukážky: `hello`, `blink`, `button`, `knight`, `chat`, `tcpserv` (TCP server), `udpecho` (UDP).
+Ukážky: `hello`, `blink`, `button`, `knight`, `chat`, `tcpserv` (TCP server), `udpecho` (UDP),
+`music` (pesnička a siréna).
 
 Programy sa nahrávajú na adresu 0x01000000 (max. 16 MB). Ak program spadne, vypíše sa
 výnimka a systém sa vráti do shellu.
@@ -238,6 +242,29 @@ Sieť beží, kým RoboOS čaká na vstup (prompt shellu, `delay()`, `getKey()`,
 Funguje aj štandardný USB sieťový adaptér triedy CDC-ECM (takto sa sieť testuje v QEMU;
 na skutočných doskách to zatiaľ testované nie je).
 
+## Zvuk
+
+Žiadne Raspberry Pi nemá zvukový čip: 3,5 mm jack poháňajú dva PWM kanály procesora cez
+filter. RoboOS ich používa na tóny (obdĺžnikový signál); vlnu robí hardvér sám, program
+beží ďalej. Do jacku zapoj slúchadlá alebo aktívny reproduktor. Dosky bez jacku (Zero 2 W,
+CM3) používajú GPIO18 a GPIO19, kam sa dá pripojiť piezo bzučiak (alebo malý zosilňovač
+s reproduktorom); `sound out gpio` to isté zapne na hocijakej doske.
+
+- Shell: `beep [Hz] [ms]`, `play <noty>`, `sound` (výstup a hlasitosť),
+  `sound volume 0-100`, `sound out jack|gpio`, `sound off`. Aj vypísanie znaku BEL
+  (ASCII 7) pípne.
+- BASIC: `SOUND 440, 500` (Hz, ms; pri ms 0 tón znie, kým nepríde `SOUND 0, 0`),
+  `PLAY "T120 L4 C D E F G2"`, `VOLUME 60`.
+- C: `tone(hz, ms)` spustí tón a hneď sa vráti (ms 0 = kým nepríde `noTone()`),
+  `playNotes("...")` čaká do konca, `soundVolume(percent)`.
+- Noty ako PLAY v QBasicu: `C D E F G A B` s `#` alebo `+` (zvýšenie) a `-` (zníženie), číslo
+  za notou = dĺžka (`C8` = osminová), `.` = s bodkou, `P` alebo `R` = pauza, `L4` = základná
+  dĺžka, `O4` = oktáva (0-7, `<` `>` nižšie / vyššie), `T120` = tempo, `MS` / `MN` / `ML` =
+  staccato / normálne / legato.
+
+Hlasitosť mení šírku impulzu, takže trochu mení aj farbu zvuku. Prehrávanie nahratého
+zvuku (WAV) zatiaľ nie je.
+
 ## USB klávesnica
 
 Klávesnicu môžeš zapojiť pred zapnutím aj počas behu (hot-plug: porty hubov sa
@@ -312,6 +339,9 @@ Systém komunikuje po anglicky.
 | `edit <súbor>` | celoobrazovkový textový editor |
 | `run <program>` | spustí program `.bin` alebo `.bas` |
 | `basic [súbor]` | interpreter BASICu |
+| `beep [Hz] [ms]` | tón na zvukovom jacku |
+| `play <noty>` | zahrá melódiu, napr. `play T120 L4 C D E F G2` |
+| `sound [volume n\|out jack\|gpio\|off]` | výstup a hlasitosť zvuku |
 | `sd [init]` | info o SD karte / znovu inicializovať po výmene karty |
 | `clear` | vymaže obrazovku (aj Ctrl+L) |
 | `reboot` | reštart cez watchdog |
@@ -350,6 +380,7 @@ vyvolá výnimku; tá sa vypíše a systém sa vráti do shellu.
 | `src/edit.c` | celoobrazovkový textový editor |
 | `src/shell.c` | príkazy, dopĺňanie cez Tab |
 | `src/path.c` | aktuálny priečinok, relatívne cesty, `.` a `..` |
+| `src/sound.c` | tóny z PWM (zvukový jack alebo GPIO18/19), noty |
 | `src/font.c` | font vygenerovaný z DejaVu Sans Mono (`tools/mkfont.py`) |
 
 ### Ako funguje USB
@@ -409,7 +440,8 @@ qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial stdio -device usb-kbd
 ## Nápady do budúcna
 - ďalšie rozloženia klávesnice (aj font s diakritikou)
 - prerušenia + časovač → multitasking
-- I2C / SPI / PWM v API aj v BASICu
+- I2C / SPI / PWM (servá, stmievanie LED) v API aj v BASICu
+- zvuk: prehrávanie WAV (PWM + DMA)
 - editor: hľadanie, skok na riadok, uložiť ako
 - vzdialený shell (ako telnet), IPv6
 - ďalšie jadrá (spin table na 0xE0–0xF0)

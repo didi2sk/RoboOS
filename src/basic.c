@@ -640,6 +640,27 @@ static void st_udpsend(void)
     net_ok = sock_sendto((int)h, host, (int)port, b, n, b_idle) >= 0 ? -1 : 0;
 }
 
+/* SOUND freq, ms   (ms = 0: keeps sounding until SOUND 0, 0) */
+static void st_sound(void)
+{
+    i64 f = expr(); expect(','); i64 ms = expr();
+    if (f <= 0) { sound_stop(); return; }
+    if (f < 20 || f > 20000) error("BAD FREQUENCY");
+    if (ms <= 0) sound_tone((int)f, 0);
+    else sound_beep((int)f, (int)(ms > 600000 ? 600000 : ms), b_idle);
+}
+
+/* PLAY "T120 L4 C D E" */
+static void st_play(void)
+{
+    char m[LINE_LEN];
+    int err;
+    str_lit(m, sizeof(m));
+    int r = sound_play(m, b_idle, &err);
+    sound_stop();
+    if (r < 0) error("BAD NOTE");
+}
+
 static void st_wait(void)
 {
     i64 ms = expr();
@@ -708,6 +729,9 @@ static void statement(void)
     if (kw("WAIT") || kw("DELAY")) { st_wait(); return; }
     if (kw("NETSEND")) { st_netsend(); return; }
     if (kw("SOCKPRINT")) { st_sockprint(); return; }
+    if (kw("SOUND"))     { st_sound(); return; }
+    if (kw("PLAY"))      { st_play(); return; }
+    if (kw("VOLUME"))    { sound_volume((int)expr()); return; }
     if (kw("UDPSEND"))   { st_udpsend(); return; }
     if (kw("SOCKCLOSE")) { sock_close((int)expr()); return; }
     if (kw("RANDOMIZE")) { rng ^= timer_us() * 2654435761UL; if (!at_end()) rng ^= (u64)expr(); return; }
@@ -741,6 +765,7 @@ static void execute(void)
 static void run_program(void)
 {
     sock_close_all();                                   /* connections of an earlier run */
+    sound_stop();
     clear_vars();
     nfor = ngosub = 0;
     kh = kt = 0;
@@ -753,6 +778,7 @@ static void run_program(void)
     execute();
     running = 0;
     cur = -1;
+    sound_stop();                                       /* SOUND f, 0 must not outlive the program */
 }
 
 /* ---------------- files ---------------- */
@@ -899,6 +925,7 @@ static void help(void)
              "            LED ON|OFF   WAIT ms   GPIO(pin)\n"
              "  Functions: ABS() RND(n) MIN(,) MAX(,) MILLIS MICROS INKEY TEMP CHR$() (in PRINT)\n"
              "  Network:  NETSEND \"name\"|\"ALL\", \"text\"|number   NETAVAIL   NETRECV   NETOK\n"
+             "  Sound:    SOUND Hz, ms (ms 0 = keep on, SOUND 0,0 = off)  PLAY \"T120 L4 C D E8 F#8 G2\"  VOLUME 0-100\n"
              "  TCP/UDP:  H = TCPCONNECT(\"host\", port)  TCPLISTEN(port)  TCPACCEPT(H)  UDPOPEN(port[,\"host\",port])\n"
              "            SOCKPRINT H, items   UDPSEND H, \"host\", port, items   SOCKCLOSE H\n"
              "            SOCKAVAIL(H)  SOCKGET(H) (byte)  SOCKNUM(H) (number)   errors are < 0\n"
@@ -983,6 +1010,7 @@ void basic_main(const char *file)
         if (bye) break;
     }
     sock_close_all();
+    sound_stop();
     if (dirty && nlines) kprintf("(program kept in memory; SAVE it to keep it after reboot)\n");
 }
 
@@ -993,6 +1021,7 @@ int basic_run_file(const char *path)
     open_line = 0;
     if (ctx_save(&err_ctx) == 0) run_program();
     sock_close_all();
+    sound_stop();
     if (open_line) con_putc('\n');
     running = 0;
     cur = -1;
