@@ -189,6 +189,45 @@ static struct var *get_var(const char *name)
 /* ---------------- expressions ---------------- */
 
 static i64 expr(void);
+static void check_break(void);
+static int  b_idle(void) { check_break(); return 0; }   /* waiting: network runs, Ctrl+C breaks */
+
+/* "text" at pc -> out */
+static void str_lit(char *out, int max)
+{
+    int n = 0;
+    skip();
+    if (*pc != '"') error("SYNTAX ERROR");
+    pc++;
+    while (*pc && *pc != '"') { if (n < max - 1) out[n++] = *pc; pc++; }
+    if (*pc == '"') pc++;
+    out[n] = 0;
+}
+
+/* SOCKNUM(h): the next integer from a connection. Waits up to 2 s for it to start;
+ * a number ends at a non-digit, or when nothing more arrives for 50 ms. 0 if none. */
+static i64 sock_number(int h)
+{
+    i64 v = 0;
+    int neg = 0, digits = 0;
+    u64 end = timer_us() + 2000000, quiet = 0;
+    for (;;) {
+        int c = sock_getc(h);
+        if (c == -1) {                                      /* nothing yet */
+            u64 now = timer_us();
+            if (now > end) break;
+            if (digits) { if (!quiet) quiet = now + 50000; else if (now > quiet) break; }
+            check_break();
+            continue;
+        }
+        quiet = 0;
+        if (c < 0) break;                                   /* closed */
+        if (c >= '0' && c <= '9') { v = v * 10 + (c - '0'); digits = 1; continue; }
+        if (digits) break;                                  /* the number ended */
+        neg = c == '-';
+    }
+    return neg ? -v : v;
+}
 static i64 net_ok;                     /* NETOK: last NETSEND went through (-1 / 0) */
 
 static i64 element(struct var *v, i64 idx, int create)
@@ -249,6 +288,26 @@ static i64 primary(void)
         if (kh == kt) return 0;
         char c = keyq[kt]; kt = (kt + 1) % 16; return (u8)c;
     }
+    /* TCP / UDP (names are cut to 8 letters by read_name) */
+    if (!strcmp(name, "TCPCONNE")) {                    /* TCPCONNECT("host", port) */
+        char host[64];
+        expect('('); str_lit(host, sizeof(host)); expect(','); i64 port = expr(); expect(')');
+        return sock_tcp_connect(host, (int)port, b_idle);
+    }
+    if (!strcmp(name, "TCPLISTE")) { expect('('); i64 p = expr(); expect(')'); return sock_tcp_listen((int)p); }
+    if (!strcmp(name, "TCPACCEP")) { expect('('); i64 h = expr(); expect(')'); check_break(); return sock_tcp_accept((int)h); }
+    if (!strcmp(name, "UDPOPEN")) {                     /* UDPOPEN(port [, "host", port]) */
+        char host[64];
+        i64 rp = 0;
+        host[0] = 0;
+        expect('('); i64 lp = expr();
+        if (accept(',')) { str_lit(host, sizeof(host)); expect(','); rp = expr(); }
+        expect(')');
+        return sock_udp_open((int)lp, host, (int)rp, b_idle);
+    }
+    if (!strcmp(name, "SOCKAVAI")) { expect('('); i64 h = expr(); expect(')'); check_break(); return sock_avail((int)h); }
+    if (!strcmp(name, "SOCKGET"))  { expect('('); i64 h = expr(); expect(')'); check_break(); return sock_getc((int)h); }
+    if (!strcmp(name, "SOCKNUM"))  { expect('('); i64 h = expr(); expect(')'); return sock_number((int)h); }
     if (!strcmp(name, "NETAVAIL")) { opt_parens(); check_break(); return net_avail(); }
     if (!strcmp(name, "NETOK"))    { opt_parens(); return net_ok; }
     if (!strcmp(name, "NETRECV")) {                      /* oldest message as a number */
@@ -529,6 +588,58 @@ static void st_netsend(void)
     net_ok = net_send(to, text) >= 0 ? -1 : 0;
 }
 
+/* SOCKPRINT h, items   /   UDPSEND h, "host", port, items
+ * items like PRINT: "text", numbers, CHR$(n); ends with CR LF unless it ends with ; */
+static void sock_items(char *b, int *n, int max)
+{
+    int newline = 1;
+    while (!at_end()) {
+        newline = 1;
+        skip();
+        if (*pc == '"') {
+            pc++;
+            while (*pc && *pc != '"') { if (*n < max) b[(*n)++] = *pc; pc++; }
+            if (*pc == '"') pc++;
+        } else if (kw("CHR$")) {
+            expect('('); i64 c = expr(); expect(')');
+            if (*n < max) b[(*n)++] = (char)c;
+        } else {
+            i64 v = expr();
+            char d[24]; int k = 0;
+            u64 a = v < 0 ? (u64)-v : (u64)v;
+            do { d[k++] = '0' + a % 10; a /= 10; } while (a);
+            if (v < 0 && *n < max) b[(*n)++] = '-';
+            while (k && *n < max) b[(*n)++] = d[--k];
+        }
+        if (accept(';')) { newline = 0; continue; }
+        if (accept(',')) { if (*n < max) b[(*n)++] = '\t'; newline = 0; continue; }
+        break;
+    }
+    if (newline && *n + 2 <= max) { b[(*n)++] = '\r'; b[(*n)++] = '\n'; }
+}
+
+static void st_sockprint(void)
+{
+    char b[512];
+    int n = 0;
+    i64 h = expr();
+    if (!at_end()) expect(',');
+    sock_items(b, &n, sizeof(b));
+    net_ok = sock_write((int)h, b, n, b_idle) >= 0 ? -1 : 0;
+}
+
+static void st_udpsend(void)
+{
+    char b[512], host[64];
+    int n = 0;
+    i64 h = expr(); expect(',');
+    str_lit(host, sizeof(host)); expect(',');
+    i64 port = expr();
+    if (!at_end()) expect(',');
+    sock_items(b, &n, sizeof(b));
+    net_ok = sock_sendto((int)h, host, (int)port, b, n, b_idle) >= 0 ? -1 : 0;
+}
+
 static void st_wait(void)
 {
     i64 ms = expr();
@@ -596,6 +707,9 @@ static void statement(void)
     if (kw("LED"))     { board_led(expr() != 0); return; }
     if (kw("WAIT") || kw("DELAY")) { st_wait(); return; }
     if (kw("NETSEND")) { st_netsend(); return; }
+    if (kw("SOCKPRINT")) { st_sockprint(); return; }
+    if (kw("UDPSEND"))   { st_udpsend(); return; }
+    if (kw("SOCKCLOSE")) { sock_close((int)expr()); return; }
     if (kw("RANDOMIZE")) { rng ^= timer_us() * 2654435761UL; if (!at_end()) rng ^= (u64)expr(); return; }
     if (is_alpha(*pc)) { st_let(); return; }
     error("SYNTAX ERROR");
@@ -626,6 +740,7 @@ static void execute(void)
 
 static void run_program(void)
 {
+    sock_close_all();                                   /* connections of an earlier run */
     clear_vars();
     nfor = ngosub = 0;
     kh = kt = 0;
@@ -782,6 +897,9 @@ static void help(void)
              "            LED ON|OFF   WAIT ms   GPIO(pin)\n"
              "  Functions: ABS() RND(n) MIN(,) MAX(,) MILLIS MICROS INKEY TEMP CHR$() (in PRINT)\n"
              "  Network:  NETSEND \"name\"|\"ALL\", \"text\"|number   NETAVAIL   NETRECV   NETOK\n"
+             "  TCP/UDP:  H = TCPCONNECT(\"host\", port)  TCPLISTEN(port)  TCPACCEPT(H)  UDPOPEN(port[,\"host\",port])\n"
+             "            SOCKPRINT H, items   UDPSEND H, \"host\", port, items   SOCKCLOSE H\n"
+             "            SOCKAVAIL(H)  SOCKGET(H) (byte)  SOCKNUM(H) (number)   errors are < 0\n"
              "  Operators: + - * / MOD  = <> < > <= >=  AND OR NOT   (integers only)\n"
              "  SAVE \"/RUN/NAME\" = start automatically after boot. Ctrl+C stops a program.\n");
 }
@@ -861,6 +979,7 @@ void basic_main(const char *file)
         if (open_line) { con_putc('\n'); open_line = 0; }
         if (bye) break;
     }
+    sock_close_all();
     if (dirty && nlines) kprintf("(program kept in memory; SAVE it to keep it after reboot)\n");
 }
 
@@ -870,6 +989,7 @@ int basic_run_file(const char *path)
     if (basic_load(path)) { kprintf("cannot load %s\n", path); return -1; }
     open_line = 0;
     if (ctx_save(&err_ctx) == 0) run_program();
+    sock_close_all();
     if (open_line) con_putc('\n');
     running = 0;
     cur = -1;

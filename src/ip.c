@@ -9,6 +9,8 @@
  *    router lists it), or a static address saved in /IP.TXT
  *
  * Commands: ip, ping, http (a small web page served by the board).
+ * Sockets for programs (C API, BASIC): numbered TCP / UDP connections with a
+ * receive buffer each; see the "sockets" section below.
  */
 #include "usb.h"
 #include "sd.h"
@@ -23,6 +25,7 @@
 #include "lwip/inet_chksum.h"
 #include "lwip/prot/ip4.h"
 #include "lwip/tcp.h"
+#include "lwip/udp.h"
 #include "netif/ethernet.h"
 
 static struct netif nif;
@@ -249,29 +252,32 @@ static u8 ping_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p, const ip_add
     return 1;                                            /* eaten */
 }
 
+static struct { int state; ip_addr_t addr; } dns_res;  /* 0 waiting, 1 found, -1 failed */
+
 static void dns_found(const char *name, const ip_addr_t *addr, void *arg)
 {
-    (void)name;
-    int *state = arg;
-    if (addr) { ip_addr_copy(*(ip_addr_t *)(state + 2), *addr); *state = 1; }
-    else *state = -1;
+    (void)name; (void)arg;
+    if (addr) { ip_addr_copy(dns_res.addr, *addr); dns_res.state = 1; }
+    else dns_res.state = -1;
 }
 
-/* name or dotted address -> address; 0 = ok */
-static int resolve(const char *name, ip_addr_t *out)
+/* name or dotted address -> address; 0 = ok, -1 unknown, -2 aborted by idle() */
+static int resolve(const char *name, ip_addr_t *out, int (*idle)(void))
 {
-    static int st[8];                                    /* [0] state, [2..] address */
     if (ipaddr_aton(name, out)) return 0;
-    st[0] = 0;
-    err_t e = dns_gethostbyname(name, out, dns_found, st);
+    dns_res.state = 0;
+    err_t e = dns_gethostbyname(name, out, dns_found, 0);
     if (e == ERR_OK) return 0;
     if (e != ERR_INPROGRESS) return -1;
-    for (int i = 0; i < 50 && !st[0]; i++)
-        if (run_ms(100)) return -2;
-    if (st[0] != 1) return -1;
-    ip_addr_copy(*out, *(ip_addr_t *)(st + 2));
+    u64 end = timer_us() + 5000000;
+    while (!dns_res.state && timer_us() < end)
+        if (idle()) return -2;
+    if (dns_res.state != 1) return -1;
+    ip_addr_copy(*out, dns_res.addr);
     return 0;
 }
+
+static int idle_shell(void) { return con_trygetc() == 3; }   /* polls the network, Ctrl+C aborts */
 
 void ping_cmd(int argc, char **argv)
 {
@@ -281,7 +287,7 @@ void ping_cmd(int argc, char **argv)
     if (argc < 2) { kprintf("usage: ping <address or name> [count]\n"); return; }
     if (!need_net()) return;
     if (argc > 2) parse_num(argv[2], &count);
-    int r = resolve(argv[1], &dst);
+    int r = resolve(argv[1], &dst, idle_shell);
     if (r == -2) { kprintf("^C\n"); return; }
     if (r) { kprintf("cannot resolve %s\n", argv[1]); return; }
     if (!pcb) {
@@ -405,4 +411,377 @@ void http_cmd(int argc, char **argv)
     }
     if (http_pcb) kprintf("web page on: http://%s/  (%u visits)\n", ip4addr_ntoa_r(netif_ip4_addr(&nif), b, sizeof(b)), http_hits);
     else          kprintf("web page off ('http on' starts it)\n");
+}
+
+/* ======================= sockets for programs ======================= */
+/*
+ * Handles 1..NSOCK. Every socket has a receive ring buffer; TCP data that does
+ * not fit is refused (lwIP keeps it and the TCP window stays closed until the
+ * program reads), UDP datagrams that do not fit are dropped. Blocking calls
+ * (connect, DNS, send when the buffer is full) wait by calling idle(), which
+ * must poll the network: con_trygetc() via the program's Ctrl+C check.
+ */
+#define NSOCK   8
+#define SOCK_RX 4096
+enum { S_FREE, S_UDP, S_TCP, S_LISTEN };
+enum { T_CONNECTING, T_OPEN, T_PEER_CLOSED, T_ERROR };
+
+struct sock {
+    u8  type, state;
+    struct tcp_pcb *t;
+    struct udp_pcb *u;
+    ip_addr_t peer;                     /* UDP: where sockWrite sends (fixed, or the last sender) */
+    u16 peer_port;
+    u8  fixed_peer;
+    u16 head, count;                    /* ring buffer */
+    u16 udp_left;                       /* bytes left of the datagram being read byte by byte */
+    ip_addr_t from;                     /* UDP: sender of the datagram being read */
+    u16 from_port;
+    u8  queue[NSOCK], nq;               /* LISTEN: accepted connections not yet taken */
+    u8  rx[SOCK_RX];
+};
+static struct sock socks[NSOCK + 1];    /* [0] unused */
+
+const char *sock_error(int e)
+{
+    switch (e) {
+    case -1: return "no network";
+    case -2: return "unknown host name";
+    case -3: return "no answer / connection refused";
+    case -4: return "too many open connections";
+    case -5: return "bad handle";
+    case -6: return "connection closed";
+    case -7: return "out of memory";
+    case -8: return "port in use";
+    default: return e >= 0 ? "ok" : "error";
+    }
+}
+
+static struct sock *get(int h, int type)
+{
+    if (h < 1 || h > NSOCK || socks[h].type == S_FREE) return 0;
+    if (type && socks[h].type != type) return 0;
+    return &socks[h];
+}
+
+static int alloc_sock(int type)
+{
+    for (int h = 1; h <= NSOCK; h++)
+        if (socks[h].type == S_FREE) {
+            memset(&socks[h], 0, sizeof(socks[h]) - SOCK_RX);
+            socks[h].type = (u8)type;
+            return h;
+        }
+    return -4;
+}
+
+static u16 rb_free(struct sock *s) { return (u16)(SOCK_RX - s->count); }
+
+static void rb_put(struct sock *s, const void *d, u16 n)
+{
+    const u8 *p = d;
+    for (u16 i = 0; i < n; i++) s->rx[(s->head + s->count + i) % SOCK_RX] = p[i];
+    s->count += n;
+}
+
+static u16 rb_get(struct sock *s, void *d, u16 n)
+{
+    u8 *p = d;
+    if (n > s->count) n = s->count;
+    for (u16 i = 0; i < n; i++) { if (p) p[i] = s->rx[s->head]; s->head = (s->head + 1) % SOCK_RX; }
+    s->count -= n;
+    return n;
+}
+
+/* ---- TCP callbacks (arg = handle) ---- */
+
+static err_t t_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err)
+{
+    struct sock *s = &socks[(uintptr_t)arg];
+    (void)err;
+    if (!p) { s->state = T_PEER_CLOSED; return ERR_OK; }
+    if (p->tot_len > rb_free(s)) return ERR_MEM;          /* lwIP offers it again later */
+    for (struct pbuf *q = p; q; q = q->next) rb_put(s, q->payload, q->len);
+    (void)pcb;
+    pbuf_free(p);                                        /* tcp_recved() when the program reads */
+    return ERR_OK;
+}
+
+static void t_err(void *arg, err_t err)
+{
+    struct sock *s = &socks[(uintptr_t)arg];
+    (void)err;
+    s->t = 0;                                            /* lwIP has freed the pcb */
+    s->state = T_ERROR;
+}
+
+static err_t t_connected(void *arg, struct tcp_pcb *pcb, err_t err)
+{
+    (void)pcb;
+    socks[(uintptr_t)arg].state = err == ERR_OK ? T_OPEN : T_ERROR;
+    return ERR_OK;
+}
+
+static void t_setup(int h, struct tcp_pcb *pcb)
+{
+    socks[h].t = pcb;
+    tcp_arg(pcb, (void *)(uintptr_t)h);
+    tcp_recv(pcb, t_recv);
+    tcp_err(pcb, t_err);
+}
+
+static err_t t_accept(void *arg, struct tcp_pcb *pcb, err_t err)
+{
+    struct sock *l = &socks[(uintptr_t)arg];
+    if (err != ERR_OK || !pcb) return ERR_VAL;
+    int h = alloc_sock(S_TCP);
+    if (h < 0 || l->nq >= NSOCK) {
+        if (h > 0) socks[h].type = S_FREE;
+        tcp_abort(pcb);
+        return ERR_ABRT;
+    }
+    socks[h].state = T_OPEN;
+    t_setup(h, pcb);
+    l->queue[l->nq++] = (u8)h;
+    return ERR_OK;
+}
+
+/* ---- UDP callback: record = len(2) addr(4) port(2) data ---- */
+
+static void u_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr, u16_t port)
+{
+    struct sock *s = &socks[(uintptr_t)arg];
+    (void)pcb;
+    if (p->tot_len + 8 <= rb_free(s)) {
+        u8 h[8];
+        u32 a = ip4_addr_get_u32(ip_2_ip4(addr));
+        h[0] = (u8)p->tot_len; h[1] = (u8)(p->tot_len >> 8);
+        memcpy(h + 2, &a, 4);
+        h[6] = (u8)port; h[7] = (u8)(port >> 8);
+        rb_put(s, h, 8);
+        for (struct pbuf *q = p; q; q = q->next) rb_put(s, q->payload, q->len);
+    }
+    if (!s->fixed_peer) { ip_addr_copy(s->peer, *addr); s->peer_port = port; }   /* reply goes back */
+    pbuf_free(p);
+}
+
+/* start reading the next datagram: fills from / from_port, returns its length or -1 */
+static int u_next(struct sock *s)
+{
+    u8 h[8];
+    u32 a;
+    if (s->count < 8) return -1;
+    rb_get(s, h, 8);
+    memcpy(&a, h + 2, 4);
+    ip_addr_set_ip4_u32(&s->from, a);
+    s->from_port = (u16)(h[6] | (h[7] << 8));
+    s->udp_left = (u16)(h[0] | (h[1] << 8));
+    return s->udp_left;
+}
+
+/* ---- API ---- */
+
+int sock_tcp_connect(const char *host, int port, int (*idle)(void))
+{
+    ip_addr_t a;
+    if (!started) return -1;
+    int r = resolve(host, &a, idle);
+    if (r) return -2;
+    int h = alloc_sock(S_TCP);
+    if (h < 0) return h;
+    struct tcp_pcb *pcb = tcp_new();
+    if (!pcb) { socks[h].type = S_FREE; return -7; }
+    socks[h].state = T_CONNECTING;
+    t_setup(h, pcb);
+    if (tcp_connect(pcb, &a, (u16_t)port, t_connected) != ERR_OK) { sock_close(h); return -3; }
+    u64 end = timer_us() + 10000000;
+    while (socks[h].state == T_CONNECTING && timer_us() < end)
+        if (idle()) { sock_close(h); return -3; }
+    if (socks[h].state != T_OPEN) { sock_close(h); return -3; }
+    return h;
+}
+
+int sock_tcp_listen(int port)
+{
+    if (!started) return -1;
+    int h = alloc_sock(S_LISTEN);
+    if (h < 0) return h;
+    struct tcp_pcb *p = tcp_new();
+    if (!p) { socks[h].type = S_FREE; return -7; }
+    if (tcp_bind(p, IP_ADDR_ANY, (u16_t)port) != ERR_OK) { tcp_close(p); socks[h].type = S_FREE; return -8; }
+    struct tcp_pcb *l = tcp_listen(p);
+    if (!l) { tcp_close(p); socks[h].type = S_FREE; return -7; }
+    socks[h].t = l;
+    tcp_arg(l, (void *)(uintptr_t)h);
+    tcp_accept(l, t_accept);
+    return h;
+}
+
+int sock_tcp_accept(int h)
+{
+    struct sock *l = get(h, S_LISTEN);
+    if (!l) return -5;
+    if (!l->nq) return 0;
+    int c = l->queue[0];
+    memmove(l->queue, l->queue + 1, --l->nq);
+    return c;
+}
+
+int sock_udp_open(int lport, const char *host, int rport, int (*idle)(void))
+{
+    ip_addr_t a;
+    if (!started) return -1;
+    if (host && host[0] && resolve(host, &a, idle)) return -2;
+    int h = alloc_sock(S_UDP);
+    if (h < 0) return h;
+    struct udp_pcb *u = udp_new();
+    if (!u) { socks[h].type = S_FREE; return -7; }
+    if (udp_bind(u, IP_ADDR_ANY, (u16_t)lport) != ERR_OK) { udp_remove(u); socks[h].type = S_FREE; return -8; }
+    ip_set_option(u, SOF_BROADCAST);
+    udp_recv(u, u_recv, (void *)(uintptr_t)h);
+    socks[h].u = u;
+    if (host && host[0]) { ip_addr_copy(socks[h].peer, a); socks[h].peer_port = (u16)rport; socks[h].fixed_peer = 1; }
+    return h;
+}
+
+static int udp_out(struct sock *s, const ip_addr_t *to, u16 port, const void *d, int len)
+{
+    if (len > 1472) len = 1472;
+    struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, (u16_t)len, PBUF_RAM);
+    if (!p) return -7;
+    memcpy(p->payload, d, len);
+    err_t e = udp_sendto(s->u, p, to, port);
+    pbuf_free(p);
+    return e == ERR_OK ? len : -3;
+}
+
+int sock_write(int h, const void *d, int len, int (*idle)(void))
+{
+    struct sock *s = get(h, 0);
+    if (!s || s->type == S_LISTEN) return -5;
+    if (s->type == S_UDP) {
+        if (!s->peer_port) return -3;                    /* nowhere to send yet */
+        return udp_out(s, &s->peer, s->peer_port, d, len);
+    }
+    const u8 *p = d;
+    int done = 0;
+    u64 end = timer_us() + 10000000;
+    while (done < len) {
+        if (!s->t || s->state == T_ERROR) return done ? done : -6;
+        int n = tcp_sndbuf(s->t);
+        if (n > len - done) n = len - done;
+        if (n > 0 && tcp_write(s->t, p + done, (u16_t)n, TCP_WRITE_FLAG_COPY) == ERR_OK) {
+            done += n;
+            continue;
+        }
+        tcp_output(s->t);
+        if (timer_us() > end) break;
+        if (idle()) break;
+        s = get(h, 0);
+        if (!s) return -5;
+    }
+    if (s->t) tcp_output(s->t);
+    return done;
+}
+
+int sock_sendto(int h, const char *host, int port, const void *d, int len, int (*idle)(void))
+{
+    ip_addr_t a;
+    struct sock *s = get(h, S_UDP);
+    if (!s) return -5;
+    if (resolve(host, &a, idle)) return -2;
+    return udp_out(s, &a, (u16)port, d, len);
+}
+
+/* bytes waiting; -1 when a TCP connection is closed and nothing is left */
+int sock_avail(int h)
+{
+    struct sock *s = get(h, 0);
+    if (!s) return -5;
+    if (s->type == S_LISTEN) return s->nq;
+    if (s->type == S_UDP) return s->udp_left ? s->udp_left : s->count >= 8 ? (s->rx[s->head] | (s->rx[(s->head + 1) % SOCK_RX] << 8)) : 0;
+    if (!s->count && s->state >= T_PEER_CLOSED) return -1;
+    return s->count;
+}
+
+static void tcp_consumed(struct sock *s, u16 n)
+{
+    if (s->t && n) tcp_recved(s->t, n);
+}
+
+/* TCP: bytes (0 = nothing yet, -1 closed). UDP: one datagram (-1 = none) */
+int sock_read(int h, void *buf, int max)
+{
+    struct sock *s = get(h, 0);
+    if (!s || s->type == S_LISTEN) return -5;
+    if (s->type == S_UDP) {
+        if (!s->udp_left && u_next(s) < 0) return -1;
+        u16 n = s->udp_left < max ? s->udp_left : (u16)max;
+        rb_get(s, buf, n);
+        rb_get(s, 0, (u16)(s->udp_left - n));           /* the rest of a too long datagram */
+        s->udp_left = 0;
+        return n;
+    }
+    if (!s->count) return s->state >= T_PEER_CLOSED ? -1 : 0;
+    u16 n = rb_get(s, buf, (u16)(max > 0xFFFF ? 0xFFFF : max));
+    tcp_consumed(s, n);
+    return n;
+}
+
+int sock_read_from(int h, void *buf, int max, char *ip, int *port)
+{
+    struct sock *s = get(h, S_UDP);
+    if (!s) return -5;
+    if (!s->udp_left && u_next(s) < 0) return -1;
+    if (ip) ip4addr_ntoa_r(ip_2_ip4(&s->from), ip, 16);
+    if (port) *port = s->from_port;
+    return sock_read(h, buf, max);
+}
+
+/* one byte: >= 0, -1 nothing yet, -2 closed */
+int sock_getc(int h)
+{
+    struct sock *s = get(h, 0);
+    u8 c;
+    if (!s || s->type == S_LISTEN) return -2;
+    if (s->type == S_UDP) {
+        if (!s->udp_left && u_next(s) < 0) return -1;
+        if (!s->udp_left) return -1;                     /* empty datagram */
+        rb_get(s, &c, 1);
+        s->udp_left--;
+        return c;
+    }
+    if (!s->count) return s->state >= T_PEER_CLOSED ? -2 : -1;
+    rb_get(s, &c, 1);
+    tcp_consumed(s, 1);
+    return c;
+}
+
+void sock_close(int h)
+{
+    struct sock *s = get(h, 0);
+    if (!s) return;
+    if (s->type == S_UDP && s->u) udp_remove(s->u);
+    if (s->type == S_LISTEN) {
+        for (int i = 0; i < s->nq; i++) sock_close(s->queue[i]);
+        if (s->t) tcp_close(s->t);
+    }
+    if (s->type == S_TCP && s->t) {
+        tcp_arg(s->t, 0); tcp_recv(s->t, 0); tcp_err(s->t, 0);
+        if (tcp_close(s->t) != ERR_OK) tcp_abort(s->t);
+    }
+    s->type = S_FREE;
+    s->t = 0; s->u = 0;
+}
+
+void sock_close_all(void)
+{
+    for (int h = 1; h <= NSOCK; h++) sock_close(h);
+}
+
+const char *ip_address(void)
+{
+    static char b[16];
+    if (!started) return "0.0.0.0";
+    return ip4addr_ntoa_r(netif_ip4_addr(&nif), b, sizeof(b));
 }

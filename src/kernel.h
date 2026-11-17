@@ -141,6 +141,21 @@ void ip_cmd(int argc, char **argv);
 void ping_cmd(int argc, char **argv);
 void http_cmd(int argc, char **argv);
 const char *os_version(void);
+/* sockets for programs: handles 1..8, errors < 0 (sock_error); idle() polls the network */
+int  sock_tcp_connect(const char *host, int port, int (*idle)(void));
+int  sock_tcp_listen(int port);
+int  sock_tcp_accept(int listener);                 /* new handle, 0 = nobody yet */
+int  sock_udp_open(int lport, const char *host, int rport, int (*idle)(void));
+int  sock_write(int h, const void *d, int len, int (*idle)(void));
+int  sock_sendto(int h, const char *host, int port, const void *d, int len, int (*idle)(void));
+int  sock_avail(int h);                             /* bytes waiting, -1 = closed and empty */
+int  sock_read(int h, void *buf, int max);          /* TCP: 0 nothing, -1 closed; UDP: -1 none */
+int  sock_read_from(int h, void *buf, int max, char *ip, int *port);
+int  sock_getc(int h);                              /* byte, -1 nothing yet, -2 closed */
+void sock_close(int h);
+void sock_close_all(void);
+const char *sock_error(int e);
+const char *ip_address(void);
 
 /* edit.c */
 void editor_main(const char *path);

@@ -18,7 +18,7 @@ typedef unsigned long      size_t;
 
 #define APP_BASE    0x01000000UL
 #define APP_MAGIC   "ROBOAPP1"
-#define API_VERSION 2
+#define API_VERSION 3
 
 #define INPUT          0
 #define OUTPUT         1
@@ -56,6 +56,24 @@ struct robos_api {
     int      (*netSend)(const char *to, const char *text);        /* "all" = everybody; 0 delivered, 1 sent to all, <0 error */
     int      (*netReceive)(char *from, char *text, int max);      /* from[16]; returns length, -1 = nothing */
     const char *(*netName)(void);                 /* this board's name */
+    /* TCP/IP (API version 3). Handles are 1..8, errors are negative (see sockError).
+     * Calls that wait (connect, name lookup, a full send buffer) keep the network
+     * running and stop the program on Ctrl+C. Close what you open; everything a
+     * program opened is closed when it ends. */
+    int      (*tcpConnect)(const char *host, int port);              /* host: "192.168.1.5" or a name */
+    int      (*tcpListen)(int port);                                 /* server: listening handle */
+    int      (*tcpAccept)(int listener);                             /* new connection, 0 = nobody yet */
+    int      (*udpOpen)(int localPort, const char *host, int remotePort);  /* host 0 = answer the last sender */
+    int      (*sockWrite)(int h, const void *data, int len);         /* bytes sent, <0 error */
+    int      (*sockPrint)(int h, const char *text);                  /* sockWrite of a C string */
+    int      (*sockRead)(int h, void *buf, int max);                 /* TCP: bytes, 0 nothing yet, -1 closed;
+                                                                        UDP: one datagram, -1 none */
+    int      (*sockAvailable)(int h);                                /* bytes waiting, -1 closed */
+    int      (*udpSendTo)(int h, const char *host, int port, const void *data, int len);
+    int      (*udpReceiveFrom)(int h, void *buf, int max, char *fromIp, int *fromPort);  /* fromIp[16] */
+    void     (*sockClose)(int h);
+    const char *(*sockError)(int err);            /* text for a negative result */
+    const char *(*ipAddress)(void);               /* this board, e.g. "192.168.1.37" */
 };
 
 extern const struct robos_api *api;
@@ -81,6 +99,19 @@ extern const struct robos_api *api;
 #define netSend(to, text)      (api->netSend)(to, text)
 #define netReceive(f, t, max)  (api->netReceive)(f, t, max)
 #define netName()             (api->netName)()
+#define tcpConnect(host, port)          (api->tcpConnect)(host, port)
+#define tcpListen(port)                 (api->tcpListen)(port)
+#define tcpAccept(l)                    (api->tcpAccept)(l)
+#define udpOpen(lport, host, rport)     (api->udpOpen)(lport, host, rport)
+#define sockWrite(h, d, n)              (api->sockWrite)(h, d, n)
+#define sockPrint(h, s)                 (api->sockPrint)(h, s)
+#define sockRead(h, b, max)             (api->sockRead)(h, b, max)
+#define sockAvailable(h)                (api->sockAvailable)(h)
+#define udpSendTo(h, host, port, d, n)  (api->udpSendTo)(h, host, port, d, n)
+#define udpReceiveFrom(h, b, max, ip, port) (api->udpReceiveFrom)(h, b, max, ip, port)
+#define sockClose(h)                    (api->sockClose)(h)
+#define sockError(e)                    (api->sockError)(e)
+#define ipAddress()                     (api->ipAddress)()
 
 void *memset(void *d, int c, size_t n);
 void *memcpy(void *d, const void *s, size_t n);

@@ -15,6 +15,7 @@ export MTOOLS_SKIP_CHECK=1
 mmd -i /tmp/part.img ::/RUN ::/APPS
 for a in $AUTO;  do mcopy -i /tmp/part.img sdk/bin/$a.bin ::/RUN/; done
 for a in $OTHER; do mcopy -i /tmp/part.img sdk/bin/$a.bin ::/APPS/; done
+for b in sd/APPS/*.bas; do mcopy -i /tmp/part.img "$b" ::/APPS/; done
 printf 'Hello from a text file on the SD card.\nLine two.\n' > /tmp/readme.txt
 mcopy -i /tmp/part.img /tmp/readme.txt "::/Read me please.txt"
 dd if=/tmp/part.img of="$IMG" bs=512 seek=2048 conv=notrunc status=none

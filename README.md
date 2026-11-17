@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.11**
+Current version: **0.12**
 
 ## Supported boards
 
@@ -65,13 +65,16 @@ robo@rpi3:~$ basic
 - Statements: `PRINT`/`?`, `INPUT`, `LET`, `IF..THEN..ELSE`, `GOTO`, `GOSUB`/`RETURN`,
   `FOR..TO..STEP`/`NEXT`, `DIM`, `END`, `REM`/`'`, `CLS`, `RANDOMIZE`; separate statements with `:`.
 - GPIO: `PINMODE pin, OUT|IN|PULLUP|PULLDOWN`, `GPIO pin, HIGH|LOW`, `GPIO(pin)`, `LED ON|OFF`, `WAIT ms`.
-- Network: `NETSEND`, `NETOK`, `NETAVAIL`, `NETRECV` (see the network section).
+- Network: `NETSEND`, `NETOK`, `NETAVAIL`, `NETRECV`; TCP/UDP: `TCPCONNECT`, `TCPLISTEN`,
+  `TCPACCEPT`, `UDPOPEN`, `SOCKPRINT`, `UDPSEND`, `SOCKAVAIL`, `SOCKGET`, `SOCKNUM`, `SOCKCLOSE`
+  (see the network sections).
 - Functions: `ABS()`, `RND(n)`, `MIN(a,b)`, `MAX(a,b)`, `MILLIS`, `MICROS`, `INKEY`, `TEMP`, `CHR$()` (in PRINT).
 - Integers only (64-bit). Keywords must be separated by spaces. `.bas` files are plain text,
   so you can also write them on a PC.
 - File names when saving: 8.3 (max 8 characters + extension).
 
-Examples on the card: `APPS/blink.bas`, `APPS/button.bas`, `APPS/knight.bas`.
+Examples on the card: `APPS/blink.bas`, `APPS/button.bas`, `APPS/knight.bas`,
+`APPS/ledsrv.bas` (LED controlled over TCP), `APPS/udptemp.bas` (temperature over UDP).
 
 ### Text editor
 
@@ -113,9 +116,11 @@ void loop(void)
 (`/RUN` for autostart). API: `pinMode`, `digitalWrite`, `digitalRead`, `delay`,
 `delayMicroseconds`, `millis`, `micros`, `print`, `println`, `printf`, `getKey`,
 `clearScreen`, `textColor`, `actLed`, `cpuTemperature`, `stopRequested`, `exit`,
-`netSend`, `netReceive`, `netName`
+`netSend`, `netReceive`, `netName`, and TCP/UDP: `tcpConnect`, `tcpListen`, `tcpAccept`,
+`udpOpen`, `sockWrite`, `sockPrint`, `sockRead`, `sockAvailable`, `udpSendTo`,
+`udpReceiveFrom`, `sockClose`, `sockError`, `ipAddress`
 (see `sdk/robos.h`). A program can use `setup()` + `loop()` or `main()`.
-Examples: `hello`, `blink`, `button`, `knight`, `chat`.
+Examples: `hello`, `blink`, `button`, `knight`, `chat`, `tcpserv` (TCP server), `udpecho` (UDP).
 
 Programs are loaded at 0x01000000 (max 16 MB). A crash inside a program prints the
 exception and returns to the shell.
@@ -126,7 +131,8 @@ Use a 220-330 Ω resistor for LEDs and a transistor/module for relays and motors
 ## Network: messages between RoboOS boards
 
 The Pi 3B (LAN9514) and the Pi 3B+ (LAN7515) have an Ethernet chip that is a USB device
-behind the onboard hub; RoboOS has a driver for both. Plug the
+behind the onboard hub; RoboOS has a driver for both. The 3B links at 100 Mbit, the 3B+
+at 1000 Mbit (`net speed 100` limits it; over USB 2.0 the chip moves at most ~300 Mbit). Plug the
 boards into the same switch or router and they can send each other short text messages.
 The protocol is RoboOS's own, on raw Ethernet frames (EtherType `88b5`), so a PC does
 not understand it. For talking to PCs and the internet there is TCP/IP (next section).
@@ -185,7 +191,41 @@ reply from 192.168.1.1: seq=1 ttl=64 time=0.9 ms
 - `ping <address or name> [count]` - names are looked up with DNS.
 - `http on` starts a small web page with the board's name, version, uptime and CPU
   temperature: open `http://<address>/` in a browser. `http off` stops it.
-- IPv4 only. TCP/IP is not in the BASIC / C API yet.
+- IPv4 only.
+
+### TCP and UDP in programs
+
+Connections are numbered 1-8 (a program gets a number from `TCPCONNECT`, `TCPLISTEN`,
+`TCPACCEPT` or `UDPOPEN`); a negative result is an error: -1 no network, -2 unknown host
+name, -3 no answer / refused, -4 too many connections, -5 bad number, -6 closed,
+-7 out of memory, -8 port in use. Everything a program opened is closed when it ends.
+
+BASIC (integers only, so data is read byte by byte or as numbers):
+
+| | |
+|---|---|
+| `H = TCPCONNECT("host", port)` | connect (address or name), waits up to 10 s |
+| `L = TCPLISTEN(port)`, `C = TCPACCEPT(L)` | server: `TCPACCEPT` gives 0 until somebody connects |
+| `U = UDPOPEN(port)`, `U = UDPOPEN(port, "host", port)` | UDP; without a host, `SOCKPRINT` answers the last sender; port 0 = any |
+| `SOCKPRINT H, "text"; X; CHR$(13)` | send, like PRINT (ends with CR LF unless it ends with `;`); one UDP datagram |
+| `UDPSEND U, "host", port, items` | UDP to a given address (`"255.255.255.255"` = everybody) |
+| `SOCKAVAIL(H)` | bytes waiting, -1 = the other side closed |
+| `SOCKGET(H)` | next byte, -1 = nothing yet, -2 = closed |
+| `SOCKNUM(H)` | next number in the data (waits up to 2 s), 0 if none |
+| `SOCKCLOSE H` | close |
+
+```
+10 H = TCPCONNECT("192.168.1.10", 5000) : IF H < 0 THEN PRINT "error "; H : END
+20 SOCKPRINT H, "temperature "; TEMP
+30 K = SOCKGET(H) : IF K >= 0 THEN PRINT CHR$(K); : GOTO 30
+40 IF K = -1 THEN 30
+50 SOCKCLOSE H
+```
+
+C (`sdk/robos.h`): `tcpConnect`, `tcpListen`, `tcpAccept`, `udpOpen`, `sockWrite`, `sockPrint`,
+`sockRead` (TCP: bytes, 0 = nothing yet, -1 = closed; UDP: one datagram), `sockAvailable`,
+`udpSendTo`, `udpReceiveFrom`, `sockClose`, `sockError`, `ipAddress`. Examples:
+`tcpserv` (a TCP server for `nc <address> 23`) and `udpecho` (`nc -u <address> 5000`).
 
 The network runs while RoboOS waits for input (shell prompt, `delay()`, `getKey()`,
 `WAIT`, `INKEY`), like the keyboard: a program that never calls any of them blocks it.
@@ -250,6 +290,7 @@ If you connect after boot, press Enter.
 | `usb test` | 8 s keyboard test (transfer statistics, raw reports) |
 | `usb debug on\|off` | verbose USB and keyboard report logging |
 | `net` | network status (name, chip, MAC, link, counters) |
+| `net speed 100\|1000` | Pi 3B+: limit the link to 100 Mbit / allow 1000 |
 | `net who` | list the RoboOS boards on the network |
 | `net send <name\|all> <text>` | send a message |
 | `net name [new]` | show / change this board's name |
@@ -286,7 +327,7 @@ raises an exception; it is printed and the system returns to the shell.
 | `src/usb.c` | DWC2 USB host driver: init, root port, DMA transfers, split transactions, enumeration, hubs, hot-plug |
 | `src/eth.c` | Ethernet: LAN9514 (3B) and LAN7515 (3B+) over USB bulk endpoints, raw frames |
 | `src/net.c` | messages between RoboOS boards (names, who, send with confirmation, inbox) |
-| `src/ip.c` | TCP/IP: lwIP port, network interface, DHCP, `ip`, `ping`, `http` |
+| `src/ip.c` | TCP/IP: lwIP port, network interface, DHCP, `ip`, `ping`, `http`, sockets for programs |
 | `lwip/` | lwIP 2.2.1 TCP/IP stack (unmodified, BSD license) |
 | `src/kbd.c` | HID keyboard: boot protocol, scan code translation, autorepeat |
 | `src/sd.c` | SD card driver (Arasan SDHCI, GPIO48-53 ALT3), read + write |
@@ -358,7 +399,7 @@ qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial stdio -device usb-kbd
 - interrupts + timer → multitasking
 - I2C / SPI / PWM in the API and in BASIC
 - editor: search, go to line, save as
-- TCP/UDP in the BASIC and C API, a telnet-like remote shell
+- a telnet-like remote shell, IPv6
 - more cores (spin table at 0xE0–0xF0)
 
 ## Credits

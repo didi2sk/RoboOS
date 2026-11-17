@@ -79,7 +79,9 @@ const u8 *eth_mac(void);
 u32  eth_chip(void);
 const char *eth_chip_name(void);                 /* "LAN9514 (SMSC)" / "LAN7515 (LAN7800)" */
 const char *eth_error(int *code, u32 *hcint);    /* 0 = fine, else the failed init step */
-int  eth_link(int *full);                        /* 0 = down, else 10 / 100 */
+int  eth_link(int *full);                        /* 0 = down, else 10 / 100 / 1000 */
+int  eth_set_gigabit(int on);                    /* LAN7515 only; -1 = not this chip */
+int  eth_gigabit(void);
 int  eth_link_cached(void);                      /* last known speed, no USB traffic */
 int  eth_send(const void *frame, int len);       /* frame = dst, src, type, payload */
 int  eth_recv(void *buf, int max);               /* length, 0 = nothing, <0 = error */

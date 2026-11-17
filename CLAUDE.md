@@ -37,8 +37,10 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
 - RPi 3B: SD init + FAT file writes **work** (owner tested after the CMD55 fix, v0.7).
 - RPi 3B: Ethernet (LAN9514, v0.8) **works**: init, link up 100 Mbit full duplex, `net test` received
   235 frames with 0 errors and sent 10 (photo). The owner's LAN delivers VLAN-tagged frames (type 8100).
-- Pi 3B+ (owner has one, rev 0xa020d3): Ethernet is LAN7515/LAN7800 (0424:7800), added in v0.10 from the Linux
-  lan78xx driver - **not yet verified**. If `net` still finds nothing there, ask for a photo of `usb` (is 0424:7800 enumerated?).
+- Pi 3B+ (owner has one, rev 0xa020d3): Ethernet LAN7515/LAN7800 (0424:7800, v0.10, from the Linux lan78xx
+  driver) **links up**: the router showed the port at 100 Mbit (v0.10-0.11 advertised 10/100 only; the owner
+  expected gigabit). v0.12 advertises 1000BASE-T full duplex and sets MAC speed 1000 - **not yet verified**;
+  `net speed 100` is the fallback. Traffic through the LAN7515 (frames, DHCP) not yet confirmed either.
 - Not yet verified on hardware: RoboOS messages between two boards (v0.9, tested only with `net loop on`
   in QEMU), program loader, BASIC, line editor / full-screen editor,
   board detection, Zero 2 W (ACT LED GPIO29 active-low is an assumption).
@@ -57,7 +59,7 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
 | `src/usb.c` | DWC2 host driver: polling, one channel (0), Buffer DMA, one packet per channel run |
 | `src/eth.c` | Ethernet over USB: LAN9514 (0424:ec00, 3B), LAN7515/LAN7800 (0424:7800, 3B+) and any CDC-ECM adapter (QEMU usb-net); vendor control requests 0xA0/0xA1 for registers, bulk IN/OUT for frames (`usb_bulk`), polled; `link_tick()` follows the link once a second (LAN78xx: MAC speed/duplex only while TX/RX are off, started on link-up) |
 | `src/net.c` | RoboOS messages on raw frames (EtherType 0x88B5): names (`/NAME.TXT`), WHO/HERE, MSG with ACK + 3 tries, inbox of 8; polled every 5 ms from `con_trygetc()`; `net loop on` = loopback for QEMU tests |
-| `src/ip.c` | TCP/IP glue for lwIP 2.2.1 (`lwip/`, unmodified, NO_SYS raw API; port in `src/lwip_port/`: lwipopts.h, arch/cc.h, tiny string/stdlib/stdio shims): netif -> `eth_send`, non-0x88B5 frames from `net.c` -> lwIP, `sys_check_timeouts()` from `net_poll`; DHCP (hostname = board name), `/IP.TXT` static config, `ip`, `ping` (raw ICMP, DNS), `http on` (one page) |
+| `src/ip.c` | sockets for programs (handles 1..8, 4 KB rx ring each, TCP flow control by refusing data, UDP records len/addr/port; blocking calls take an `idle()` that polls the network: app.c `poll_input`, BASIC `check_break`; closed when a program / BASIC run ends); TCP/IP glue for lwIP 2.2.1 (`lwip/`, unmodified, NO_SYS raw API; port in `src/lwip_port/`: lwipopts.h, arch/cc.h, tiny string/stdlib/stdio shims): netif -> `eth_send`, non-0x88B5 frames from `net.c` -> lwIP, `sys_check_timeouts()` from `net_poll`; DHCP (hostname = board name), `/IP.TXT` static config, `ip`, `ping` (raw ICMP, DNS), `http on` (one page) |
 | `src/kbd.c` | HID boot keyboard, US layout, keypad, LEDs, autorepeat, runtime method lock |
 | `src/sd.c` / `src/fat.c` | Arasan SDHCI (GPIO48-53 ALT3), PIO single-block read/write; FAT16/32 with LFN read, 8.3 write |
 | `src/app.c` | loads `.bin` at 0x01000000, API table (`sdk/robos.h`), Ctrl+C via `ctx_save/ctx_restore` (`src/ctx.S`), autostart `/RUN` |
@@ -65,7 +67,7 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
 | `src/lineedit.c` | shared line editor (shell, BASIC prompt, INPUT): cursor keys, insert/delete, history, Tab hook; redraws with `\b` + chars only |
 | `src/edit.c` | full-screen editor (`edit <file>`): flat buffer at 0x02000000 (1 MB) + save scratch above it; draws via `con_goto`/`con_clreol`, only changed rows (UART is slow) |
 | `src/shell.c` | commands, Tab completion |
-| `sdk/` | program SDK: `start.S` header (`ROBOAPP1` magic at +8, image end at +16), `crt0.c`, `app.ld`, examples |
+| `sdk/` | program SDK (API version 3: messages, TCP/UDP): `start.S` header (`ROBOAPP1` magic at +8, image end at +16), `crt0.c`, `app.ld`, examples |
 
 Memory: kernel at 0x80000, BSS ends ~0x120000, DMA block at 0x200000 (2 MB, uncached),
 programs at 0x01000000-0x02000000, USB DMA: channel 0 buffer at the DMA block start, channel 1 (async bulk IN) +1 MB, editor text at 0x02000000 (1 MB) + save scratch up to 0x02300000.
@@ -102,9 +104,13 @@ Keys: `con_getkey()` decodes escape sequences into `K_UP`... (kbd.c sends the sa
 
 ## Open ideas / next steps
 
-- verify two-board messaging/BASIC/loader on real hardware; Zero 2 W bring-up
+- verify two-board messaging/BASIC/loader/TCP-IP on real hardware; Zero 2 W bring-up
+- `make sd.img` also copies `sd/APPS/*.bas`; examples: tcpserv.c, udpecho.c, ledsrv.bas, udptemp.bas
 - network: RoboOS messages over raw frames (v0.9) and TCP/IP via lwIP (v0.11: DHCP, ping, DNS, one web page)
-  are in; TCP/IP is tested only in QEMU. Next: TCP/UDP in the BASIC / C API, a remote shell
+  are in, TCP/UDP for BASIC and C since v0.12; all TCP/IP is tested only in QEMU. Next: a remote shell
+- `tools/qemu_net_test.py`: `@tcp:23:line|line` / `@udp:5000:text` talk to the board from the host; the host
+  also serves TCP 10.0.2.2:18000 (answers "host got: ...") and listens on UDP 10.0.2.2:15001
+- BASIC gotcha when testing: `run x.bas` leaves that program in BASIC memory; typed lines merge with it
 - license (MIT suggested, not chosen yet)
 - Slovak keyboard layout + font with diacritics
 - I2C / SPI / PWM in API and BASIC, interrupts + timer, multitasking, editor search / go to line / save as
