@@ -416,6 +416,45 @@ static void cmd_cd(int argc, char **argv)
 
 static void cmd_pwd(int argc, char **argv) { (void)argc; (void)argv; kprintf("%s\n", cwd_get()); }
 
+static int idle_break(void) { return con_trygetc() == 3; }
+
+static void cmd_beep(int argc, char **argv)
+{
+    u64 f = 880, ms = 150;
+    if (argc > 1) parse_num(argv[1], &f);
+    if (argc > 2) parse_num(argv[2], &ms);
+    if (f < 20 || f > 20000) { need("beep [frequency 20-20000 Hz] [ms]"); return; }
+    if (ms > 60000) ms = 60000;
+    if (sound_beep((int)f, (int)ms, idle_break)) kprintf("^C\n");
+}
+
+static void cmd_play(int argc, char **argv)
+{
+    char m[LINE_MAX];
+    int n = 0, err = 0;
+    if (argc < 2) { need("play <notes>   e.g. play T140 L8 C D E F G4 G4"); return; }
+    for (int i = 1; i < argc; i++) {
+        if (i > 1) m[n++] = ' ';
+        for (const char *s = argv[i]; *s && n < LINE_MAX - 2; s++) m[n++] = *s;
+    }
+    m[n] = 0;
+    int r = sound_play(m, idle_break, &err);
+    sound_stop();
+    if (r < 0) kprintf("?unknown character at position %d: %s\n", err, m);
+    else if (r) kprintf("^C\n");
+}
+
+static void cmd_sound(int argc, char **argv)
+{
+    u64 v;
+    if (argc > 2 && !strcmp(argv[1], "volume") && parse_num(argv[2], &v)) sound_volume((int)v);
+    else if (argc > 2 && !strcmp(argv[1], "out") && !strcmp(argv[2], "jack")) sound_output(0);
+    else if (argc > 2 && !strcmp(argv[1], "out") && !strcmp(argv[2], "gpio")) sound_output(1);
+    else if (argc > 1 && !strcmp(argv[1], "off")) sound_stop();
+    else if (argc > 1) { need("sound [volume 0-100 | out jack|gpio | off]"); return; }
+    kprintf("output: %s\nvolume: %d %%\n", sound_pins(), sound_get_volume());
+}
+
 static void cmd_basic(int argc, char **argv)
 {
     basic_main(argc > 1 ? argv[1] : 0);
@@ -465,6 +504,9 @@ static const struct cmd cmds[] = {
     { "edit",   "<file>",               "full-screen text editor",         cmd_edit   },
     { "run",    "<program>",            "run a .bin / .bas program",       cmd_run    },
     { "basic",  "[file]",               "BASIC interpreter",               cmd_basic  },
+    { "beep",   "[Hz] [ms]",            "a tone on the audio jack",        cmd_beep   },
+    { "play",   "<notes>",              "play music: play T120 C D E F G", cmd_play   },
+    { "sound",  "[volume|out|off]",     "sound settings: volume, jack/GPIO", cmd_sound },
     { "sd",     "[init]",               "SD card info / re-initialize",    cmd_sd     },
     { "clear",  "",                     "clear the screen",                cmd_clear  },
     { "reboot", "",                     "reboot via watchdog",             cmd_reboot },

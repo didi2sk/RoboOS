@@ -12,6 +12,7 @@ static const u32 rgb[] = {
 
 void con_putc(char c)
 {
+    if (c == 7) { uart_putc(7); sound_tone(880, 80); return; }   /* BEL = a short beep */
     if (c == '\n') uart_putc('\r');
     uart_putc(c);
     fb_putc(c);
@@ -93,6 +94,7 @@ int con_trygetc(void)
     kbd_poll();
     usb_hotplug();
     net_poll();
+    sound_poll();
     return kbd_getc();
 }
 

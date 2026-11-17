@@ -102,6 +102,8 @@ static int  a_avail(int h)                      { poll_input(); return sock_avai
 static int  a_sendto(int h, const char *host, int p, const void *d, int n) { return sock_sendto(h, host, p, d, n, a_idle); }
 static int  a_recvfrom(int h, void *b, int max, char *ip, int *p) { poll_input(); return sock_read_from(h, b, max, ip, p); }
 
+static int  a_play(const char *m)                { int e; int r = sound_play(m, a_idle, &e); sound_stop(); return r; }
+
 static int a_temp(void)
 {
     u32 v[2] = { 0, 0 };
@@ -144,6 +146,10 @@ static const struct robos_api api_table = {
     .sockClose = sock_close,
     .sockError = sock_error,
     .ipAddress = ip_address,
+    .tone = sound_tone,
+    .noTone = sound_stop,
+    .playNotes = a_play,
+    .soundVolume = sound_volume,
 };
 
 /* called from the exception handler: a crash inside a program ends the program */
@@ -225,6 +231,7 @@ int app_run(const char *path)
         app_running = 0;
     }
     sock_close_all();                    /* whatever the program left open (also after Ctrl+C) */
+    sound_stop();
 
     con_color(COL_GRAY);
     switch (app_reason) {

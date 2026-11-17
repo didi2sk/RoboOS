@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.13**
+Current version: **0.14**
 
 ## Supported boards
 
@@ -69,6 +69,7 @@ robo@rpi3:~$ basic
 - Statements: `PRINT`/`?`, `INPUT`, `LET`, `IF..THEN..ELSE`, `GOTO`, `GOSUB`/`RETURN`,
   `FOR..TO..STEP`/`NEXT`, `DIM`, `END`, `REM`/`'`, `CLS`, `RANDOMIZE`; separate statements with `:`.
 - GPIO: `PINMODE pin, OUT|IN|PULLUP|PULLDOWN`, `GPIO pin, HIGH|LOW`, `GPIO(pin)`, `LED ON|OFF`, `WAIT ms`.
+- Sound: `SOUND Hz, ms`, `PLAY "notes"`, `VOLUME 0-100` (see the sound section).
 - Network: `NETSEND`, `NETOK`, `NETAVAIL`, `NETRECV`; TCP/UDP: `TCPCONNECT`, `TCPLISTEN`,
   `TCPACCEPT`, `UDPOPEN`, `SOCKPRINT`, `UDPSEND`, `SOCKAVAIL`, `SOCKGET`, `SOCKNUM`, `SOCKCLOSE`
   (see the network sections).
@@ -78,7 +79,8 @@ robo@rpi3:~$ basic
 - File names when saving: 8.3 (max 8 characters + extension).
 
 Examples on the card: `APPS/blink.bas`, `APPS/button.bas`, `APPS/knight.bas`,
-`APPS/ledsrv.bas` (LED controlled over TCP), `APPS/udptemp.bas` (temperature over UDP).
+`APPS/ledsrv.bas` (LED controlled over TCP), `APPS/udptemp.bas` (temperature over UDP),
+`APPS/sound.bas` (tones and a tune).
 
 ### Text editor
 
@@ -122,9 +124,11 @@ void loop(void)
 `clearScreen`, `textColor`, `actLed`, `cpuTemperature`, `stopRequested`, `exit`,
 `netSend`, `netReceive`, `netName`, and TCP/UDP: `tcpConnect`, `tcpListen`, `tcpAccept`,
 `udpOpen`, `sockWrite`, `sockPrint`, `sockRead`, `sockAvailable`, `udpSendTo`,
-`udpReceiveFrom`, `sockClose`, `sockError`, `ipAddress`
+`udpReceiveFrom`, `sockClose`, `sockError`, `ipAddress`, and sound: `tone(hz, ms)`, `noTone`,
+`playNotes`, `soundVolume`
 (see `sdk/robos.h`). A program can use `setup()` + `loop()` or `main()`.
-Examples: `hello`, `blink`, `button`, `knight`, `chat`, `tcpserv` (TCP server), `udpecho` (UDP).
+Examples: `hello`, `blink`, `button`, `knight`, `chat`, `tcpserv` (TCP server), `udpecho` (UDP),
+`music` (a tune and a siren).
 
 Programs are loaded at 0x01000000 (max 16 MB). A crash inside a program prints the
 exception and returns to the shell.
@@ -237,6 +241,30 @@ The network runs while RoboOS waits for input (shell prompt, `delay()`, `getKey(
 A standard USB network adapter of the CDC-ECM class works too (this is how QEMU
 tests the network; on real boards not tested yet).
 
+## Sound
+
+No Raspberry Pi has a sound chip: the 3.5 mm jack is driven by the two PWM channels of the
+processor through a filter. RoboOS uses them for square-wave tones; the hardware makes the
+wave by itself, the program keeps running. Plug headphones or an active speaker into the
+jack. Boards without a jack (Zero 2 W, CM3) use GPIO18 and GPIO19, where a piezo buzzer
+(or a small amplifier with a speaker) can be connected; `sound out gpio` does the same on
+any board.
+
+- Shell: `beep [Hz] [ms]`, `play <notes>`, `sound` (output and volume),
+  `sound volume 0-100`, `sound out jack|gpio`, `sound off`. Printing the BEL character
+  (ASCII 7) beeps too.
+- BASIC: `SOUND 440, 500` (Hz, ms; with ms 0 the tone keeps sounding until `SOUND 0, 0`),
+  `PLAY "T120 L4 C D E F G2"`, `VOLUME 60`.
+- C: `tone(hz, ms)` starts a tone and returns (ms 0 = until `noTone()`), `playNotes("...")`
+  waits until the end, `soundVolume(percent)`.
+- Notes like QBasic's PLAY: `C D E F G A B` with `#` or `+` (sharp) and `-` (flat), a number
+  after a note = its length (`C8` = eighth), `.` = dotted, `P` or `R` = pause, `L4` = default
+  length, `O4` = octave (0-7, `<` `>` down / up), `T120` = tempo, `MS` / `MN` / `ML` =
+  staccato / normal / legato.
+
+The volume changes the pulse width, so it also changes the sound a little. Playing recorded
+sound (WAV) is not supported yet.
+
 ## USB keyboard
 
 You can plug the keyboard in before power-on or while the system is running (hot-plug:
@@ -309,6 +337,9 @@ If you connect after boot, press Enter.
 | `edit <file>` | full-screen text editor |
 | `run <program>` | run a `.bin` or `.bas` program |
 | `basic [file]` | BASIC interpreter |
+| `beep [Hz] [ms]` | a tone on the audio jack |
+| `play <notes>` | play music, e.g. `play T120 L4 C D E F G2` |
+| `sound [volume n\|out jack\|gpio\|off]` | sound output and volume |
 | `sd [init]` | SD card info / re-initialize after swapping the card |
 | `clear` | clear the screen (also Ctrl+L) |
 | `reboot` | reboot via watchdog |
@@ -347,6 +378,7 @@ raises an exception; it is printed and the system returns to the shell.
 | `src/edit.c` | full-screen text editor |
 | `src/shell.c` | commands, Tab completion |
 | `src/path.c` | current directory, relative paths, `.` and `..` |
+| `src/sound.c` | tones from the PWM (audio jack or GPIO18/19), music strings |
 | `src/font.c` | font generated from DejaVu Sans Mono (`tools/mkfont.py`) |
 
 ### How USB works
@@ -405,7 +437,8 @@ qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial stdio -device usb-kbd
 ## Ideas for later
 - other keyboard layouts (a font with accented characters too)
 - interrupts + timer → multitasking
-- I2C / SPI / PWM in the API and in BASIC
+- I2C / SPI / PWM (servos, LED dimming) in the API and in BASIC
+- sound: WAV playback (PWM + DMA)
 - editor: search, go to line, save as
 - a telnet-like remote shell, IPv6
 - more cores (spin table at 0xE0–0xF0)
