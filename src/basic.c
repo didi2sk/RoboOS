@@ -832,17 +832,19 @@ static int basic_save(const char *path)
 /* LOAD looks in /, /RUN and /APPS */
 static int find_bas(const char *name, char *out, int max)
 {
-    static const char *dirs[3] = { "", "/RUN/", "/APPS/" };
+    static const char *dirs[2] = { "/RUN/", "/APPS/" };
     char tmp[80];
     struct fat_file f;
+    int plain = 1;
     basic_path(name, tmp, sizeof(tmp));
-    for (int d = 0; d < 3; d++) {
+    for (const char *s = tmp; *s; s++) if (*s == '/') plain = 0;
+    if (!path_abs(tmp, out, max) && !fat_open(out, &f) && !f.is_dir) return 0;   /* current dir */
+    for (int d = 0; plain && d < 2; d++) {
         int n = 0;
-        if (tmp[0] != '/') for (const char *s = dirs[d]; *s; s++) out[n++] = *s;
+        for (const char *s = dirs[d]; *s; s++) out[n++] = *s;
         for (const char *s = tmp; *s && n < max - 1; s++) out[n++] = *s;
         out[n] = 0;
         if (!fat_open(out, &f) && !f.is_dir) return 0;
-        if (tmp[0] == '/') break;
     }
     return -1;
 }
@@ -922,23 +924,24 @@ static int immediate(void)                            /* returns 1 on BYE */
     if (kw("NEW"))  { prog_new(); clear_vars(); return 0; }
     if (kw("HELP")) { help(); return 0; }
     if (kw("DIR") || kw("FILES")) {
-        char p[64];
-        if (!str_arg(p, sizeof(p))) { p[0] = '/'; p[1] = 0; }
+        char a[64], p[PATH_MAX_LEN];
+        if (!str_arg(a, sizeof(a))) { a[0] = '.'; a[1] = 0; }
+        if (path_abs(a, p, sizeof(p))) p[0] = 0;
         if (!fat_mounted()) kprintf("?NO SD CARD\n");
         else if (fat_list(p, dir_cb, 0)) kprintf("?NOT FOUND\n");
         return 0;
     }
     if (kw("SAVE")) {
-        char name[64], path[80];
+        char name[64], path[80], full[PATH_MAX_LEN];
         if (!str_arg(name, sizeof(name))) {
             if (!cur_name[0]) { kprintf("?NAME NEEDED: SAVE \"NAME\"\n"); return 0; }
             memcpy(name, cur_name, sizeof(name));
         }
         basic_path(name, path, sizeof(path));
-        if (path[0] != '/') { memmove(path + 1, path, strlen(path) + 1); path[0] = '/'; }
-        int r = basic_save(path);
+        if (path_abs(path, full, sizeof(full))) { kprintf("?NAME TOO LONG\n"); return 0; }
+        int r = basic_save(full);
         if (r) kprintf("?SAVE FAILED: %s\n", fat_write_error(r));
-        else   kprintf("saved %s (%d lines)\n", path, nlines);
+        else   kprintf("saved %s (%d lines)\n", full, nlines);
         return 0;
     }
     if (kw("LOAD")) {

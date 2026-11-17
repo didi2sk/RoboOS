@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.12**
+Current version: **0.13**
 
 ## Supported boards
 
@@ -44,7 +44,11 @@ If the card is not found, `sd init` shows which step failed and the controller r
 
 - Everything in **`/RUN`** (`*.bin` and `*.bas`) starts automatically after boot,
   in alphabetical order. Press any key within 2 s to skip the autostart.
-- `run <name>` starts a program from `/`, `/RUN` or `/APPS`; the extension is optional.
+- `run <name>` starts a program from the current directory, `/RUN` or `/APPS`; the extension
+  is optional.
+- Moving around the card: `cd APPS`, `cd ..`, `cd /`, `pwd`; the prompt shows where you are
+  (`robo@rpi3:/APPS$`). All commands and BASIC (`LOAD`, `SAVE`, `DIR`) take paths relative
+  to the current directory. **Tab** completes file and directory names.
 - **Ctrl+C** stops a running program and returns to the shell.
 
 ### BASIC - write programs directly on the RPi
@@ -298,7 +302,9 @@ If you connect after boot, press Enter.
 | `ip` | IP address, `ip dhcp`, `ip set <address> [mask] [gateway]` |
 | `ping <address\|name> [n]` | ping another computer |
 | `http on\|off` | small web page with board info |
-| `ls [path]` | list a directory on the SD card |
+| `ls [path]` | list a directory on the SD card (default: the current one) |
+| `cd [dir]` | change directory (`..` = up, `/` = top, no argument = top) |
+| `pwd` | show the current directory |
 | `cat <file>` | print a text file (`"quotes"` for names with spaces) |
 | `edit <file>` | full-screen text editor |
 | `run <program>` | run a `.bin` or `.bas` program |
@@ -310,7 +316,8 @@ If you connect after boot, press Enter.
 
 Line editor (UART and keyboard, in the shell and in BASIC): **Left/Right**, **Home/End**
 (or Ctrl+A / Ctrl+E) move the cursor, so you can insert and delete anywhere in the line.
-**Tab** completes a command, **Up/Down** browse
+**Tab** completes a command, and after it a file or directory name (names with spaces get
+"quotes"; with several matches it lists them), **Up/Down** browse
 history, **Ctrl+C** cancels the line. An invalid memory access (e.g. `mem 0xdeadbeef00`)
 raises an exception; it is printed and the system returns to the shell.
 
@@ -338,7 +345,8 @@ raises an exception; it is printed and the system returns to the shell.
 | `src/board.c` | board detection: name, ACT LED, USB topology |
 | `src/lineedit.c` | line editor: cursor keys, history, Tab hook (shell + BASIC) |
 | `src/edit.c` | full-screen text editor |
-| `src/shell.c` | commands |
+| `src/shell.c` | commands, Tab completion |
+| `src/path.c` | current directory, relative paths, `.` and `..` |
 | `src/font.c` | font generated from DejaVu Sans Mono (`tools/mkfont.py`) |
 
 ### How USB works

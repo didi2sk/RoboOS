@@ -351,11 +351,15 @@ static int ls_cb(const struct fat_dirent *e, void *ctx)
 static void cmd_ls(int argc, char **argv)
 {
     if (!need_fs()) return;
-    const char *path = argc > 1 ? argv[1] : "/";
+    char path[PATH_MAX_LEN];
     int n = 0;
+    if (path_abs(argc > 1 ? argv[1] : ".", path, sizeof(path))) { kprintf("path too long\n"); return; }
     int r = fat_list(path, ls_cb, &n);
-    if (r == -2) kprintf("not a directory: %s\n", path);
-    else if (r)  kprintf("not found: %s\n", path);
+    if (r == -2) {                                       /* a file: show just that one */
+        struct fat_file f;
+        if (!fat_open(path, &f)) kprintf("  %-32s %8u\n", argv[1], f.size);
+    }
+    else if (r)  kprintf("not found: %s\n", argc > 1 ? argv[1] : path);
     else if (!n) kprintf("  (empty)\n");
 }
 
@@ -363,9 +367,10 @@ static void cmd_cat(int argc, char **argv)
 {
     struct fat_file f;
     u8 buf[256];
+    char path[PATH_MAX_LEN];
     if (argc < 2) { need("cat <file>"); return; }
     if (!need_fs()) return;
-    if (fat_open(argv[1], &f) || f.is_dir) { kprintf("not found: %s\n", argv[1]); return; }
+    if (path_abs(argv[1], path, sizeof(path)) || fat_open(path, &f) || f.is_dir) { kprintf("not found: %s\n", argv[1]); return; }
     int last = '\n';
     for (;;) {
         int n = fat_read(&f, buf, sizeof(buf));
@@ -384,7 +389,7 @@ static void cmd_cat(int argc, char **argv)
 static void cmd_run(int argc, char **argv)
 {
     char path[96];
-    if (argc < 2) { need("run <program>   (.bin or .bas; looks in /, /RUN and /APPS)"); return; }
+    if (argc < 2) { need("run <program>   (.bin or .bas; looks here, in /RUN and /APPS)"); return; }
     if (!need_fs()) return;
     if (app_resolve(argv[1], path, sizeof(path))) { kprintf("program not found: %s\n", argv[1]); return; }
     app_start(path);
@@ -392,9 +397,24 @@ static void cmd_run(int argc, char **argv)
 
 static void cmd_edit(int argc, char **argv)
 {
+    char path[PATH_MAX_LEN];
     if (argc < 2) { need("edit <file>   (Ctrl+S save, Ctrl+Q quit)"); return; }
-    editor_main(argv[1]);
+    if (path_abs(argv[1], path, sizeof(path))) { kprintf("path too long\n"); return; }
+    editor_main(path);
 }
+
+static void cmd_cd(int argc, char **argv)
+{
+    if (!need_fs()) return;
+    const char *p = argc > 1 ? argv[1] : "/";
+    switch (cwd_set(p)) {
+    case -1: kprintf("not found: %s\n", p); break;
+    case -2: kprintf("not a directory: %s\n", p); break;
+    case -3: kprintf("path too long\n"); break;
+    }
+}
+
+static void cmd_pwd(int argc, char **argv) { (void)argc; (void)argv; kprintf("%s\n", cwd_get()); }
 
 static void cmd_basic(int argc, char **argv)
 {
@@ -439,6 +459,8 @@ static const struct cmd cmds[] = {
     { "ping",   "<address|name> [n]",   "ping another computer",           ping_cmd   },
     { "http",   "[on|off]",             "small web page with board info",  http_cmd   },
     { "ls",     "[path]",               "list a directory on the SD card", cmd_ls     },
+    { "cd",     "[dir]",                "change directory (.. = up, / = top)", cmd_cd },
+    { "pwd",    "",                     "show the current directory",      cmd_pwd    },
     { "cat",    "<file>",               "print a text file",               cmd_cat    },
     { "edit",   "<file>",               "full-screen text editor",         cmd_edit   },
     { "run",    "<program>",            "run a .bin / .bas program",       cmd_run    },
@@ -473,8 +495,97 @@ static void prompt(void)
 {
     con_color(COL_GREEN); con_puts("robo@"); con_puts(board_host());
     con_color(COL_DEFAULT); con_puts(":");
-    con_color(COL_CYAN); con_puts("~");
+    con_color(COL_CYAN);
+    const char *d = cwd_get();
+    int n = (int)strlen(d);
+    if (n > 40) { con_puts("..."); d += n - 37; }       /* keep the prompt short */
+    con_puts(d);
     con_color(COL_DEFAULT); con_puts("$ ");
+}
+
+/* Tab after the command name: complete a file or directory name */
+struct pc { const char *pre; int plen; int n; char first[FAT_MAX_NAME]; int common; int dir; int list; };
+
+static int pc_match(const struct fat_dirent *e, const struct pc *c)
+{
+    for (int i = 0; i < c->plen; i++) {
+        char a = e->name[i], b = c->pre[i];
+        if (!a) return 0;
+        if (a >= 'a' && a <= 'z') a -= 32;
+        if (b >= 'a' && b <= 'z') b -= 32;
+        if (a != b) return 0;
+    }
+    return 1;
+}
+
+static int pc_cb(const struct fat_dirent *e, void *ctx)
+{
+    struct pc *c = ctx;
+    if (!pc_match(e, c)) return 0;
+    if (c->list) {
+        if (e->is_dir) { con_color(COL_CYAN); kprintf("%s/  ", e->name); con_color(COL_DEFAULT); }
+        else kprintf("%s  ", e->name);
+        return 0;
+    }
+    if (!c->n++) {
+        memcpy(c->first, e->name, FAT_MAX_NAME);
+        c->common = (int)strlen(e->name);
+        c->dir = e->is_dir;
+    } else {                                     /* shorten to what all matches share */
+        int i = c->plen;
+        while (i < c->common && e->name[i] && (e->name[i] | 32) == (c->first[i] | 32)) i++;
+        c->common = i;
+    }
+    return 0;
+}
+
+static int complete_path(char *line, int len)
+{
+    int w = len;
+    while (w > 0 && line[w - 1] != ' ') w--;
+    if (line[w] == '"') return len;              /* quoted names: no completion */
+    int slash = -1;
+    for (int i = w; i < len; i++) if (line[i] == '/') slash = i;
+    char dir[PATH_MAX_LEN], rel[PATH_MAX_LEN];
+    int dl = slash < 0 ? 0 : slash - w + 1;
+    memcpy(rel, line + w, dl);
+    rel[dl] = 0;
+    if (path_abs(dl ? rel : ".", dir, sizeof(dir))) return len;
+    struct pc c;
+    memset(&c, 0, sizeof(c));
+    c.pre = line + w + dl;
+    c.plen = len - w - dl;
+    fat_list(dir, pc_cb, &c);
+    if (!c.n) return len;
+    int add = 0, space = 0;
+    for (int i = 0; i < c.common; i++) if (c.first[i] == ' ') space = 1;
+    if (space && len + 2 < LINE_MAX - 2) {       /* a name with spaces: put the word in "quotes" */
+        for (int i = len; i > w; i--) line[i] = line[i - 1];
+        line[w] = '"';
+        len++;
+        for (int i = w; i < len - 1; i++) con_putc('\b');
+        for (int i = w; i < len; i++) con_putc(line[i]);
+    }
+    if (c.common > c.plen || c.n == 1) {         /* spell the typed part as on the card */
+        for (int i = 0; i < c.plen; i++) con_putc('\b');
+        for (int i = 0; i < c.plen; i++) { line[len - c.plen + i] = c.first[i]; con_putc(c.first[i]); }
+    }
+    for (int i = c.plen; i < c.common && len < LINE_MAX - 3; i++) {
+        line[len++] = c.first[i]; con_putc(c.first[i]); add++;
+    }
+    if (c.n == 1 && add == c.common - c.plen) {
+        if (space && !c.dir) { line[len++] = '"'; con_putc('"'); }
+        char end = c.dir ? '/' : ' ';
+        line[len++] = end; con_putc(end);
+    } else if (c.n > 1 && !add) {                /* nothing more in common: show the choices */
+        c.list = 1;
+        con_putc('\n');
+        fat_list(dir, pc_cb, &c);
+        con_putc('\n');
+        prompt();
+        line[len] = 0; con_puts(line);
+    }
+    return len;
 }
 
 static int complete(char *line, int len)
@@ -482,7 +593,8 @@ static int complete(char *line, int len)
     const struct cmd *hit = 0;
     int matches = 0;
     if (!len || line[0] == ' ' || len >= LINE_MAX - 16) return len;
-    for (int i = 0; i < len; i++) if (line[i] == ' ') return len;   /* command name only */
+    for (int i = 0; i < len; i++)
+        if (line[i] == ' ') return fat_mounted() ? complete_path(line, len) : len;
     for (u32 i = 0; i < NCMDS; i++)
         if (!strncmp(cmds[i].name, line, len)) { hit = &cmds[i]; matches++; }
     if (matches == 1) {
