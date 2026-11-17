@@ -111,6 +111,13 @@ static int  a_wav(const char *p)
     return sound_wav(full, a_idle);
 }
 
+static int  a_image(const char *p, int x, int y, int w, int h)
+{
+    char full[PATH_MAX_LEN];
+    if (path_abs(p, full, sizeof(full))) return -1;
+    return img_draw(full, x, y, w, h, 0);
+}
+
 static int a_temp(void)
 {
     u32 v[2] = { 0, 0 };
@@ -158,6 +165,8 @@ static const struct robos_api api_table = {
     .playNotes = a_play,
     .soundVolume = sound_volume,
     .playWav = a_wav,
+    .drawImage = a_image,
+    .imageError = img_error,
 };
 
 /* called from the exception handler: a crash inside a program ends the program */

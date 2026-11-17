@@ -18,7 +18,7 @@ typedef unsigned long      size_t;
 
 #define APP_BASE    0x01000000UL
 #define APP_MAGIC   "ROBOAPP1"
-#define API_VERSION 5
+#define API_VERSION 6
 
 #define INPUT          0
 #define OUTPUT         1
@@ -82,6 +82,10 @@ struct robos_api {
     /* API version 5: WAV files (PCM 8/16 bit, mono/stereo, 8-48 kHz) on the current sound
      * output (jack, GPIO18/19 or an I2S DAC); waits until the end, 0 = ok, < 0 = error */
     int      (*playWav)(const char *path);
+    /* API version 6: pictures (JPEG, PNG, BMP, GIF) on the HDMI screen, scaled down to fit
+     * the box w x h (0 = up to the screen edge); 0 = ok, < 0 = error (imageError() says why) */
+    int      (*drawImage)(const char *path, int x, int y, int w, int h);
+    const char *(*imageError)(void);
 };
 
 extern const struct robos_api *api;
@@ -125,6 +129,8 @@ extern const struct robos_api *api;
 #define playNotes(m)                    (api->playNotes)(m)
 #define soundVolume(p)                  (api->soundVolume)(p)
 #define playWav(path)                   (api->playWav)(path)
+#define drawImage(p, x, y, w, h)        (api->drawImage)(p, x, y, w, h)
+#define imageError()                    (api->imageError)()
 
 void *memset(void *d, int c, size_t n);
 void *memcpy(void *d, const void *s, size_t n);

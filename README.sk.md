@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.16**
+Aktuálna verzia: **0.18**
 
 ## Podporované dosky
 
@@ -50,6 +50,8 @@ Ak sa karta nenájde, `sd init` ukáže, ktorý krok zlyhal, a registre radiča.
 - Pohyb po karte: `cd APPS`, `cd ..`, `cd /`, `pwd`; prompt ukazuje, kde si
   (`robo@rpi3:/APPS$`). Všetky príkazy aj BASIC (`LOAD`, `SAVE`, `DIR`) berú cesty relatívne
   k aktuálnemu priečinku. **Tab** dopĺňa mená súborov a priečinkov.
+- `mkdir <priečinok>` vytvorí priečinok (meno 8.3), `rm <súbor>` zmaže súbor, `rm <priečinok>`
+  prázdny priečinok. Súbory firmvéru a jadra v `/` sú chránené: zmazať sa dajú len cez `rm -f`.
 - **Ctrl+C** zastaví bežiaci program a vráti sa do shellu.
 
 ### BASIC – programovanie priamo na RPi
@@ -65,11 +67,13 @@ robo@rpi3:~$ basic
 ] BYE
 ```
 
-- Príkazy: `RUN`, `LIST [a-b]`, `NEW`, `SAVE "meno"`, `LOAD "meno"`, `DIR [cesta]`, `HELP`, `BYE`.
+- Príkazy: `RUN`, `LIST [a-b]`, `NEW`, `SAVE "meno"`, `LOAD "meno"`, `DIR [cesta]`, `HELP`, `BYE`;
+  `MKDIR "priečinok"`, `RMDIR "priečinok"`, `KILL "súbor"` fungujú aj v programoch.
   Samotné číslo riadku riadok zmaže.
 - Príkazy v programe: `PRINT`/`?`, `INPUT`, `LET`, `IF..THEN..ELSE`, `GOTO`, `GOSUB`/`RETURN`,
   `FOR..TO..STEP`/`NEXT`, `DIM`, `END`, `REM`/`'`, `CLS`, `RANDOMIZE`; viac príkazov oddeľ `:`.
 - GPIO: `PINMODE pin, OUT|IN|PULLUP|PULLDOWN`, `GPIO pin, HIGH|LOW`, `GPIO(pin)`, `LED ON|OFF`, `WAIT ms`.
+- Obrázky: `IMAGE "súbor", x, y [, w, h]` (pozri časť o obrázkoch).
 - Zvuk: `SOUND Hz, ms`, `PLAY "noty"`, `VOLUME 0-100`, `PLAYWAV "subor.wav"` (pozri časť o zvuku).
 - Sieť: `NETSEND`, `NETOK`, `NETAVAIL`, `NETRECV`; TCP/UDP: `TCPCONNECT`, `TCPLISTEN`,
   `TCPACCEPT`, `UDPOPEN`, `SOCKPRINT`, `UDPSEND`, `SOCKAVAIL`, `SOCKGET`, `SOCKNUM`, `SOCKCLOSE`
@@ -126,7 +130,7 @@ void loop(void)
 `netSend`, `netReceive`, `netName` a TCP/UDP: `tcpConnect`, `tcpListen`, `tcpAccept`,
 `udpOpen`, `sockWrite`, `sockPrint`, `sockRead`, `sockAvailable`, `udpSendTo`,
 `udpReceiveFrom`, `sockClose`, `sockError`, `ipAddress` a zvuk: `tone(hz, ms)`, `noTone`,
-`playNotes`, `soundVolume`, `playWav`
+`playNotes`, `soundVolume`, `playWav` a obrázky: `drawImage(path, x, y, w, h)`, `imageError`
 (viď `sdk/robos.h`). Program môže mať `setup()` + `loop()` alebo `main()`.
 Ukážky: `hello`, `blink`, `button`, `knight`, `chat`, `tcpserv` (TCP server), `udpecho` (UDP),
 `music` (pesnička a siréna).
@@ -136,6 +140,22 @@ výnimka a systém sa vráti do shellu.
 
 **GPIO má 3,3 V** (nie 5 V ako Arduino Uno), max. asi 16 mA na pin.
 LED zapájaj cez odpor 220–330 Ω, relé a motory cez tranzistor alebo modul.
+
+## Obrázky
+
+RoboOS zobrazí na HDMI obrazovke JPEG (aj progresívny), PNG (s priehľadnosťou), BMP a GIF
+(prvý snímok); veľký obrázok zmenší, aby sa zmestil, a zachová jeho tvar.
+
+- `view <obrázok>` ho ukáže na celú obrazovku; **šípky vľavo/vpravo** (alebo medzera)
+  prejdú na predchádzajúci / ďalší obrázok v tom istom priečinku, **Q** alebo Enter vráti
+  textovú obrazovku tak, ako bola. `view <priečinok>` začne prvým obrázkom v ňom.
+- **Obrázok pri štarte**: súbor `/SPLASH.PNG` (alebo `/SPLASH.JPG`, `/SPLASH.BMP`) sa ukáže,
+  kým RoboOS štartuje; hlásenia sa píšu za ním a objavia sa najskôr po 2,5 s (klávesa to
+  skráti). Na karte je obrázok s logom RoboOS - nahraď ho vlastným (najlepšie 1024x768),
+  alebo ho zmaž a doska naštartuje rovno do textu.
+- BASIC: `IMAGE "foto.jpg", x, y` nakreslí obrázok na x, y (pixely, 1024x768);
+  `IMAGE "foto.jpg", x, y, w, h` ho vtesná do rámčeka w x h. C: `drawImage(path, x, y, w, h)`.
+- Obrázky sa dekódujú v pamäti: 12-megapixelová fotka z mobilu trvá pár sekúnd.
 
 ## Sieť: správy medzi RoboOS doskami
 
@@ -361,6 +381,9 @@ Systém komunikuje po anglicky.
 | `ls [cesta]` | obsah priečinka na SD karte (bez cesty: aktuálneho) |
 | `cd [priečinok]` | zmena priečinka (`..` = vyššie, `/` = navrch, bez argumentu = navrch) |
 | `pwd` | ukáže aktuálny priečinok |
+| `view [obrázok\|priečinok]` | ukáže obrázky na celú obrazovku (JPEG, PNG, BMP, GIF) |
+| `mkdir <priečinok>` | vytvorí priečinok |
+| `rm [-f] <súbor\|priečinok>` | zmaže súbor alebo prázdny priečinok (`-f` pre bootovacie súbory) |
 | `cat <súbor>` | vypíše textový súbor (`"úvodzovky"` pre mená s medzerami) |
 | `edit <súbor>` | celoobrazovkový textový editor |
 | `run <program>` | spustí program `.bin` alebo `.bas` |
@@ -398,7 +421,7 @@ vyvolá výnimku; tá sa vypíše a systém sa vráti do shellu.
 | `lwip/` | TCP/IP stack lwIP 2.2.1 (bez úprav, licencia BSD) |
 | `src/kbd.c` | HID klávesnica: boot protocol, preklad scan kódov, autorepeat |
 | `src/sd.c` | ovládač SD karty (Arasan SDHCI, GPIO48-53 ALT3), čítanie aj zápis |
-| `src/fat.c` | FAT16/FAT32: dlhé mená, čítanie, zápis (mená 8.3), obe kópie FAT |
+| `src/fat.c` | FAT16/FAT32: dlhé mená, čítanie, zápis (mená 8.3), mkdir, mazanie, obe kópie FAT |
 | `src/app.c` | nahrávanie programov, API v štýle Arduina, Ctrl+C, autostart z `/RUN` |
 | `src/basic.c` | interpreter BASICu |
 | `src/ctx.S` | setjmp/longjmp na ukončenie programov |
@@ -409,6 +432,8 @@ vyvolá výnimku; tá sa vypíše a systém sa vráti do shellu.
 | `src/path.c` | aktuálny priečinok, relatívne cesty, `.` a `..` |
 | `src/sound.c` | tóny z PWM (zvukový jack alebo GPIO18/19), noty |
 | `src/i2s.c` | zvuk cez DMA: I2S DAC (periféria PCM) alebo PWM, sínusové tóny, súbory WAV |
+| `src/image.c` | obrázky: dekódovanie (stb_image v `src/stbimg.c`), zmenšovanie, `view`, obrázok pri štarte |
+| `src/heap.c` | pamäť na veľkú dočasnú prácu (dekódovanie obrázkov) |
 | `src/font.c` | font vygenerovaný z DejaVu Sans Mono (`tools/mkfont.py`) |
 
 ### Ako funguje USB
@@ -482,4 +507,5 @@ qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial stdio -device usb-kbd
 - Inicializácia SD karty vychádza zo známych bare-metal návodov
   (bztsrc/raspi3-tutorial); časovanie periodických split transakcií podľa Circle/USPi.
 - TCP/IP: lwIP od Adama Dunkelsa a vývojárov lwIP (licencia BSD, `lwip/COPYING`).
+- Obrázky: stb_image od Seana Barretta (public domain / MIT, `third_party/stb_image.h`).
 - Registre LAN7515 (Pi 3B+) podľa linuxového ovládača `lan78xx`.

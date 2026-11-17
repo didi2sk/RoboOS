@@ -1,0 +1,2 @@
+stb_image.h v2.32 from https://github.com/nothings/stb (commit 9600522), unmodified.
+License: public domain or MIT (see the end of the file). Configured in src/stbimg.c.

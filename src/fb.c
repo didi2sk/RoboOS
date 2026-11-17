@@ -54,8 +54,11 @@ void fb_setcolor(u32 fg) { cur_fg = fg; }
 int fb_cols(void)   { return cols; }
 int fb_rows(void)   { return rows; }
 
+static int hold;                           /* 1 = a picture is on screen: text only in memory */
+
 static void draw_cell(int x, int y)
 {
+    if (hold) return;
     u8 ch = text[y][x];
     u32 fg = tcol[y][x];
     const u8 *glyph = (ch >= 32 && ch < 127) ? font8x16[ch - 32] : font8x16[0];
@@ -82,7 +85,7 @@ static void sync_screen(void)
 void fb_clear(void)
 {
     if (!fb) return;
-    for (u32 y = 0; y < height; y++) {
+    for (u32 y = 0; y < height && !hold; y++) {
         u32 *p = (u32 *)(fb + y * pitch);
         for (u32 x = 0; x < width; x++) p[x] = bg;
     }
@@ -105,6 +108,7 @@ static void scroll(void)
 
 static void draw_cursor(int on)
 {
+    if (hold) return;
     if (!on) { draw_cell(cx, cy); return; }            /* the cursor may sit on a character */
     u8 *row = fb + (cy * 16 + 14) * pitch + cx * 8 * 4;
     for (int gy = 0; gy < 2; gy++, row += pitch)
@@ -156,4 +160,45 @@ void fb_clreol(void)
             draw_cell(x, cy);
         }
     draw_cursor(1);
+}
+
+/* ---------------- pictures ---------------- */
+
+/* draw the whole text screen again (after a picture) */
+void fb_redraw(void)
+{
+    if (!fb) return;
+    for (u32 y = 0; y < height; y++) {
+        u32 *p = (u32 *)(fb + y * pitch);
+        for (u32 x = 0; x < width; x++) p[x] = bg;
+    }
+    for (int y = 0; y < rows; y++)
+        for (int x = 0; x < cols; x++) shown[y][x] = ' ';
+    sync_screen();
+    draw_cursor(1);
+}
+
+/* 1: a picture owns the screen, text goes only to memory; 0: show the text again */
+void fb_hold(int on)
+{
+    if (!fb || on == hold) return;
+    if (on) { draw_cursor(0); hold = 1; }
+    else    { hold = 0; fb_redraw(); }
+}
+
+u32 *fb_row(int y) { return (u32 *)(fb + (u32)y * pitch); }
+
+/* text straight onto the picture (not part of the console), 8x16 glyphs */
+void fb_text_px(int x, int y, const char *s, u32 fg, u32 back)
+{
+    if (!fb) return;
+    for (; *s; s++, x += 8) {
+        if (x < 0 || x + 8 > (int)width || y < 0 || y + 16 > (int)height) continue;
+        u8 ch = (u8)*s;
+        const u8 *glyph = (ch >= 32 && ch < 127) ? font8x16[ch - 32] : font8x16[0];
+        for (int gy = 0; gy < 16; gy++) {
+            u32 *px = fb_row(y + gy) + x;
+            for (int gx = 0; gx < 8; gx++) px[gx] = (glyph[gy] & (0x80 >> gx)) ? fg : back;
+        }
+    }
 }

@@ -414,6 +414,68 @@ static void cmd_cd(int argc, char **argv)
     }
 }
 
+static void cmd_mkdir(int argc, char **argv)
+{
+    char path[PATH_MAX_LEN];
+    if (argc < 2) { need("mkdir <directory>...   (8.3 names)"); return; }
+    if (!need_fs()) return;
+    for (int i = 1; i < argc; i++) {
+        int r = path_abs(argv[i], path, sizeof(path)) ? -2 : fat_mkdir(path);
+        if (r) kprintf("mkdir %s: %s\n", argv[i], fat_write_error(r));
+    }
+}
+
+/* the firmware and kernel files in / - deleting them makes the card unbootable */
+static int boot_file(const char *path)
+{
+    static const char *f[] = { "/bootcode.bin", "/start.elf", "/fixup.dat", "/kernel8.img", "/config.txt" };
+    for (u32 i = 0; i < sizeof(f) / sizeof(f[0]); i++) {
+        const char *a = path, *b = f[i];
+        while (*a && *b && (*a | 32) == (*b | 32)) { a++; b++; }
+        if (!*a && !*b) return 1;
+    }
+    return 0;
+}
+
+/* is dir the current directory or one of its parents? */
+static int in_use(const char *dir)
+{
+    const char *c = cwd_get();
+    int n = (int)strlen(dir);
+    for (int i = 0; i < n; i++) {
+        char a = dir[i], b = c[i];
+        if (!b) return 0;
+        if (a >= 'a' && a <= 'z') a -= 32;
+        if (b >= 'a' && b <= 'z') b -= 32;
+        if (a != b) return 0;
+    }
+    return c[n] == 0 || c[n] == '/';
+}
+
+static void cmd_rm(int argc, char **argv)
+{
+    char path[PATH_MAX_LEN];
+    int force = 0, first = 1;
+    if (argc > 1 && !strcmp(argv[1], "-f")) { force = 1; first = 2; }
+    if (argc <= first) { need("rm [-f] <file or empty directory>..."); return; }
+    if (!need_fs()) return;
+    for (int i = first; i < argc; i++) {
+        struct fat_file f;
+        if (path_abs(argv[i], path, sizeof(path)) || fat_open(path, &f)) {
+            kprintf("rm %s: not found\n", argv[i]);
+            continue;
+        }
+        if (!strcmp(path, "/")) { kprintf("rm: not the top directory\n"); continue; }
+        if (f.is_dir && in_use(path)) { kprintf("rm %s: you are in it (cd somewhere else first)\n", argv[i]); continue; }
+        if (boot_file(path) && !force) {
+            kprintf("rm %s: a boot file - without it the card does not start (rm -f deletes it anyway)\n", argv[i]);
+            continue;
+        }
+        int r = fat_remove(path);
+        if (r) kprintf("rm %s: %s\n", argv[i], fat_write_error(r));
+    }
+}
+
 static void cmd_pwd(int argc, char **argv) { (void)argc; (void)argv; kprintf("%s\n", cwd_get()); }
 
 static int idle_break(void) { return con_trygetc() == 3; }
@@ -514,6 +576,9 @@ static const struct cmd cmds[] = {
     { "ls",     "[path]",               "list a directory on the SD card", cmd_ls     },
     { "cd",     "[dir]",                "change directory (.. = up, / = top)", cmd_cd },
     { "pwd",    "",                     "show the current directory",      cmd_pwd    },
+    { "view",   "[picture|dir]",        "show pictures (JPEG PNG BMP GIF)", view_cmd  },
+    { "mkdir",  "<dir>",                "make a directory",                cmd_mkdir  },
+    { "rm",     "[-f] <file|dir>",      "delete a file or an empty directory", cmd_rm },
     { "cat",    "<file>",               "print a text file",               cmd_cat    },
     { "edit",   "<file>",               "full-screen text editor",         cmd_edit   },
     { "run",    "<program>",            "run a .bin / .bas program",       cmd_run    },

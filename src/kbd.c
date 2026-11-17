@@ -186,6 +186,9 @@ void kbd_poll(void)
     if (!kd) return;
 
     u64 now = timer_us();
+    /* nobody polled for a while (a long command, decoding a picture): the key may
+     * have been let go meanwhile - repeat only after a fresh report says it is held */
+    if (rep_key && now - last_poll > 100000 && rep_next < now + 50000) rep_next = now + 50000;
     if (rep_key && now >= rep_next) {                        /* autorepeat */
         emit(rep_key, rep_mods);
         rep_next = now + 50000;

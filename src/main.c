@@ -2,7 +2,7 @@
 #include "usb.h"
 #include "sd.h"
 
-#define VERSION "0.16"
+#define VERSION "0.18"
 
 const char *os_version(void) { return VERSION; }
 
@@ -45,6 +45,12 @@ void kernel_main(void)
 
     int fb_ok = fb_init(1024, 768);
 
+    /* the SD card first: a boot picture (/SPLASH.PNG|JPG|BMP) can then cover
+     * the screen while USB starts; the messages wait in memory behind it */
+    int sde = sd_init();
+    int fs_ok = sde == SD_OK && fat_mount() == 0;
+    if (fs_ok) img_splash_start();
+
     banner();
     status(1); con_puts("UART0 (PL011) 115200 8N1 on GPIO14/15\n");
     status(1); con_puts("MMU + caches enabled\n");
@@ -64,8 +70,7 @@ void kernel_main(void)
         if (bad) kprintf("Ethernet: init failed at %s (%d, HCINT %x)\n", bad, code, hc);
         else kprintf("Ethernet: %s, MAC %02x:%02x:%02x:%02x:%02x:%02x\n", eth_chip_name(), m[0], m[1], m[2], m[3], m[4], m[5]);
     }
-    int sde = sd_init();
-    if (sde == SD_OK && fat_mount() == 0) {
+    if (fs_ok) {
         status(1);
         kprintf("SD card: %s, %u MB\n", fat_type(), (u32)(fat_volume_bytes() >> 20));
     } else {
@@ -76,6 +81,7 @@ void kernel_main(void)
     kprintf("  ARM memory: %u MB, booted in %u ms\n\n",
             (u32)(ram_end >> 20), (u32)(timer_us() / 1000));
     con_puts("  Type 'help' for a list of commands.\n\n");
+    img_splash_end();                    /* the picture stays at least 2.5 s (a key ends it) */
     app_autostart();
 
     shell_run();
