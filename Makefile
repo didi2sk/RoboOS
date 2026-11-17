@@ -9,7 +9,10 @@ CROSS     ?= aarch64-none-elf-
 
 SRCS = $(wildcard src/*.c)
 ASMS = $(wildcard src/*.S)
-OBJS = $(SRCS:src/%.c=build/%.o) $(ASMS:src/%.S=build/%.o)
+# lwIP TCP/IP stack (lwip/, BSD license) - IPv4 core + Ethernet
+LWIP_SRCS = $(wildcard lwip/src/core/*.c lwip/src/core/ipv4/*.c) lwip/src/netif/ethernet.c
+OBJS = $(SRCS:src/%.c=build/%.o) $(ASMS:src/%.S=build/%.o) $(LWIP_SRCS:lwip/src/%.c=build/lwip/%.o)
+INCS = -Ilwip/src/include -Isrc/lwip_port
 
 COMMON = -Wall -Wextra -O2 -ffreestanding -fno-stack-protector -nostdlib \
          -mgeneral-regs-only -mstrict-align -mcpu=cortex-a53
@@ -26,8 +29,13 @@ endif
 
 all: kernel8.img
 
-build/%.o: src/%.c $(wildcard src/*.h) | build
-	$(CC) $(COMMON) -c $< -o $@
+build/%.o: src/%.c $(wildcard src/*.h) src/lwip_port/lwipopts.h | build
+	$(CC) $(COMMON) $(INCS) -c $< -o $@
+
+# third-party code: built with the same flags, minus the warnings it was not written for
+build/lwip/%.o: lwip/src/%.c src/lwip_port/lwipopts.h src/lwip_port/arch/cc.h
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON) $(INCS) -Wno-unused-parameter -Wno-sign-compare -c $< -o $@
 
 build/%.o: src/%.S | build
 	$(CC) $(COMMON) -c $< -o $@

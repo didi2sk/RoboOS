@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.10**
+Current version: **0.11**
 
 ## Supported boards
 
@@ -128,8 +128,8 @@ Use a 220-330 Ω resistor for LEDs and a transistor/module for relays and motors
 The Pi 3B (LAN9514) and the Pi 3B+ (LAN7515) have an Ethernet chip that is a USB device
 behind the onboard hub; RoboOS has a driver for both. Plug the
 boards into the same switch or router and they can send each other short text messages.
-The protocol is RoboOS's own, on raw Ethernet frames (EtherType `88b5`); there is no
-IP/UDP yet, so a PC does not understand it.
+The protocol is RoboOS's own, on raw Ethernet frames (EtherType `88b5`), so a PC does
+not understand it. For talking to PCs and the internet there is TCP/IP (next section).
 
 ```
 robo@rpi3:~$ net who
@@ -160,6 +160,38 @@ delivered
   see `sdk/examples/chat.c` (`run chat` = a chat between the boards).
 
 Not available on the Zero 2 W and 3A+ (no Ethernet). The 3B and 3B+ can talk to each other.
+
+## Network: TCP/IP
+
+RoboOS uses [lwIP](https://savannah.nongnu.org/projects/lwip/) 2.2.1 (in `lwip/`,
+BSD license), a small TCP/IP stack written for systems without an operating system.
+After boot the board asks the router for an address (DHCP) and sends its name with it,
+so the router's list of devices shows it under its RoboOS name. When the address
+arrives, `[NET] IP address ...` appears at the prompt.
+
+```
+robo@rpi3:~$ ip
+host:    rpi3-9a4f
+link:    up
+address: 192.168.1.37 / 255.255.255.0  (DHCP)
+gateway: 192.168.1.1
+dns:     192.168.1.1
+robo@rpi3:~$ ping 192.168.1.1
+reply from 192.168.1.1: seq=1 ttl=64 time=0.9 ms
+```
+
+- `ip` shows the address; `ip set <address> [mask] [gateway]` sets a fixed address,
+  `ip dhcp` goes back to DHCP. The choice is saved in `/IP.TXT` on the SD card.
+- `ping <address or name> [count]` - names are looked up with DNS.
+- `http on` starts a small web page with the board's name, version, uptime and CPU
+  temperature: open `http://<address>/` in a browser. `http off` stops it.
+- IPv4 only. TCP/IP is not in the BASIC / C API yet.
+
+The network runs while RoboOS waits for input (shell prompt, `delay()`, `getKey()`,
+`WAIT`, `INKEY`), like the keyboard: a program that never calls any of them blocks it.
+
+A standard USB network adapter of the CDC-ECM class works too (this is how QEMU
+tests the network; on real boards not tested yet).
 
 ## USB keyboard
 
@@ -222,6 +254,9 @@ If you connect after boot, press Enter.
 | `net send <name\|all> <text>` | send a message |
 | `net name [new]` | show / change this board's name |
 | `net test [s]`, `net loop on\|off` | frame test, loopback |
+| `ip` | IP address, `ip dhcp`, `ip set <address> [mask] [gateway]` |
+| `ping <address\|name> [n]` | ping another computer |
+| `http on\|off` | small web page with board info |
 | `ls [path]` | list a directory on the SD card |
 | `cat <file>` | print a text file (`"quotes"` for names with spaces) |
 | `edit <file>` | full-screen text editor |
@@ -251,6 +286,8 @@ raises an exception; it is printed and the system returns to the shell.
 | `src/usb.c` | DWC2 USB host driver: init, root port, DMA transfers, split transactions, enumeration, hubs, hot-plug |
 | `src/eth.c` | Ethernet: LAN9514 (3B) and LAN7515 (3B+) over USB bulk endpoints, raw frames |
 | `src/net.c` | messages between RoboOS boards (names, who, send with confirmation, inbox) |
+| `src/ip.c` | TCP/IP: lwIP port, network interface, DHCP, `ip`, `ping`, `http` |
+| `lwip/` | lwIP 2.2.1 TCP/IP stack (unmodified, BSD license) |
 | `src/kbd.c` | HID keyboard: boot protocol, scan code translation, autorepeat |
 | `src/sd.c` | SD card driver (Arasan SDHCI, GPIO48-53 ALT3), read + write |
 | `src/fat.c` | FAT16/FAT32: long names, read, write (8.3 names), both FAT copies |
@@ -308,12 +345,20 @@ make sd.img
 qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial stdio -device usb-kbd \
     -drive file=sd.img,if=sd,format=raw
 ```
+With a network (QEMU emulates a USB network adapter, DHCP gives 10.0.2.15):
+```
+qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial stdio -device usb-kbd \
+    -drive file=sd.img,if=sd,format=raw \
+    -device usb-net,netdev=n0 -netdev user,id=n0,hostfwd=tcp:127.0.0.1:8080-:80
+```
+(after `http on` the board's page is at http://127.0.0.1:8080/ on the PC).
 
 ## Ideas for later
 - other keyboard layouts (a font with accented characters too)
 - interrupts + timer → multitasking
 - I2C / SPI / PWM in the API and in BASIC
 - editor: search, go to line, save as
+- TCP/UDP in the BASIC and C API, a telnet-like remote shell
 - more cores (spin table at 0xE0–0xF0)
 
 ## Credits
@@ -323,3 +368,5 @@ qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial stdio -device usb-kbd
 - The console font is rendered from DejaVu Sans Mono (Bitstream Vera license).
 - The SD card init sequence follows the well-known bare-metal tutorials
   (bztsrc/raspi3-tutorial); the periodic split scheduling follows Circle/USPi.
+- TCP/IP: lwIP by Adam Dunkels and the lwIP developers (BSD license, `lwip/COPYING`).
+- The LAN7515 (Pi 3B+) register layout follows the Linux `lan78xx` driver.

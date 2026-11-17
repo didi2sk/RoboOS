@@ -237,10 +237,13 @@ static void pump(void)
         return;
     }
     if (!eth_present() || eth_error(0, 0)) return;
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 8; i++) {
         int n = eth_recv(f, sizeof(f));
         if (n <= 0) break;
-        input(f, n);
+        int robo = n >= 14 && ((f[12] == 0x88 && f[13] == 0xB5) ||
+                   (n >= 18 && f[12] == 0x81 && f[13] == 0x00 && f[16] == 0x88 && f[17] == 0xB5));
+        if (robo) input(f, n);
+        else ipstack_input(f, n);                             /* everything else: TCP/IP */
     }
 }
 
@@ -270,6 +273,7 @@ void net_poll(void)
     if (!usable()) return;
     init();
     pump();
+    ip_poll(notify);
     if (notify) {
         char from[NET_NAME_MAX], text[NET_TEXT_MAX + 1];
         while (net_recv(from, text, sizeof(text)) >= 0) {

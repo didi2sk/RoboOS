@@ -133,6 +133,15 @@ void net_who(void);                     /* ask who is there and print the answer
 void net_loop(int on);                  /* loopback: sent frames come back (self-test) */
 int  net_looping(void);
 
+/* ip.c - TCP/IP (lwIP) */
+void ip_poll(int notify);
+void ipstack_input(const u8 *frame, int len);  /* a frame that is not a RoboOS message */
+int  ip_started(void);
+void ip_cmd(int argc, char **argv);
+void ping_cmd(int argc, char **argv);
+void http_cmd(int argc, char **argv);
+const char *os_version(void);
+
 /* edit.c */
 void editor_main(const char *path);
 

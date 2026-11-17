@@ -22,6 +22,11 @@ Automated QEMU testing (no display): `tools/qemu_test.py kernel8.img "cmd1" "cmd
 - verify FAT writes: `dd if=sd.img of=p.img bs=512 skip=2048; fsck.fat -n p.img`
   ("Free cluster summary uninitialized" is expected - we invalidate FSInfo on purpose)
 
+Network in QEMU: `tools/qemu_net_test.py kernel8.img sd.img "http on" "@get5" "ping 10.0.2.2"` - QEMU
+`usb-net` (its 2nd configuration is CDC-ECM, which `eth.c` drives) on user networking: DHCP 10.0.2.15,
+gateway 10.0.2.2, board port 80 forwarded to host 127.0.0.1:18080. This sandbox has no DNS: to test names,
+run a tiny DNS responder on host 127.0.0.1:53 and use `ip set 10.0.2.20 255.255.255.0 10.0.2.2`.
+
 QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 W machine,
 `device_add` of a USB device at runtime freezes QEMU 8.2 (not our bug) - hot-plug can't be tested.
 
@@ -50,8 +55,9 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
 | `src/mmu.c` | identity map, 2 MB blocks: RAM cached, GPU RAM + 2 MB DMA block non-cached, peripherals device |
 | `src/board.c` | revision -> board name, prompt host, ACT LED pin, `board_usb_direct()` |
 | `src/usb.c` | DWC2 host driver: polling, one channel (0), Buffer DMA, one packet per channel run |
-| `src/eth.c` | Ethernet over USB: LAN9514 (0424:ec00, 3B) and LAN7515/LAN7800 (0424:7800, 3B+); vendor control requests 0xA0/0xA1 for registers, bulk IN/OUT for frames (`usb_bulk`), polled; `link_tick()` follows the link once a second (LAN78xx: MAC speed/duplex only while TX/RX are off, started on link-up) |
+| `src/eth.c` | Ethernet over USB: LAN9514 (0424:ec00, 3B), LAN7515/LAN7800 (0424:7800, 3B+) and any CDC-ECM adapter (QEMU usb-net); vendor control requests 0xA0/0xA1 for registers, bulk IN/OUT for frames (`usb_bulk`), polled; `link_tick()` follows the link once a second (LAN78xx: MAC speed/duplex only while TX/RX are off, started on link-up) |
 | `src/net.c` | RoboOS messages on raw frames (EtherType 0x88B5): names (`/NAME.TXT`), WHO/HERE, MSG with ACK + 3 tries, inbox of 8; polled every 5 ms from `con_trygetc()`; `net loop on` = loopback for QEMU tests |
+| `src/ip.c` | TCP/IP glue for lwIP 2.2.1 (`lwip/`, unmodified, NO_SYS raw API; port in `src/lwip_port/`: lwipopts.h, arch/cc.h, tiny string/stdlib/stdio shims): netif -> `eth_send`, non-0x88B5 frames from `net.c` -> lwIP, `sys_check_timeouts()` from `net_poll`; DHCP (hostname = board name), `/IP.TXT` static config, `ip`, `ping` (raw ICMP, DNS), `http on` (one page) |
 | `src/kbd.c` | HID boot keyboard, US layout, keypad, LEDs, autorepeat, runtime method lock |
 | `src/sd.c` / `src/fat.c` | Arasan SDHCI (GPIO48-53 ALT3), PIO single-block read/write; FAT16/32 with LFN read, 8.3 write |
 | `src/app.c` | loads `.bin` at 0x01000000, API table (`sdk/robos.h`), Ctrl+C via `ctx_save/ctx_restore` (`src/ctx.S`), autostart `/RUN` |
@@ -62,7 +68,7 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
 | `sdk/` | program SDK: `start.S` header (`ROBOAPP1` magic at +8, image end at +16), `crt0.c`, `app.ld`, examples |
 
 Memory: kernel at 0x80000, BSS ends ~0x120000, DMA block at 0x200000 (2 MB, uncached),
-programs at 0x01000000-0x02000000, editor text at 0x02000000 (1 MB) + save scratch up to 0x02300000.
+programs at 0x01000000-0x02000000, USB DMA: channel 0 buffer at the DMA block start, channel 1 (async bulk IN) +1 MB, editor text at 0x02000000 (1 MB) + save scratch up to 0x02300000.
 Keys: `con_getkey()` decodes escape sequences into `K_UP`... (kbd.c sends the same sequences as a terminal).
 
 ## Hard-won lessons (do not regress)
@@ -79,6 +85,11 @@ Keys: `con_getkey()` decodes escape sequences into `K_UP`... (kbd.c sends the sa
   routing GPIO48-53 to ALT3 (Circle does the same; CMD8 answers on the 3B with this in place).
 - **SD CMD55 must wait for its R1 answer** even with RCA 0; otherwise ACMD41 collides with it on a real card
   (INT=0x30000 at "ACMD41 power-up" on the 3B; QEMU answers instantly and hides it). Reset CMD/DAT lines after a failed command.
+- **Never halt a bulk IN channel that may be receiving** (timeout -> CHDIS) on a device that NAKs when empty:
+  frames arriving at that moment are lost (QEMU usb-net lost ~half the TCP segments). LAN95xx/LAN78xx answer
+  an empty IN with a ZLP (BIR=0) so a short blocking transfer is fine; ECM uses `usb_bulk_in_async()` on channel 1,
+  left running between polls.
+- lwIP: `ip_input` is an lwIP macro - do not name RoboOS functions like lwIP ones.
 - In BASIC, compute an array index (which may allocate) before reading `v->arr` (evaluation-order bug fixed once).
 - The font covers ASCII 32-126 only - keep all on-screen strings ASCII.
 - Keep exceptions inside programs recoverable: exception stack is separate so `app_crashed()` can longjmp back.
@@ -92,7 +103,8 @@ Keys: `con_getkey()` decodes escape sequences into `K_UP`... (kbd.c sends the sa
 ## Open ideas / next steps
 
 - verify two-board messaging/BASIC/loader on real hardware; Zero 2 W bring-up
-- network: RoboOS-to-RoboOS messages over raw frames are in (owner wanted these first); UDP/IP later
+- network: RoboOS messages over raw frames (v0.9) and TCP/IP via lwIP (v0.11: DHCP, ping, DNS, one web page)
+  are in; TCP/IP is tested only in QEMU. Next: TCP/UDP in the BASIC / C API, a remote shell
 - license (MIT suggested, not chosen yet)
 - Slovak keyboard layout + font with diacritics
 - I2C / SPI / PWM in API and BASIC, interrupts + timer, multitasking, editor search / go to line / save as
