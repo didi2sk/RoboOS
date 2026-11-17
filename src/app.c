@@ -104,6 +104,13 @@ static int  a_recvfrom(int h, void *b, int max, char *ip, int *p) { poll_input()
 
 static int  a_play(const char *m)                { int e; int r = sound_play(m, a_idle, &e); sound_stop(); return r; }
 
+static int  a_wav(const char *p)
+{
+    char full[PATH_MAX_LEN];
+    if (path_abs(p, full, sizeof(full))) return -1;
+    return sound_wav(full, a_idle);
+}
+
 static int a_temp(void)
 {
     u32 v[2] = { 0, 0 };
@@ -150,6 +157,7 @@ static const struct robos_api api_table = {
     .noTone = sound_stop,
     .playNotes = a_play,
     .soundVolume = sound_volume,
+    .playWav = a_wav,
 };
 
 /* called from the exception handler: a crash inside a program ends the program */

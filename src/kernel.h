@@ -172,6 +172,19 @@ int  sound_get_volume(void);
 void sound_output(int gpio);             /* 0 = jack, 1 = GPIO18/19 */
 const char *sound_pins(void);
 
+/* i2s.c - I2S DAC module on GPIO18/19/21 */
+int  i2s_start(void);
+void i2s_stop(void);
+int  i2s_running(void);
+void i2s_tone(int freq, int ms);         /* 0 = silence */
+void i2s_poll(void);
+void i2s_volume(int v);
+int  i2s_wav(const char *path, int (*idle)(void));   /* 0 ok, 1 stopped, < 0 error */
+const char *i2s_wav_error(int e);
+void i2s_status(void);
+int  sound_wav(const char *path, int (*idle)(void)); /* sound.c: needs the I2S output */
+int  sound_output_mode(void);            /* 0 jack, 1 gpio, 2 i2s */
+
 /* path.c - current directory, relative paths */
 #define PATH_MAX_LEN 128
 const char *cwd_get(void);
