@@ -272,7 +272,12 @@ static void net_test(u32 secs)
 
 static void cmd_net(int argc, char **argv)
 {
-    static const char *usage = "net [who | send <name|all> <text> | name [new] | loop on|off | test [s]]";
+    static const char *usage = "net [who | send <name|all> <text> | name [new] | speed 100|1000 | loop on|off | test [s]]";
+    if (argc > 2 && !strcmp(argv[1], "speed")) {
+        if (eth_set_gigabit(!strcmp(argv[2], "1000")) < 0) { kprintf("only the Pi 3B+ chip (LAN7515) can do 1000 Mbit\n"); return; }
+        kprintf("negotiating the link again (up to 1000 Mbit: %s); see 'net' in a few seconds\n", eth_gigabit() ? "yes" : "no");
+        return;
+    }
     if (argc > 1 && !strcmp(argv[1], "loop")) {
         net_loop(!(argc > 2 && !strcmp(argv[2], "off")));
         kprintf("loopback %s\n", net_looping() ? "on: messages you send come back to this board" : "off");

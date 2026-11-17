@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.11**
+Aktuálna verzia: **0.12**
 
 ## Podporované dosky
 
@@ -66,13 +66,16 @@ robo@rpi3:~$ basic
 - Príkazy v programe: `PRINT`/`?`, `INPUT`, `LET`, `IF..THEN..ELSE`, `GOTO`, `GOSUB`/`RETURN`,
   `FOR..TO..STEP`/`NEXT`, `DIM`, `END`, `REM`/`'`, `CLS`, `RANDOMIZE`; viac príkazov oddeľ `:`.
 - GPIO: `PINMODE pin, OUT|IN|PULLUP|PULLDOWN`, `GPIO pin, HIGH|LOW`, `GPIO(pin)`, `LED ON|OFF`, `WAIT ms`.
-- Sieť: `NETSEND`, `NETOK`, `NETAVAIL`, `NETRECV` (pozri časť o sieti).
+- Sieť: `NETSEND`, `NETOK`, `NETAVAIL`, `NETRECV`; TCP/UDP: `TCPCONNECT`, `TCPLISTEN`,
+  `TCPACCEPT`, `UDPOPEN`, `SOCKPRINT`, `UDPSEND`, `SOCKAVAIL`, `SOCKGET`, `SOCKNUM`, `SOCKCLOSE`
+  (pozri časti o sieti).
 - Funkcie: `ABS()`, `RND(n)`, `MIN(a,b)`, `MAX(a,b)`, `MILLIS`, `MICROS`, `INKEY`, `TEMP`, `CHR$()` (v PRINT).
 - Iba celé čísla (64-bit). Kľúčové slová musia byť oddelené medzerami. Súbory `.bas` sú
   obyčajný text, dajú sa písať aj na PC.
 - Mená súborov pri ukladaní: 8.3 (max. 8 znakov + prípona).
 
-Ukážky na karte: `APPS/blink.bas`, `APPS/button.bas`, `APPS/knight.bas`.
+Ukážky na karte: `APPS/blink.bas`, `APPS/button.bas`, `APPS/knight.bas`,
+`APPS/ledsrv.bas` (LED ovládaná cez TCP), `APPS/udptemp.bas` (teplota cez UDP).
 
 ### Textový editor
 
@@ -114,9 +117,11 @@ void loop(void)
 (do `/RUN` pre autostart). API: `pinMode`, `digitalWrite`, `digitalRead`, `delay`,
 `delayMicroseconds`, `millis`, `micros`, `print`, `println`, `printf`, `getKey`,
 `clearScreen`, `textColor`, `actLed`, `cpuTemperature`, `stopRequested`, `exit`,
-`netSend`, `netReceive`, `netName`
+`netSend`, `netReceive`, `netName` a TCP/UDP: `tcpConnect`, `tcpListen`, `tcpAccept`,
+`udpOpen`, `sockWrite`, `sockPrint`, `sockRead`, `sockAvailable`, `udpSendTo`,
+`udpReceiveFrom`, `sockClose`, `sockError`, `ipAddress`
 (viď `sdk/robos.h`). Program môže mať `setup()` + `loop()` alebo `main()`.
-Ukážky: `hello`, `blink`, `button`, `knight`, `chat`.
+Ukážky: `hello`, `blink`, `button`, `knight`, `chat`, `tcpserv` (TCP server), `udpecho` (UDP).
 
 Programy sa nahrávajú na adresu 0x01000000 (max. 16 MB). Ak program spadne, vypíše sa
 výnimka a systém sa vráti do shellu.
@@ -127,7 +132,8 @@ LED zapájaj cez odpor 220–330 Ω, relé a motory cez tranzistor alebo modul.
 ## Sieť: správy medzi RoboOS doskami
 
 Pi 3B (LAN9514) a Pi 3B+ (LAN7515) majú ethernetový čip, ktorý je USB zariadenie za hubom
-na doske; RoboOS má ovládač pre oba. Zapoj dosky do
+na doske; RoboOS má ovládač pre oba. 3B sa pripojí rýchlosťou 100 Mbit, 3B+ 1000 Mbit
+(`net speed 100` ju obmedzí; cez USB 2.0 čip prenesie najviac asi 300 Mbit). Zapoj dosky do
 toho istého switchu alebo routera a môžu si posielať krátke textové správy.
 Protokol je vlastný, na surových ethernetových rámcoch (EtherType `88b5`), takže PC mu
 nerozumie. Na komunikáciu s PC a internetom je TCP/IP (ďalšia časť).
@@ -186,7 +192,41 @@ reply from 192.168.1.1: seq=1 ttl=64 time=0.9 ms
 - `ping <adresa alebo meno> [počet]` - mená sa prekladajú cez DNS.
 - `http on` spustí malú webovú stránku s menom dosky, verziou, dobou behu a teplotou
   CPU: otvor `http://<adresa>/` v prehliadači. `http off` ju vypne.
-- Len IPv4. V API pre BASIC a C zatiaľ TCP/IP nie je.
+- Len IPv4.
+
+### TCP a UDP v programoch
+
+Spojenia majú čísla 1-8 (program dostane číslo od `TCPCONNECT`, `TCPLISTEN`, `TCPACCEPT`
+alebo `UDPOPEN`); záporný výsledok je chyba: -1 nie je sieť, -2 neznáme meno, -3 bez
+odpovede / odmietnuté, -4 priveľa spojení, -5 zlé číslo, -6 zatvorené, -7 málo pamäte,
+-8 port je obsadený. Všetko, čo program otvoril, sa po jeho skončení zatvorí.
+
+BASIC (len celé čísla, takže dáta sa čítajú po bajtoch alebo ako čísla):
+
+| | |
+|---|---|
+| `H = TCPCONNECT("host", port)` | pripojenie (adresa alebo meno), čaká najviac 10 s |
+| `L = TCPLISTEN(port)`, `C = TCPACCEPT(L)` | server: `TCPACCEPT` dáva 0, kým sa niekto nepripojí |
+| `U = UDPOPEN(port)`, `U = UDPOPEN(port, "host", port)` | UDP; bez hostu `SOCKPRINT` odpovedá poslednému odosielateľovi; port 0 = ľubovoľný |
+| `SOCKPRINT H, "text"; X; CHR$(13)` | odoslanie ako PRINT (končí CR LF, ak nekončí `;`); jeden UDP datagram |
+| `UDPSEND U, "host", port, položky` | UDP na danú adresu (`"255.255.255.255"` = všetkým) |
+| `SOCKAVAIL(H)` | počet čakajúcich bajtov, -1 = druhá strana zatvorila |
+| `SOCKGET(H)` | ďalší bajt, -1 = zatiaľ nič, -2 = zatvorené |
+| `SOCKNUM(H)` | ďalšie číslo v dátach (čaká najviac 2 s), 0 ak nie je |
+| `SOCKCLOSE H` | zatvorenie |
+
+```
+10 H = TCPCONNECT("192.168.1.10", 5000) : IF H < 0 THEN PRINT "chyba "; H : END
+20 SOCKPRINT H, "teplota "; TEMP
+30 K = SOCKGET(H) : IF K >= 0 THEN PRINT CHR$(K); : GOTO 30
+40 IF K = -1 THEN 30
+50 SOCKCLOSE H
+```
+
+C (`sdk/robos.h`): `tcpConnect`, `tcpListen`, `tcpAccept`, `udpOpen`, `sockWrite`, `sockPrint`,
+`sockRead` (TCP: bajty, 0 = zatiaľ nič, -1 = zatvorené; UDP: jeden datagram), `sockAvailable`,
+`udpSendTo`, `udpReceiveFrom`, `sockClose`, `sockError`, `ipAddress`. Ukážky:
+`tcpserv` (TCP server pre `nc <adresa> 23`) a `udpecho` (`nc -u <adresa> 5000`).
 
 Sieť beží, kým RoboOS čaká na vstup (prompt shellu, `delay()`, `getKey()`, `WAIT`,
 `INKEY`), rovnako ako klávesnica: program, ktorý nič z toho nevolá, ju zablokuje.
@@ -253,6 +293,7 @@ Systém komunikuje po anglicky.
 | `usb test` | 8 s test klávesnice (štatistika prenosov, surové reporty) |
 | `usb debug on\|off` | podrobný výpis USB a reportov klávesnice |
 | `net` | stav siete (meno, čip, MAC, linka, počítadlá) |
+| `net speed 100\|1000` | Pi 3B+: obmedzí linku na 100 Mbit / povolí 1000 |
 | `net who` | zoznam RoboOS dosiek v sieti |
 | `net send <meno\|all> <text>` | pošle správu |
 | `net name [nové]` | ukáže / zmení meno tejto dosky |
@@ -289,7 +330,7 @@ vyvolá výnimku; tá sa vypíše a systém sa vráti do shellu.
 | `src/usb.c` | USB host ovládač DWC2: inicializácia, root port, DMA prenosy, split transakcie, enumerácia, huby, hot-plug |
 | `src/eth.c` | Ethernet: LAN9514 (3B) a LAN7515 (3B+) cez USB bulk endpointy, surové rámce |
 | `src/net.c` | správy medzi RoboOS doskami (mená, who, odoslanie s potvrdením, schránka) |
-| `src/ip.c` | TCP/IP: port lwIP, sieťové rozhranie, DHCP, `ip`, `ping`, `http` |
+| `src/ip.c` | TCP/IP: port lwIP, sieťové rozhranie, DHCP, `ip`, `ping`, `http`, sockety pre programy |
 | `lwip/` | TCP/IP stack lwIP 2.2.1 (bez úprav, licencia BSD) |
 | `src/kbd.c` | HID klávesnica: boot protocol, preklad scan kódov, autorepeat |
 | `src/sd.c` | ovládač SD karty (Arasan SDHCI, GPIO48-53 ALT3), čítanie aj zápis |
@@ -362,7 +403,7 @@ qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial stdio -device usb-kbd
 - prerušenia + časovač → multitasking
 - I2C / SPI / PWM v API aj v BASICu
 - editor: hľadanie, skok na riadok, uložiť ako
-- TCP/UDP v API pre BASIC a C, vzdialený shell (ako telnet)
+- vzdialený shell (ako telnet), IPv6
 - ďalšie jadrá (spin table na 0xE0–0xF0)
 
 ## Poďakovanie

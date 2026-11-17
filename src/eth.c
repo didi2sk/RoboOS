@@ -88,6 +88,7 @@
 #define L_MAC_FDPX     0x00000008
 #define L_MAC_SPD_MASK 0x00000006
 #define L_MAC_SPD_100  0x00000002
+#define L_MAC_SPD_1000 0x00000004
 #define L_MAC_AUTO     0x00001800      /* auto duplex + auto speed: off, the driver sets them */
 #define L_MAC_EEE      0x00020000
 #define L_RX_MAXSZ     0x3FFF0000
@@ -100,7 +101,8 @@
 enum { FAM_NONE, FAM_SMSC, FAM_LAN78, FAM_ECM };
 static int fam;
 static u16 mii_addr_reg = MII_ADDR, mii_data_reg = MII_DATA;
-static int cur_speed, cur_full;          /* LAN78xx: what the MAC is set to (0 = link down) */
+static int cur_speed, cur_full;
+static int giga = 1;                     /* LAN78xx: advertise 1000 Mbit */          /* LAN78xx: what the MAC is set to (0 = link down) */
 static u64 next_tick;
 static int last_link;
 
@@ -301,14 +303,15 @@ static int lan78_init(void)
     if ((r = reg_read(L_MAC_RX, &v))) return fail("MAC_RX", r);
     if ((r = reg_write(L_MAC_RX, (v & ~(L_RX_MAXSZ | L_RXEN)) | (1522u << 16)))) return fail("MAC_RX", r);
 
-    /* PHY: reset, advertise 10/100 only (the USB 2.0 link cannot use 1000 anyway), autoneg */
+    /* PHY: reset, advertise 10/100 and 1000 full duplex ('net speed 100' turns 1000 off), autoneg.
+     * Over USB 2.0 the chip moves at most ~300 Mbit, but the link runs at 1000. */
     if ((r = phy_write(0, 0x8000))) return fail("PHY BMCR reset", r);
     end = timer_us() + 500000;
     do {
         if ((r = phy_read(0, &p))) return fail("PHY read", r);
     } while ((p & 0x8000) && timer_us() < end);
     if (p & 0x8000) return fail("PHY stuck in reset", 0);
-    phy_write(9, 0);
+    phy_write(9, giga ? 0x0200 : 0);
     if ((r = phy_write(4, 0x05E1))) return fail("PHY advertise", r);
     if ((r = phy_write(0, 0x1200))) return fail("PHY autoneg", r);
     return 1;                                /* TX/RX are started by link_update() */
@@ -446,7 +449,7 @@ static void lan78_up(int speed, int full)
     lan78_set(L_MAC_TX, L_TXEN, 0);
     lan78_set(L_MAC_RX, L_RXEN, 0);
     lan78_set(L_MAC_CR, L_MAC_SPD_MASK | L_MAC_FDPX | L_MAC_AUTO,
-              (speed == 100 ? L_MAC_SPD_100 : 0) | (full ? L_MAC_FDPX : 0));
+              (speed == 1000 ? L_MAC_SPD_1000 : speed == 100 ? L_MAC_SPD_100 : 0) | (full ? L_MAC_FDPX : 0));
     lan78_set(L_FCT_RX_CTL, L_FCT_RST, L_FCT_RST);
     lan78_set(L_FCT_TX_CTL, L_FCT_RST, L_FCT_RST);
     delay_us(1000);
@@ -471,11 +474,14 @@ static int link_update(int *full)
         return 0;
     }
     if (fam == FAM_LAN78) {                  /* result of the auto-negotiation */
-        u16 adv = 0, lpa = 0;
+        u16 adv = 0, lpa = 0, gctl = 0, gsts = 0;
         if (phy_read(4, &adv) || phy_read(5, &lpa)) return cur_speed;
         u16 c = adv & lpa;
         int speed = (c & 0x0180) ? 100 : 10;
         int fd = (c & 0x0100) || (!(c & 0x0180) && (c & 0x0040));
+        if (!phy_read(9, &gctl) && !phy_read(10, &gsts) && (gctl & 0x0200) && (gsts & 0x0800)) {
+            speed = 1000; fd = 1;                /* both sides can do 1000BASE-T full duplex */
+        }
         if (speed != cur_speed || fd != cur_full) lan78_up(speed, fd);
         if (full) *full = cur_full;
         return cur_speed;
@@ -491,6 +497,19 @@ static int link_update(int *full)
 }
 
 int eth_link(int *full) { next_tick = timer_us() + 1000000; return last_link = link_update(full); }
+/* LAN78xx: offer 1000 Mbit or not, and negotiate again; -1 = this chip cannot */
+int eth_set_gigabit(int on)
+{
+    if (!ed || stage[0] || fam != FAM_LAN78) return -1;
+    giga = on;
+    phy_write(9, on ? 0x0200 : 0);
+    phy_write(0, 0x1200);                    /* restart auto-negotiation */
+    if (cur_speed) lan78_down();
+    next_tick = 0;
+    return 0;
+}
+int eth_gigabit(void) { return fam == FAM_LAN78 && giga; }
+
 int eth_link_cached(void) { return ed && !stage[0] ? last_link : 0; }
 
 /* once a second: follow the link (the MAC must know speed and duplex) */

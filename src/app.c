@@ -90,6 +90,18 @@ static void a_exit(int code)
     ctx_restore(&app_ctx, 1);
 }
 
+/* ---- TCP/IP: waiting keeps the network running and honours Ctrl+C ---- */
+static int  a_idle(void)                        { poll_input(); return 0; }
+static int  a_tcp_connect(const char *h, int p) { return sock_tcp_connect(h, p, a_idle); }
+static int  a_tcp_accept(int l)                 { poll_input(); return sock_tcp_accept(l); }
+static int  a_udp_open(int lp, const char *h, int rp) { return sock_udp_open(lp, h, rp, a_idle); }
+static int  a_swrite(int h, const void *d, int n) { poll_input(); return sock_write(h, d, n, a_idle); }
+static int  a_sprint(int h, const char *s)      { return a_swrite(h, s, (int)strlen(s)); }
+static int  a_sread(int h, void *b, int max)     { poll_input(); return sock_read(h, b, max); }
+static int  a_avail(int h)                      { poll_input(); return sock_avail(h); }
+static int  a_sendto(int h, const char *host, int p, const void *d, int n) { return sock_sendto(h, host, p, d, n, a_idle); }
+static int  a_recvfrom(int h, void *b, int max, char *ip, int *p) { poll_input(); return sock_read_from(h, b, max, ip, p); }
+
 static int a_temp(void)
 {
     u32 v[2] = { 0, 0 };
@@ -119,6 +131,19 @@ static const struct robos_api api_table = {
     .netSend = net_send,
     .netReceive = net_recv,
     .netName = net_name,
+    .tcpConnect = a_tcp_connect,
+    .tcpListen = sock_tcp_listen,
+    .tcpAccept = a_tcp_accept,
+    .udpOpen = a_udp_open,
+    .sockWrite = a_swrite,
+    .sockPrint = a_sprint,
+    .sockRead = a_sread,
+    .sockAvailable = a_avail,
+    .udpSendTo = a_sendto,
+    .udpReceiveFrom = a_recvfrom,
+    .sockClose = sock_close,
+    .sockError = sock_error,
+    .ipAddress = ip_address,
 };
 
 /* called from the exception handler: a crash inside a program ends the program */
@@ -188,6 +213,7 @@ int app_run(const char *path)
         app_code = entry(&api_table);
         app_running = 0;
     }
+    sock_close_all();                    /* whatever the program left open (also after Ctrl+C) */
 
     con_color(COL_GRAY);
     switch (app_reason) {
