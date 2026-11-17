@@ -14,6 +14,8 @@ volatile u32 __attribute__((aligned(64))) mbox[64];
 int mbox_call(u8 ch)
 {
     u32 r = (u32)((uintptr_t)mbox & ~0xFUL) | (ch & 0xF);
+    int ok;
+    mbox_lock();
 
     dcache_clean_inval((void *)mbox, sizeof(mbox));   /* GPU reads RAM directly */
     while (mmio_read(MBOX_STATUS) & MBOX_FULL) ;
@@ -22,14 +24,17 @@ int mbox_call(u8 ch)
         while (mmio_read(MBOX_STATUS) & MBOX_EMPTY) ;
         if (mmio_read(MBOX_READ) == r) {
             dcache_clean_inval((void *)mbox, sizeof(mbox));
-            return mbox[1] == MBOX_OK;
+            ok = mbox[1] == MBOX_OK;
+            mbox_unlock();
+            return ok;
         }
     }
 }
 
 int mbox_prop(u32 tag, u32 *vals, int n)
 {
-    int i;
+    int i, ok = 0;
+    mbox_lock();                                /* the buffer is shared by all cores */
     mbox[0] = (6 + n) * 4;
     mbox[1] = 0;
     mbox[2] = tag;
@@ -37,8 +42,10 @@ int mbox_prop(u32 tag, u32 *vals, int n)
     mbox[4] = 0;
     for (i = 0; i < n; i++) mbox[5 + i] = vals[i];
     mbox[5 + n] = 0;
-    if (!mbox_call(MBOX_CH_PROP)) return 0;
-    if (!(mbox[4] & 0x80000000)) return 0;   /* tag not processed */
-    for (i = 0; i < n; i++) vals[i] = mbox[5 + i];
-    return 1;
+    if (mbox_call(MBOX_CH_PROP) && (mbox[4] & 0x80000000)) {   /* else: tag not processed */
+        for (i = 0; i < n; i++) vals[i] = mbox[5 + i];
+        ok = 1;
+    }
+    mbox_unlock();
+    return ok;
 }

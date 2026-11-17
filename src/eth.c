@@ -496,16 +496,18 @@ static int link_update(int *full)
     return (sp & 0x08) ? 100 : 10;
 }
 
-int eth_link(int *full) { next_tick = timer_us() + 1000000; return last_link = link_update(full); }
+int eth_link(int *full) { io_lock(); next_tick = timer_us() + 1000000; int r = last_link = link_update(full); io_unlock(); return r; }
 /* LAN78xx: offer 1000 Mbit or not, and negotiate again; -1 = this chip cannot */
 int eth_set_gigabit(int on)
 {
     if (!ed || stage[0] || fam != FAM_LAN78) return -1;
+    io_lock();
     giga = on;
     phy_write(9, on ? 0x0200 : 0);
     phy_write(0, 0x1200);                    /* restart auto-negotiation */
     if (cur_speed) lan78_down();
     next_tick = 0;
+    io_unlock();
     return 0;
 }
 int eth_gigabit(void) { return fam == FAM_LAN78 && giga; }

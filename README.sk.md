@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.18**
+Aktuálna verzia: **0.19**
 
 ## Podporované dosky
 
@@ -256,8 +256,8 @@ C (`sdk/robos.h`): `tcpConnect`, `tcpListen`, `tcpAccept`, `udpOpen`, `sockWrite
 `udpSendTo`, `udpReceiveFrom`, `sockClose`, `sockError`, `ipAddress`. Ukážky:
 `tcpserv` (TCP server pre `nc <adresa> 23`) a `udpecho` (`nc -u <adresa> 5000`).
 
-Sieť beží, kým RoboOS čaká na vstup (prompt shellu, `delay()`, `getKey()`, `WAIT`,
-`INKEY`), rovnako ako klávesnica: program, ktorý nič z toho nevolá, ju zablokuje.
+Sieť (aj USB klávesnica) beží na vlastnom jadre procesora, takže doska odpovedá na ping,
+podáva webovú stránku a prijíma správy, aj keď program práve počíta.
 
 Funguje aj štandardný USB sieťový adaptér triedy CDC-ECM (takto sa sieť testuje v QEMU;
 na skutočných doskách to zatiaľ testované nie je).
@@ -406,9 +406,19 @@ vyvolá výnimku; tá sa vypíše a systém sa vráti do shellu.
 
 ## Ako to funguje
 
+Raspberry Pi 3 má štyri jadrá procesora. RoboOS používa dve:
+
+- **jadro 0**: shell, BASIC a programy, SD karta, obrazovka a zvuk;
+- **jadro 1**: celé USB (klávesnica, hot-plug, ethernetový čip) a sieť (TCP/IP, správy
+  RoboOS) - stále, nech jadro 0 robí čokoľvek.
+
+Jadrá 2 a 3 sa zatiaľ nepoužívajú. `info` ukáže, ako sa jadrá využívajú. Ak sa jadro 1
+nespustí, jadro 0 robí všetko samo ako v starších verziách (hlási to riadok pri štarte).
+
 | Súbor | Čo robí |
 |-------|---------|
-| `src/boot.S` | uspí jadrá 1–3, prechod EL2→EL1, zásobník, vektory výnimiek, BSS |
+| `src/boot.S` | prechod EL2→EL1, zásobníky, vektory výnimiek, BSS; vstup pre jadrá 1-3 |
+| `src/smp.c` | prebudí jadro 1 (USB + sieť), zámky zdieľané jadrami |
 | `src/mmu.c` | identické mapovanie 2 MB blokmi, zapnutie D/I cache |
 | `src/mbox.c` | mailbox ku GPU firmvéru (info o doske, takty, teplota, framebuffer) |
 | `src/uart.c` | PL011 UART0 na GPIO14/15 |
@@ -456,7 +466,8 @@ Na RPi 3 nie je klávesnica pripojená priamo, cesta vyzerá takto:
 8. **Postupné zapínanie portov hubu**: hub v Apple klávesnici pri zapnutí
    všetkých portov naraz spadol (prúdový náraz) a odpojil sa.
 
-Ovládač beží bez prerušení (polling) a používa jeden DMA kanál. DMA buffre ležia
+Ovládač beží bez prerušení (polling, na jadre 1) a používa jeden DMA kanál (a druhý pre
+sieťové adaptéry, ktoré nechávajú prenos čakať). DMA buffre ležia
 v 2 MB bloku mapovanom bez cache.
 
 Dosky bez hubu na doske (Zero 2 W, 3A+) majú klávesnicu priamo na root porte;
@@ -497,7 +508,7 @@ qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial stdio -device usb-kbd
 - zvuk: MP3, miešanie tónov s WAV
 - editor: hľadanie, skok na riadok, uložiť ako
 - vzdialený shell (ako telnet), IPv6
-- ďalšie jadrá (spin table na 0xE0–0xF0)
+- jadrá 2 a 3 pre programy (spustiť funkciu na inom jadre)
 
 ## Poďakovanie
 

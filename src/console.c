@@ -10,31 +10,40 @@ static const u32 rgb[] = {
     0xC0C0C0, 0x55FF55, 0x55FFFF, 0xFFFF55, 0xFF5555, 0x808080, 0xFFFFFF
 };
 
+/* all output holds the console lock: core 1 prints too (USB, network messages) */
 void con_putc(char c)
 {
-    if (c == 7) { uart_putc(7); sound_tone(880, 80); return; }   /* BEL = a short beep */
+    if (c == 7) { uart_putc(7); if (smp_core() == 0) sound_tone(880, 80); return; }   /* BEL = a short beep */
+    con_lock();
     if (c == '\n') uart_putc('\r');
     uart_putc(c);
     fb_putc(c);
+    con_unlock();
 }
 
 void con_puts(const char *s)
 {
+    con_lock();
     while (*s) con_putc(*s++);
+    con_unlock();
 }
 
 void con_color(int c)
 {
     const char *s = ansi[c];
+    con_lock();
     while (*s) uart_putc(*s++);
     fb_setcolor(rgb[c]);
+    con_unlock();
 }
 
 void con_clear(void)
 {
+    con_lock();
     const char *s = "\033[2J\033[H";
     while (*s) uart_putc(*s++);
     fb_clear();
+    con_unlock();
 }
 
 static void put_num(u64 v, int base, int width, char pad, int upper, int neg)
@@ -51,6 +60,7 @@ static void put_num(u64 v, int base, int width, char pad, int upper, int neg)
 void kprintf(const char *fmt, ...)
 {
     va_list ap;
+    con_lock();
     va_start(ap, fmt);
     for (; *fmt; fmt++) {
         if (*fmt != '%') { con_putc(*fmt); continue; }
@@ -85,15 +95,21 @@ void kprintf(const char *fmt, ...)
         }
     }
     va_end(ap);
+    con_unlock();
 }
 
 /* ---------------- input: UART + USB keyboard ---------------- */
 int con_trygetc(void)
 {
     if (uart_has_char()) return (u8)uart_getc();
-    kbd_poll();
-    usb_hotplug();
-    net_poll();
+    if (!io_core_active()) {                    /* no I/O core: poll USB + network here */
+        io_lock();
+        io_poll_all();
+        io_unlock();
+    } else if (io_held()) {                     /* core 0 owns the USB now (usb test, net test) */
+        kbd_poll();
+        usb_hotplug();
+    }
     sound_poll();
     return kbd_getc();
 }
@@ -154,14 +170,18 @@ static void uart_num(int v)
 
 void con_goto(int x, int y)
 {
+    con_lock();
     uart_puts("\033["); uart_num(y + 1); uart_putc(';'); uart_num(x + 1); uart_putc('H');
     fb_goto(x, y);
+    con_unlock();
 }
 
 void con_clreol(void)
 {
+    con_lock();
     uart_puts("\033[K");
     fb_clreol();
+    con_unlock();
 }
 
 void con_size(int *cols, int *rows)

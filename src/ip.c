@@ -11,6 +11,10 @@
  * Commands: ip, ping, http (a small web page served by the board).
  * Sockets for programs (C API, BASIC): numbered TCP / UDP connections with a
  * receive buffer each; see the "sockets" section below.
+ *
+ * lwIP runs on the I/O core (core 1, smp.c) under the io lock. Everything here
+ * that core 0 calls takes that lock, and lets go of it while it waits for an
+ * answer, so the I/O core can receive it.
  */
 #include "usb.h"
 #include "sd.h"
@@ -101,12 +105,24 @@ static void load_config(ip4_addr_t *a, ip4_addr_t *m, ip4_addr_t *g, ip4_addr_t 
     if (k < 4 || !ip4addr_aton(w[3], d)) ip4_addr_copy(*d, *g);
 }
 
+/* /IP.TXT is read on core 0 (the FAT code is not for two cores), before core 1 starts */
+static ip4_addr_t cfg_a, cfg_m, cfg_g, cfg_d;
+static int cfg_loaded;
+
+void ip_prepare(void)
+{
+    if (cfg_loaded || !fat_mounted() || smp_core() != 0) return;
+    ip4_addr_set_zero(&cfg_a); ip4_addr_set_zero(&cfg_m); ip4_addr_set_zero(&cfg_g); ip4_addr_set_zero(&cfg_d);
+    load_config(&cfg_a, &cfg_m, &cfg_g, &cfg_d);
+    cfg_loaded = 1;
+}
+
 static void start(void)
 {
     ip4_addr_t a, m, g, d;
-    ip4_addr_set_zero(&a); ip4_addr_set_zero(&m); ip4_addr_set_zero(&g); ip4_addr_set_zero(&d);
     if (!lwip_ready) { lwip_init(); lwip_ready = 1; }
-    load_config(&a, &m, &g, &d);
+    ip_prepare();
+    a = cfg_a; m = cfg_m; g = cfg_g; d = cfg_d;
     netif_add(&nif, &a, &m, &g, 0, nif_init, ethernet_input);
     netif_set_default(&nif);
     netif_set_up(&nif);
@@ -164,10 +180,12 @@ void ip_poll(int notify)
 /* run the network for a while (commands that wait for an answer); 1 = Ctrl+C */
 static int run_ms(u32 ms)
 {
+    int d = io_release(), r = 0;                        /* the I/O core works meanwhile */
     u64 end = timer_us() + (u64)ms * 1000;
     while (timer_us() < end)
-        if (con_trygetc() == 3) return 1;               /* con_trygetc() also polls the network */
-    return 0;
+        if (con_trygetc() == 3) { r = 1; break; }      /* without an I/O core this polls the network */
+    io_reacquire(d);
+    return r;
 }
 
 /* ---------------- command: ip ---------------- */
@@ -186,7 +204,7 @@ static void save_config(const char *text)
         kprintf("(not saved: no SD card or write error)\n");
 }
 
-void ip_cmd(int argc, char **argv)
+static void ip_cmd_l(int argc, char **argv)
 {
     if (!need_net()) return;
     if (argc > 1 && !strcmp(argv[1], "dhcp")) {
@@ -232,7 +250,7 @@ void ip_cmd(int argc, char **argv)
 
 #define PING_ID 0x524F                                  /* "RO" */
 static u16 ping_seq;
-static int ping_got, ping_ttl;
+static volatile int ping_got, ping_ttl;       /* set on the I/O core */
 
 static u8 ping_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p, const ip_addr_t *addr)
 {
@@ -252,7 +270,7 @@ static u8 ping_recv(void *arg, struct raw_pcb *pcb, struct pbuf *p, const ip_add
     return 1;                                            /* eaten */
 }
 
-static struct { int state; ip_addr_t addr; } dns_res;  /* 0 waiting, 1 found, -1 failed */
+static struct { volatile int state; ip_addr_t addr; } dns_res;  /* 0 waiting, 1 found, -1 failed */
 
 static void dns_found(const char *name, const ip_addr_t *addr, void *arg)
 {
@@ -270,8 +288,11 @@ static int resolve(const char *name, ip_addr_t *out, int (*idle)(void))
     if (e == ERR_OK) return 0;
     if (e != ERR_INPROGRESS) return -1;
     u64 end = timer_us() + 5000000;
+    int d = io_release(), stop = 0;
     while (!dns_res.state && timer_us() < end)
-        if (idle()) return -2;
+        if (idle()) { stop = 1; break; }
+    io_reacquire(d);
+    if (stop) return -2;
     if (dns_res.state != 1) return -1;
     ip_addr_copy(*out, dns_res.addr);
     return 0;
@@ -279,7 +300,7 @@ static int resolve(const char *name, ip_addr_t *out, int (*idle)(void))
 
 static int idle_shell(void) { return con_trygetc() == 3; }   /* polls the network, Ctrl+C aborts */
 
-void ping_cmd(int argc, char **argv)
+static void ping_cmd_l(int argc, char **argv)
 {
     static struct raw_pcb *pcb;
     ip_addr_t dst;
@@ -313,9 +334,10 @@ void ping_cmd(int argc, char **argv)
         raw_sendto(pcb, p, &dst);
         pbuf_free(p);
         sent++;
-        int stop = 0;
+        int stop = 0, d = io_release();
         while (!ping_got && timer_us() - t0 < 1000000)
             if (con_trygetc() == 3) { stop = 1; break; }
+        io_reacquire(d);
         if (stop) { kprintf("^C\n"); break; }
         if (ping_got) {
             u32 us = (u32)(timer_us() - t0);
@@ -393,7 +415,7 @@ static err_t http_accept(void *arg, struct tcp_pcb *pcb, err_t err)
     return ERR_OK;
 }
 
-void http_cmd(int argc, char **argv)
+static void http_cmd_l(int argc, char **argv)
 {
     char b[16];
     if (!need_net()) return;
@@ -581,7 +603,7 @@ static int u_next(struct sock *s)
 
 /* ---- API ---- */
 
-int sock_tcp_connect(const char *host, int port, int (*idle)(void))
+static int sock_tcp_connect_l(const char *host, int port, int (*idle)(void))
 {
     ip_addr_t a;
     if (!started) return -1;
@@ -595,13 +617,16 @@ int sock_tcp_connect(const char *host, int port, int (*idle)(void))
     t_setup(h, pcb);
     if (tcp_connect(pcb, &a, (u16_t)port, t_connected) != ERR_OK) { sock_close(h); return -3; }
     u64 end = timer_us() + 10000000;
-    while (socks[h].state == T_CONNECTING && timer_us() < end)
-        if (idle()) { sock_close(h); return -3; }
+    int d = io_release(), stop = 0;
+    while (*(volatile u8 *)&socks[h].state == T_CONNECTING && timer_us() < end)
+        if (idle()) { stop = 1; break; }
+    io_reacquire(d);
+    if (stop) { sock_close(h); return -3; }
     if (socks[h].state != T_OPEN) { sock_close(h); return -3; }
     return h;
 }
 
-int sock_tcp_listen(int port)
+static int sock_tcp_listen_l(int port)
 {
     if (!started) return -1;
     int h = alloc_sock(S_LISTEN);
@@ -617,7 +642,7 @@ int sock_tcp_listen(int port)
     return h;
 }
 
-int sock_tcp_accept(int h)
+static int sock_tcp_accept_l(int h)
 {
     struct sock *l = get(h, S_LISTEN);
     if (!l) return -5;
@@ -627,7 +652,7 @@ int sock_tcp_accept(int h)
     return c;
 }
 
-int sock_udp_open(int lport, const char *host, int rport, int (*idle)(void))
+static int sock_udp_open_l(int lport, const char *host, int rport, int (*idle)(void))
 {
     ip_addr_t a;
     if (!started) return -1;
@@ -655,7 +680,7 @@ static int udp_out(struct sock *s, const ip_addr_t *to, u16 port, const void *d,
     return e == ERR_OK ? len : -3;
 }
 
-int sock_write(int h, const void *d, int len, int (*idle)(void))
+static int sock_write_l(int h, const void *d, int len, int (*idle)(void))
 {
     struct sock *s = get(h, 0);
     if (!s || s->type == S_LISTEN) return -5;
@@ -676,7 +701,9 @@ int sock_write(int h, const void *d, int len, int (*idle)(void))
         }
         tcp_output(s->t);
         if (timer_us() > end) break;
-        if (idle()) break;
+        int dd = io_release(), stop = idle();
+        io_reacquire(dd);
+        if (stop) break;
         s = get(h, 0);
         if (!s) return -5;
     }
@@ -684,7 +711,7 @@ int sock_write(int h, const void *d, int len, int (*idle)(void))
     return done;
 }
 
-int sock_sendto(int h, const char *host, int port, const void *d, int len, int (*idle)(void))
+static int sock_sendto_l(int h, const char *host, int port, const void *d, int len, int (*idle)(void))
 {
     ip_addr_t a;
     struct sock *s = get(h, S_UDP);
@@ -694,7 +721,7 @@ int sock_sendto(int h, const char *host, int port, const void *d, int len, int (
 }
 
 /* bytes waiting; -1 when a TCP connection is closed and nothing is left */
-int sock_avail(int h)
+static int sock_avail_l(int h)
 {
     struct sock *s = get(h, 0);
     if (!s) return -5;
@@ -710,7 +737,7 @@ static void tcp_consumed(struct sock *s, u16 n)
 }
 
 /* TCP: bytes (0 = nothing yet, -1 closed). UDP: one datagram (-1 = none) */
-int sock_read(int h, void *buf, int max)
+static int sock_read_l(int h, void *buf, int max)
 {
     struct sock *s = get(h, 0);
     if (!s || s->type == S_LISTEN) return -5;
@@ -728,7 +755,7 @@ int sock_read(int h, void *buf, int max)
     return n;
 }
 
-int sock_read_from(int h, void *buf, int max, char *ip, int *port)
+static int sock_read_from_l(int h, void *buf, int max, char *ip, int *port)
 {
     struct sock *s = get(h, S_UDP);
     if (!s) return -5;
@@ -739,7 +766,7 @@ int sock_read_from(int h, void *buf, int max, char *ip, int *port)
 }
 
 /* one byte: >= 0, -1 nothing yet, -2 closed */
-int sock_getc(int h)
+static int sock_getc_l(int h)
 {
     struct sock *s = get(h, 0);
     u8 c;
@@ -757,7 +784,7 @@ int sock_getc(int h)
     return c;
 }
 
-void sock_close(int h)
+static void sock_close_l(int h)
 {
     struct sock *s = get(h, 0);
     if (!s) return;
@@ -774,14 +801,32 @@ void sock_close(int h)
     s->t = 0; s->u = 0;
 }
 
-void sock_close_all(void)
+static void sock_close_all_l(void)
 {
     for (int h = 1; h <= NSOCK; h++) sock_close(h);
 }
 
-const char *ip_address(void)
+static const char *ip_address_l(void)
 {
     static char b[16];
     if (!started) return "0.0.0.0";
     return ip4addr_ntoa_r(netif_ip4_addr(&nif), b, sizeof(b));
 }
+
+/* ---- the entry points for core 0: under the io lock ---- */
+int sock_tcp_connect(const char *host, int port, int (*idle)(void)) { io_lock(); int r = sock_tcp_connect_l(host, port, idle); io_unlock(); return r; }
+int sock_tcp_listen(int port) { io_lock(); int r = sock_tcp_listen_l(port); io_unlock(); return r; }
+int sock_tcp_accept(int h) { io_lock(); int r = sock_tcp_accept_l(h); io_unlock(); return r; }
+int sock_udp_open(int lport, const char *host, int rport, int (*idle)(void)) { io_lock(); int r = sock_udp_open_l(lport, host, rport, idle); io_unlock(); return r; }
+int sock_write(int h, const void *d, int len, int (*idle)(void)) { io_lock(); int r = sock_write_l(h, d, len, idle); io_unlock(); return r; }
+int sock_sendto(int h, const char *host, int port, const void *d, int len, int (*idle)(void)) { io_lock(); int r = sock_sendto_l(h, host, port, d, len, idle); io_unlock(); return r; }
+int sock_avail(int h) { io_lock(); int r = sock_avail_l(h); io_unlock(); return r; }
+int sock_read(int h, void *buf, int max) { io_lock(); int r = sock_read_l(h, buf, max); io_unlock(); return r; }
+int sock_read_from(int h, void *buf, int max, char *ip, int *port) { io_lock(); int r = sock_read_from_l(h, buf, max, ip, port); io_unlock(); return r; }
+int sock_getc(int h) { io_lock(); int r = sock_getc_l(h); io_unlock(); return r; }
+void sock_close(int h) { io_lock(); sock_close_l(h); io_unlock(); }
+void sock_close_all(void) { io_lock(); sock_close_all_l(); io_unlock(); }
+const char *ip_address(void) { io_lock(); const char *r = ip_address_l(); io_unlock(); return r; }
+void ip_cmd(int argc, char **argv) { io_lock(); ip_cmd_l(argc, argv); io_unlock(); }
+void ping_cmd(int argc, char **argv) { io_lock(); ping_cmd_l(argc, argv); io_unlock(); }
+void http_cmd(int argc, char **argv) { io_lock(); http_cmd_l(argc, argv); io_unlock(); }
