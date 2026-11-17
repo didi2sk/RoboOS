@@ -732,6 +732,17 @@ static void statement(void)
     if (kw("SOUND"))     { st_sound(); return; }
     if (kw("PLAY"))      { st_play(); return; }
     if (kw("VOLUME"))    { sound_volume((int)expr()); return; }
+    int mk = 0;
+    if ((mk = kw("MKDIR")) || kw("RMDIR") || kw("KILL")) {   /* MKDIR "dir", RMDIR "dir", KILL "file" */
+        char a[64], p[PATH_MAX_LEN];
+        str_lit(a, sizeof(a));
+        if (path_abs(a, p, sizeof(p))) error("BAD FILE NAME");
+        struct fat_file f;
+        if (!mk && fat_open(p, &f)) error("FILE NOT FOUND");
+        int r = mk ? fat_mkdir(p) : fat_remove(p);
+        if (r) { kprintf("?%s\n", fat_write_error(r)); error("FILE ERROR"); }
+        return;
+    }
     if (kw("PLAYWAV"))   {
         char a[64], p[PATH_MAX_LEN];
         str_lit(a, sizeof(a));
@@ -927,6 +938,7 @@ static void help(void)
     con_color(COL_CYAN); con_puts("RoboOS BASIC\n"); con_color(COL_DEFAULT);
     con_puts("  Lines:    10 PRINT \"HI\"   (type a number alone to delete a line)\n"
              "  Commands: RUN  LIST [a-b]  NEW  SAVE \"name\"  LOAD \"name\"  DIR [path]  BYE\n"
+             "            MKDIR \"dir\"  RMDIR \"dir\"  KILL \"file\"  (also inside programs)\n"
              "  Program:  PRINT ?  INPUT  LET  IF..THEN..ELSE  GOTO  GOSUB  RETURN  FOR..TO..STEP  NEXT\n"
              "            DIM  END  REM '  CLS  RANDOMIZE   (separate statements with :)\n"
              "  GPIO:     PINMODE pin, OUT|IN|PULLUP|PULLDOWN   GPIO pin, HIGH|LOW\n"

@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.16**
+Aktuálna verzia: **0.17**
 
 ## Podporované dosky
 
@@ -50,6 +50,8 @@ Ak sa karta nenájde, `sd init` ukáže, ktorý krok zlyhal, a registre radiča.
 - Pohyb po karte: `cd APPS`, `cd ..`, `cd /`, `pwd`; prompt ukazuje, kde si
   (`robo@rpi3:/APPS$`). Všetky príkazy aj BASIC (`LOAD`, `SAVE`, `DIR`) berú cesty relatívne
   k aktuálnemu priečinku. **Tab** dopĺňa mená súborov a priečinkov.
+- `mkdir <priečinok>` vytvorí priečinok (meno 8.3), `rm <súbor>` zmaže súbor, `rm <priečinok>`
+  prázdny priečinok. Súbory firmvéru a jadra v `/` sú chránené: zmazať sa dajú len cez `rm -f`.
 - **Ctrl+C** zastaví bežiaci program a vráti sa do shellu.
 
 ### BASIC – programovanie priamo na RPi
@@ -65,7 +67,8 @@ robo@rpi3:~$ basic
 ] BYE
 ```
 
-- Príkazy: `RUN`, `LIST [a-b]`, `NEW`, `SAVE "meno"`, `LOAD "meno"`, `DIR [cesta]`, `HELP`, `BYE`.
+- Príkazy: `RUN`, `LIST [a-b]`, `NEW`, `SAVE "meno"`, `LOAD "meno"`, `DIR [cesta]`, `HELP`, `BYE`;
+  `MKDIR "priečinok"`, `RMDIR "priečinok"`, `KILL "súbor"` fungujú aj v programoch.
   Samotné číslo riadku riadok zmaže.
 - Príkazy v programe: `PRINT`/`?`, `INPUT`, `LET`, `IF..THEN..ELSE`, `GOTO`, `GOSUB`/`RETURN`,
   `FOR..TO..STEP`/`NEXT`, `DIM`, `END`, `REM`/`'`, `CLS`, `RANDOMIZE`; viac príkazov oddeľ `:`.
@@ -361,6 +364,8 @@ Systém komunikuje po anglicky.
 | `ls [cesta]` | obsah priečinka na SD karte (bez cesty: aktuálneho) |
 | `cd [priečinok]` | zmena priečinka (`..` = vyššie, `/` = navrch, bez argumentu = navrch) |
 | `pwd` | ukáže aktuálny priečinok |
+| `mkdir <priečinok>` | vytvorí priečinok |
+| `rm [-f] <súbor\|priečinok>` | zmaže súbor alebo prázdny priečinok (`-f` pre bootovacie súbory) |
 | `cat <súbor>` | vypíše textový súbor (`"úvodzovky"` pre mená s medzerami) |
 | `edit <súbor>` | celoobrazovkový textový editor |
 | `run <program>` | spustí program `.bin` alebo `.bas` |
@@ -398,7 +403,7 @@ vyvolá výnimku; tá sa vypíše a systém sa vráti do shellu.
 | `lwip/` | TCP/IP stack lwIP 2.2.1 (bez úprav, licencia BSD) |
 | `src/kbd.c` | HID klávesnica: boot protocol, preklad scan kódov, autorepeat |
 | `src/sd.c` | ovládač SD karty (Arasan SDHCI, GPIO48-53 ALT3), čítanie aj zápis |
-| `src/fat.c` | FAT16/FAT32: dlhé mená, čítanie, zápis (mená 8.3), obe kópie FAT |
+| `src/fat.c` | FAT16/FAT32: dlhé mená, čítanie, zápis (mená 8.3), mkdir, mazanie, obe kópie FAT |
 | `src/app.c` | nahrávanie programov, API v štýle Arduina, Ctrl+C, autostart z `/RUN` |
 | `src/basic.c` | interpreter BASICu |
 | `src/ctx.S` | setjmp/longjmp na ukončenie programov |

@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.16**
+Current version: **0.17**
 
 ## Supported boards
 
@@ -49,6 +49,8 @@ If the card is not found, `sd init` shows which step failed and the controller r
 - Moving around the card: `cd APPS`, `cd ..`, `cd /`, `pwd`; the prompt shows where you are
   (`robo@rpi3:/APPS$`). All commands and BASIC (`LOAD`, `SAVE`, `DIR`) take paths relative
   to the current directory. **Tab** completes file and directory names.
+- `mkdir <dir>` makes a directory (8.3 name), `rm <file>` deletes a file, `rm <dir>` an empty
+  directory. The firmware and kernel files in `/` are protected: deleting them needs `rm -f`.
 - **Ctrl+C** stops a running program and returns to the shell.
 
 ### BASIC - write programs directly on the RPi
@@ -64,7 +66,8 @@ robo@rpi3:~$ basic
 ] BYE
 ```
 
-- Commands: `RUN`, `LIST [a-b]`, `NEW`, `SAVE "name"`, `LOAD "name"`, `DIR [path]`, `HELP`, `BYE`.
+- Commands: `RUN`, `LIST [a-b]`, `NEW`, `SAVE "name"`, `LOAD "name"`, `DIR [path]`, `HELP`, `BYE`;
+  `MKDIR "dir"`, `RMDIR "dir"`, `KILL "file"` work in programs too.
   Typing a line number alone deletes that line.
 - Statements: `PRINT`/`?`, `INPUT`, `LET`, `IF..THEN..ELSE`, `GOTO`, `GOSUB`/`RETURN`,
   `FOR..TO..STEP`/`NEXT`, `DIM`, `END`, `REM`/`'`, `CLS`, `RANDOMIZE`; separate statements with `:`.
@@ -359,6 +362,8 @@ If you connect after boot, press Enter.
 | `ls [path]` | list a directory on the SD card (default: the current one) |
 | `cd [dir]` | change directory (`..` = up, `/` = top, no argument = top) |
 | `pwd` | show the current directory |
+| `mkdir <dir>` | make a directory |
+| `rm [-f] <file\|dir>` | delete a file or an empty directory (`-f` for boot files) |
 | `cat <file>` | print a text file (`"quotes"` for names with spaces) |
 | `edit <file>` | full-screen text editor |
 | `run <program>` | run a `.bin` or `.bas` program |
@@ -396,7 +401,7 @@ raises an exception; it is printed and the system returns to the shell.
 | `lwip/` | lwIP 2.2.1 TCP/IP stack (unmodified, BSD license) |
 | `src/kbd.c` | HID keyboard: boot protocol, scan code translation, autorepeat |
 | `src/sd.c` | SD card driver (Arasan SDHCI, GPIO48-53 ALT3), read + write |
-| `src/fat.c` | FAT16/FAT32: long names, read, write (8.3 names), both FAT copies |
+| `src/fat.c` | FAT16/FAT32: long names, read, write (8.3 names), mkdir, delete, both FAT copies |
 | `src/app.c` | program loader, Arduino-style API, Ctrl+C, autostart from `/RUN` |
 | `src/basic.c` | BASIC interpreter |
 | `src/ctx.S` | setjmp/longjmp to abort programs |

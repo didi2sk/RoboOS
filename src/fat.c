@@ -371,7 +371,208 @@ const char *fat_write_error(int e)
     case -4: return "directory full";
     case -5: return "disk full";
     case -6: return "is a directory";
+    case -8: return "already exists";
+    case -9: return "directory not empty";
+    case -10: return "cannot remove that";
     default: return "write error";
+    }
+}
+
+/* the entry with this 8.3 name in dir, or a free slot (the directory grows by a
+ * cluster if it is full); 0 = ok, *found says which */
+static int dir_slot(struct fat_file *dir, const u8 n83[11], u32 *slot_lba, u32 *slot_off,
+                    int *found, u32 *old_cluster, u8 *attr)
+{
+    int have_free = 0;
+    *found = 0; *old_cluster = 0; *attr = 0; *slot_lba = 0; *slot_off = 0;
+    for (u32 idx = 0; ; idx++) {
+        u32 lba;
+        if (file_sector(dir, idx, &lba)) break;
+        if (read_sec(lba, secbuf, &secbuf_lba)) return -7;
+        int end = 0;
+        for (u32 o = 0; o < 512; o += 32) {
+            u8 *e = secbuf + o;
+            if (e[0] == 0x00 || e[0] == 0xE5) {
+                if (!have_free) { have_free = 1; *slot_lba = lba; *slot_off = o; }
+                if (e[0] == 0x00) { end = 1; break; }
+                continue;
+            }
+            if (e[11] == 0x0F || (e[11] & 0x08)) continue;
+            if (!memcmp_n(e, n83, 11)) {
+                *found = 1; *slot_lba = lba; *slot_off = o; *attr = e[11];
+                *old_cluster = rd16(e + 26) | ((u32)rd16(e + 20) << 16);
+                end = 1;
+                break;
+            }
+        }
+        if (end) break;
+    }
+    if (!*found && !have_free) {                         /* grow the directory by a cluster */
+        if (dir->first_cluster == 0) return -4;          /* FAT16 root is fixed size */
+        u32 lastc = dir->first_cluster;
+        while (!end_of_chain(next_cluster(lastc))) lastc = next_cluster(lastc);
+        u32 nc = alloc_cluster(lastc);
+        if (!nc) return -5;
+        memset(secbuf, 0, 512);
+        secbuf_lba = 0xFFFFFFFF;
+        for (u32 i = 0; i < sec_per_clus; i++)
+            if (write_sec(clus_lba(nc) + i, secbuf)) return -7;
+        *slot_lba = clus_lba(nc); *slot_off = 0;
+    }
+    return 0;
+}
+
+/* "dir/name" -> the parent directory (opened) and the name part */
+static int split_path(const char *path, struct fat_file *dir, const char **name)
+{
+    char dirpath[128];
+    *name = path;
+    for (const char *p = path; *p; p++) if (*p == '/') *name = p + 1;
+    int dl = (int)(*name - path);
+    if (dl >= (int)sizeof(dirpath)) return -2;
+    memcpy(dirpath, path, dl);
+    dirpath[dl] = 0;
+    if (fat_open(dirpath, dir) || !dir->is_dir) return -2;
+    return 0;
+}
+
+static void set_entry(u8 *e, const u8 n83[11], u8 flags, u8 attr, u32 cluster, u32 size)
+{
+    u16 date = ((2026 - 1980) << 9) | (1 << 5) | 1;      /* no RTC: 2026-01-01 12:00 */
+    memset(e, 0, 32);
+    memcpy(e, n83, 11);
+    e[11] = attr;
+    e[12] = flags;
+    wr16(e + 16, date); wr16(e + 18, date);
+    wr16(e + 22, 12 << 11); wr16(e + 24, date);
+    wr16(e + 20, cluster >> 16);
+    wr16(e + 26, cluster & 0xFFFF);
+    wr32(e + 28, size);
+}
+
+/* create a directory (8.3 name; mixed case is stored in capitals); 0 = ok */
+int fat_mkdir(const char *path)
+{
+    struct fat_file dir;
+    const char *name;
+    u8 n83[11], flags = 0;
+    if (!mounted) return -1;
+    if (split_path(path, &dir, &name)) return -2;
+    if (make_83(name, n83, &flags)) {                    /* "Games" -> "GAMES" */
+        char up[13];
+        int i = 0;
+        for (; name[i] && i < 12; i++) up[i] = (name[i] >= 'a' && name[i] <= 'z') ? name[i] - 32 : name[i];
+        up[i] = 0;
+        if (name[i] || make_83(up, n83, &flags)) return -3;
+    }
+    if (n83[0] == '.') return -3;
+
+    u32 slot_lba, slot_off, old;
+    u8 attr;
+    int found;
+    int r = dir_slot(&dir, n83, &slot_lba, &slot_off, &found, &old, &attr);
+    if (r) return r;
+    if (found) return -8;
+
+    fsinfo_invalidate();
+    u32 c = alloc_cluster(0);
+    if (!c) return -5;
+    memset(secbuf, 0, 512);
+    secbuf_lba = 0xFFFFFFFF;
+    for (u32 i = 1; i < sec_per_clus; i++)
+        if (write_sec(clus_lba(c) + i, secbuf)) return -7;
+    static const u8 dot[11] = { '.', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ' };
+    static const u8 dotdot[11] = { '.', '.', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ' };
+    u32 parent = dir.first_cluster == (fat32 ? root_cluster : 0) ? 0 : dir.first_cluster;
+    set_entry(secbuf, dot, 0, 0x10, c, 0);
+    set_entry(secbuf + 32, dotdot, 0, 0x10, parent, 0);
+    if (write_sec(clus_lba(c), secbuf)) return -7;
+
+    if (read_sec(slot_lba, secbuf, &secbuf_lba)) return -7;
+    set_entry(secbuf + slot_off, n83, flags, 0x10, c, 0);
+    return write_sec(slot_lba, secbuf) ? -7 : 0;
+}
+
+/* is this directory empty (only . and ..)? */
+static int dir_empty(u32 cluster)
+{
+    struct fat_file d;
+    memset(&d, 0, sizeof(d));
+    d.first_cluster = cluster;
+    d.is_dir = 1;
+    for (u32 idx = 0; ; idx++) {
+        u32 lba;
+        if (file_sector(&d, idx, &lba)) return 1;
+        if (read_sec(lba, secbuf, &secbuf_lba)) return 0;
+        for (u32 o = 0; o < 512; o += 32) {
+            u8 *e = secbuf + o;
+            if (e[0] == 0x00) return 1;
+            if (e[0] == 0xE5 || e[11] == 0x0F) continue;
+            if (e[0] == '.' && (e[1] == ' ' || (e[1] == '.' && e[2] == ' '))) continue;
+            return 0;
+        }
+    }
+}
+
+/* delete a file or an empty directory, with its long-name entries; 0 = ok */
+int fat_remove(const char *path)
+{
+    struct fat_file dir;
+    const char *name;
+    if (!mounted) return -1;
+    if (split_path(path, &dir, &name) || !*name) return -2;
+    int nlen = (int)strlen(name);
+    if ((nlen == 1 && name[0] == '.') || (nlen == 2 && name[0] == '.' && name[1] == '.')) return -10;
+
+    u32 lfn_lba[20], lfn_off[20];
+    int nlfn = 0;
+    char lfn[FAT_MAX_NAME];
+    memset(lfn, 0, sizeof(lfn));
+    for (u32 idx = 0; ; idx++) {
+        u32 lba;
+        if (file_sector(&dir, idx, &lba)) return -2;
+        if (read_sec(lba, secbuf, &secbuf_lba)) return -7;
+        for (u32 o = 0; o < 512; o += 32) {
+            u8 *e = secbuf + o;
+            if (e[0] == 0x00) return -2;
+            if (e[0] == 0xE5) { nlfn = 0; continue; }
+            if (e[11] == 0x0F) {                         /* a piece of a long name */
+                static const u8 pos[13] = { 1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30 };
+                int seq = (e[0] & 0x1F) - 1;
+                if (e[0] & 0x40) { memset(lfn, 0, sizeof(lfn)); nlfn = 0; }
+                for (int i = 0; i < 13; i++) {
+                    int k = seq * 13 + i;
+                    u16 ch = rd16(e + pos[i]);
+                    if (k < FAT_MAX_NAME - 1 && ch && ch != 0xFFFF) lfn[k] = ch < 128 ? (char)ch : '?';
+                }
+                if (nlfn < 20) { lfn_lba[nlfn] = lba; lfn_off[nlfn] = o; nlfn++; }
+                continue;
+            }
+            if (e[11] & 0x08) { nlfn = 0; continue; }    /* volume label */
+            char sn[13];
+            int n = 0;
+            for (int i = 0; i < 8 && e[i] != ' '; i++) sn[n++] = e[i];
+            if (e[8] != ' ') { sn[n++] = '.'; for (int i = 8; i < 11 && e[i] != ' '; i++) sn[n++] = e[i]; }
+            sn[n] = 0;
+            int hit = name_eq(sn, name, nlen) || (nlfn && lfn[0] && name_eq(lfn, name, nlen));
+            if (!hit) { nlfn = 0; continue; }
+
+            /* found it */
+            u32 cluster = rd16(e + 26) | ((u32)rd16(e + 20) << 16);
+            if (sn[0] == '.') return -10;
+            if ((e[11] & 0x10) && cluster && !dir_empty(cluster)) return -9;
+            if (read_sec(lba, secbuf, &secbuf_lba)) return -7;
+            secbuf[o] = 0xE5;
+            if (write_sec(lba, secbuf)) return -7;
+            for (int i = 0; i < nlfn; i++) {
+                if (read_sec(lfn_lba[i], secbuf, &secbuf_lba)) return -7;
+                secbuf[lfn_off[i]] = 0xE5;
+                if (write_sec(lfn_lba[i], secbuf)) return -7;
+            }
+            fsinfo_invalidate();
+            if (cluster) free_chain(cluster);
+            return 0;
+        }
     }
 }
 
@@ -392,45 +593,12 @@ int fat_write_file(const char *path, const void *data, u32 len)
     struct fat_file dir;
     if (fat_open(dirpath, &dir) || !dir.is_dir) return -2;
 
-    /* find the existing entry or a free slot */
-    u32 slot_lba = 0, slot_off = 0, old_cluster = 0;
-    int found = 0, have_free = 0;
-    u32 idx;
-    for (idx = 0; ; idx++) {
-        u32 lba;
-        if (file_sector(&dir, idx, &lba)) break;
-        if (read_sec(lba, secbuf, &secbuf_lba)) return -7;
-        int end = 0;
-        for (u32 o = 0; o < 512; o += 32) {
-            u8 *e = secbuf + o;
-            if (e[0] == 0x00 || e[0] == 0xE5) {
-                if (!have_free) { have_free = 1; slot_lba = lba; slot_off = o; }
-                if (e[0] == 0x00) { end = 1; break; }
-                continue;
-            }
-            if (e[11] == 0x0F || (e[11] & 0x08)) continue;
-            if (!memcmp_n(e, n83, 11)) {
-                if (e[11] & 0x10) return -6;
-                found = 1; slot_lba = lba; slot_off = o;
-                old_cluster = rd16(e + 26) | ((u32)rd16(e + 20) << 16);
-                end = 1;
-                break;
-            }
-        }
-        if (end) break;
-    }
-    if (!found && !have_free) {                          /* grow the directory by a cluster */
-        if (dir.first_cluster == 0) return -4;           /* FAT16 root is fixed size */
-        u32 lastc = dir.first_cluster;
-        while (!end_of_chain(next_cluster(lastc))) lastc = next_cluster(lastc);
-        u32 nc = alloc_cluster(lastc);
-        if (!nc) return -5;
-        memset(secbuf, 0, 512);
-        secbuf_lba = 0xFFFFFFFF;
-        for (u32 i = 0; i < sec_per_clus; i++)
-            if (write_sec(clus_lba(nc) + i, secbuf)) return -7;
-        slot_lba = clus_lba(nc); slot_off = 0;
-    }
+    u32 slot_lba, slot_off, old_cluster;
+    u8 attr;
+    int found;
+    int r = dir_slot(&dir, n83, &slot_lba, &slot_off, &found, &old_cluster, &attr);
+    if (r) return r;
+    if (found && (attr & 0x10)) return -6;
 
     fsinfo_invalidate();
 
