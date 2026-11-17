@@ -79,8 +79,8 @@ struct robos_api {
     void     (*noTone)(void);
     int      (*playNotes)(const char *music);     /* waits; "T120 O4 L4 C D E8 F#8 G2 P4 >C", 0 = ok */
     void     (*soundVolume)(int percent);         /* 0..100 */
-    /* API version 5: WAV files (PCM 8/16 bit, mono/stereo, 8-48 kHz) on an I2S DAC module
-     * ('sound out i2s' in the shell); waits until the end, 0 = ok, < 0 = error */
+    /* API version 5: WAV files (PCM 8/16 bit, mono/stereo, 8-48 kHz) on the current sound
+     * output (jack, GPIO18/19 or an I2S DAC); waits until the end, 0 = ok, < 0 = error */
     int      (*playWav)(const char *path);
 };
 

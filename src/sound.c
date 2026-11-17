@@ -152,13 +152,22 @@ void sound_output(int mode)
     if (fat_mounted()) fat_write_file("/SOUND.TXT", name[mode], (u32)strlen(name[mode]));
 }
 
+/* WAV: on the I2S DAC, or on the PWM (jack / GPIO18-19) by DMA */
 int sound_wav(const char *path, int (*idle)(void))
 {
     pick_pins();
-    if (out_gpio != OUT_I2S) return -4;
-    if (!i2s_running()) i2s_start();
     i2s_volume(volume);
-    return i2s_wav(path, idle);
+    if (out_gpio == OUT_I2S) {
+        if (!i2s_running()) i2s_start();
+        return i2s_wav(path, idle);
+    }
+    if (!pin_a) return -5;
+    sound_stop();
+    gpio_func(pin_a, pin_fn);
+    gpio_func(pin_b, pin_fn);
+    int r = pwm_wav(path, idle);
+    clock_on = 0;                          /* the PWM clock was changed for the WAV */
+    return r;
 }
 
 const char *sound_pins(void)

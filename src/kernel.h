@@ -180,9 +180,11 @@ void i2s_tone(int freq, int ms);         /* 0 = silence */
 void i2s_poll(void);
 void i2s_volume(int v);
 int  i2s_wav(const char *path, int (*idle)(void));   /* 0 ok, 1 stopped, < 0 error */
+int  pwm_wav(const char *path, int (*idle)(void));   /* WAV on the PWM (pins set by sound.c) */
 const char *i2s_wav_error(int e);
 void i2s_status(void);
-int  sound_wav(const char *path, int (*idle)(void)); /* sound.c: needs the I2S output */
+u32  i2s_segments(void);                 /* audio DMA segments played so far */
+int  sound_wav(const char *path, int (*idle)(void)); /* sound.c: I2S DAC or PWM (jack / GPIO) */
 int  sound_output_mode(void);            /* 0 jack, 1 gpio, 2 i2s */
 
 /* path.c - current directory, relative paths */

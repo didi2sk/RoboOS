@@ -447,7 +447,7 @@ static void cmd_play(int argc, char **argv)
 static void cmd_playwav(int argc, char **argv)
 {
     char path[PATH_MAX_LEN];
-    if (argc < 2) { need("playwav <file.wav>   (needs 'sound out i2s')"); return; }
+    if (argc < 2) { need("playwav <file.wav>   (jack, GPIO18/19 or I2S DAC - see 'sound')"); return; }
     if (!need_fs()) return;
     if (path_abs(argv[1], path, sizeof(path))) { kprintf("path too long\n"); return; }
     kprintf("playing %s (Ctrl+C stops)\n", path);
@@ -466,7 +466,7 @@ static void cmd_sound(int argc, char **argv)
     else if (argc > 1 && !strcmp(argv[1], "off")) sound_stop();
     else if (argc > 1) { need("sound [volume 0-100 | out jack|gpio|i2s | off]"); return; }
     kprintf("output: %s\nvolume: %d %%\n", sound_pins(), sound_get_volume());
-    if (sound_output_mode() == 2) i2s_status();
+    if (sound_output_mode() == 2 || i2s_segments()) i2s_status();
 }
 
 static void cmd_basic(int argc, char **argv)
@@ -521,7 +521,7 @@ static const struct cmd cmds[] = {
     { "beep",   "[Hz] [ms]",            "a tone on the audio jack",        cmd_beep   },
     { "play",   "<notes>",              "play music: play T120 C D E F G", cmd_play   },
     { "sound",  "[volume|out|off]",     "sound: volume, out jack/gpio/i2s", cmd_sound },
-    { "playwav", "<file>",              "play a WAV file (I2S DAC)",       cmd_playwav },
+    { "playwav", "<file>",              "play a WAV file",                 cmd_playwav },
     { "sd",     "[init]",               "SD card info / re-initialize",    cmd_sd     },
     { "clear",  "",                     "clear the screen",                cmd_clear  },
     { "reboot", "",                     "reboot via watchdog",             cmd_reboot },

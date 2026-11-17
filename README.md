@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.15**
+Current version: **0.16**
 
 ## Supported boards
 
@@ -264,6 +264,13 @@ any board.
 
 The volume changes the pulse width, so it also changes the sound a little.
 
+**WAV files** play on the jack (or GPIO18/19) too: `playwav <file>` (shell), `PLAYWAV "file"`
+(BASIC), `playWav(path)` (C) - PCM, 8 or 16 bit, mono or stereo, 8000-48000 Hz, e.g.
+`playwav /APPS/chime.wav`; Ctrl+C stops. For this the PWM runs at 250 MHz and the samples
+reach it by DMA, so the sound keeps playing while RoboOS does other things; the jack gives
+about 12 bits of quality at 44.1 kHz (radio-like, with some hiss). Tones go back to the
+simple square wave afterwards.
+
 ### I2S DAC module (better sound, WAV files)
 
 For real sound connect a small I2S DAC board (PCM5102A, UDA1334A; or a MAX98357A, which is
@@ -279,11 +286,9 @@ a DAC with an amplifier for a speaker) and switch to it with `sound out i2s` (sa
 | SCK, FMT (PCM5102A) | GND (the module makes its own clock; I2S format) |
 
 - Tones (`beep`, `play`, `SOUND`, `tone()`) are then sine waves with a real volume.
-- `playwav <file>` (shell), `PLAYWAV "file"` (BASIC), `playWav(path)` (C) play WAV files
-  from the card: PCM, 8 or 16 bit, mono or stereo, 8000-48000 Hz. Try
-  `playwav /APPS/chime.wav`. Ctrl+C stops.
+- WAV files (same commands as above) play in full 16-bit quality.
 - The samples go to the DAC by DMA, so the sound keeps playing while RoboOS does other
-  things. `sound` shows how many pieces have been played and whether the DMA ever ran
+  things. `sound` (with I2S, or after a WAV) shows how many pieces have been played and whether the DMA ever ran
   empty ("restarts" - then the sound had a short gap).
 
 ## USB keyboard
@@ -361,7 +366,7 @@ If you connect after boot, press Enter.
 | `beep [Hz] [ms]` | a tone on the audio jack |
 | `play <notes>` | play music, e.g. `play T120 L4 C D E F G2` |
 | `sound [volume n\|out jack\|gpio\|i2s\|off]` | sound output and volume |
-| `playwav <file>` | play a WAV file (I2S DAC) |
+| `playwav <file>` | play a WAV file (jack, GPIO18/19 or I2S DAC) |
 | `sd [init]` | SD card info / re-initialize after swapping the card |
 | `clear` | clear the screen (also Ctrl+L) |
 | `reboot` | reboot via watchdog |
@@ -401,7 +406,7 @@ raises an exception; it is printed and the system returns to the shell.
 | `src/shell.c` | commands, Tab completion |
 | `src/path.c` | current directory, relative paths, `.` and `..` |
 | `src/sound.c` | tones from the PWM (audio jack or GPIO18/19), music strings |
-| `src/i2s.c` | I2S DAC: PCM peripheral + DMA, sine tones, WAV files |
+| `src/i2s.c` | sound by DMA: I2S DAC (PCM peripheral) or the PWM, sine tones, WAV files |
 | `src/font.c` | font generated from DejaVu Sans Mono (`tools/mkfont.py`) |
 
 ### How USB works
@@ -461,7 +466,7 @@ qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial stdio -device usb-kbd
 - other keyboard layouts (a font with accented characters too)
 - interrupts + timer → multitasking
 - I2C / SPI / PWM (servos, LED dimming) in the API and in BASIC
-- sound: WAV on the audio jack too (PWM + DMA), MP3
+- sound: MP3, mixing tones with WAV
 - editor: search, go to line, save as
 - a telnet-like remote shell, IPv6
 - more cores (spin table at 0xE0–0xF0)
