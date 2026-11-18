@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.28**
+Current version: **0.29**
 
 ## Supported boards
 
@@ -308,6 +308,23 @@ reply from 192.168.1.1: seq=1 ttl=64 time=0.9 ms
   saved in `/HTTP.TXT`, so the page (and the API below) comes back after a reboot.
 - IPv4 only.
 
+### WiFi (being built)
+
+The WiFi chip (CYW43438 on the Pi 3B, CYW43436 on the Zero 2 W, CYW43455 on the Pi 3B+) hangs on
+SDIO. So far RoboOS can start it and look for networks:
+
+```
+wifi scan        load the firmware into the chip and list the networks around
+wifi init        only start the chip
+wifi             chip, firmware version, MAC address
+```
+
+The chip needs its firmware on the card in `/FIRMWARE` (files from Raspberry Pi OS
+`/lib/firmware/brcm`, or `tools/getwifi.sh` downloads them): `brcmfmac43430-sdio.bin` + `.txt`
+(Pi 3B), `brcmfmac43436-sdio.bin` + `.txt` + `.clm_blob` (Zero 2 W), `brcmfmac43455-sdio.bin` +
+`.txt` + `.clm_blob` (Pi 3B+). They are not in this repository (Cypress / Synaptics licenses).
+WiFi needs the SD card on SDHOST (see the SD card section). Joining a network comes next.
+
 ### Date and time (NTP)
 
 When the network is up, the board asks an NTP server for the time (at once, then every hour) and
@@ -542,6 +559,7 @@ If you connect after boot, press Enter.
 | `http on\|off` | small web page with board info (saved) |
 | `http token [<secret>\|off]` | JSON API token (Bearer), see the JSON API section |
 | `http tls on\|off\|new` | HTTPS on port 443 (the API then only there), new certificate |
+| `wifi [init\|scan]` | WiFi chip: load the firmware, list the networks |
 | `time [sync\|zone\|server\|set]` | date and time from NTP, time zone, set by hand |
 | `ls [path]` | list a directory on the SD card (default: the current one) |
 | `cd [dir]` | change directory (`..` = up, `/` = top, no argument = top) |
@@ -603,6 +621,7 @@ converted on core 0.
 | `lwip/` | lwIP 2.2.1 TCP/IP stack (unmodified, BSD license) |
 | `src/kbd.c` | HID keyboard: boot protocol, scan code translation, autorepeat |
 | `src/sd.c` | SD card: chooses the controller; the Arasan SDHCI driver (GPIO48-53 ALT3), read + write |
+| `src/wifi.c` | WiFi chip over SDIO (Arasan, GPIO34-39): firmware, commands, scan (port of 9front ether4330.c, MIT) |
 | `src/sdhost.c` | SD card on the SDHOST controller (GPIO48-53 ALT0), the default since 0.28 |
 | `src/fat.c` | FAT16/FAT32: long names, read, write (8.3 names), mkdir, delete, both FAT copies |
 | `src/app.c` | program loader, Arduino-style API, Ctrl+C, autostart from `/RUN` |
@@ -694,5 +713,6 @@ qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial stdio -device usb-kbd
 - TCP/IP: lwIP by Adam Dunkels and the lwIP developers (BSD license, `lwip/COPYING`).
 - Pictures: stb_image by Sean Barrett (public domain / MIT, `third_party/stb_image.h`).
 - TLS: BearSSL by Thomas Pornin (MIT, `third_party/bearssl`).
+- WiFi: based on the Plan 9 / 9front `ether4330.c` driver by Richard Miller (MIT).
 - Video: pl_mpeg by Dominic Szablewski (MIT, `third_party/pl_mpeg.h`).
 - The LAN7515 (Pi 3B+) register layout follows the Linux `lan78xx` driver.

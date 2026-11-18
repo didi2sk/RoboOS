@@ -1,0 +1,923 @@
+/*
+ * WiFi: Broadcom / Cypress CYW43438 (Pi 3B, chip id 43430), CYW43436 (Zero 2 W,
+ * 43430 rev 2) and CYW43455 (Pi 3B+, 0x4345) over SDIO on the Arasan (EMMC)
+ * controller, GPIO34-39 ALT3. The SD card is on SDHOST (sdhost.c).
+ *
+ * Ported from the Plan 9 / 9front driver ether4330.c by Richard Miller
+ * (MIT license, /lib/legal/mit in 9front): SDIO setup, Silicon Backplane core
+ * scan, firmware + NVRAM upload, SDPCM packets, firmware commands, escan.
+ * Polled, core 0 for now (the firmware files are read from the SD card).
+ *
+ * Firmware files (from Raspberry Pi OS /lib/firmware/brcm, or linux-firmware)
+ * go to /FIRMWARE on the card:
+ *   Pi 3B:     brcmfmac43430-sdio.bin  brcmfmac43430-sdio.txt
+ *   Zero 2 W:  brcmfmac43436-sdio.bin  brcmfmac43436-sdio.txt  brcmfmac43436-sdio.clm_blob
+ *   Pi 3B+:    brcmfmac43455-sdio.bin  brcmfmac43455-sdio.txt  brcmfmac43455-sdio.clm_blob
+ */
+#include "kernel.h"
+#include "sd.h"
+
+/* ---------------- Arasan as an SDIO host ---------------- */
+
+#define EMMC        (MMIO_BASE + 0x300000)
+#define BLKSIZECNT  (EMMC + 0x04)
+#define ARG1        (EMMC + 0x08)
+#define CMDTM       (EMMC + 0x0C)
+#define RESP0       (EMMC + 0x10)
+#define DATA        (EMMC + 0x20)
+#define STATUS      (EMMC + 0x24)
+#define CONTROL0    (EMMC + 0x28)
+#define CONTROL1    (EMMC + 0x2C)
+#define INTERRUPT   (EMMC + 0x30)
+#define INT_MASK    (EMMC + 0x34)
+#define INT_EN      (EMMC + 0x38)
+#define SLOTISR_VER (EMMC + 0xFC)
+#define GPPUDCLK1   (MMIO_BASE + 0x20009C)
+
+#define SR_CMD_INHIBIT 0x1
+#define SR_DAT_INHIBIT 0x2
+#define I_CMD_DONE     0x1
+#define I_DATA_DONE    0x2
+#define I_WRITE_RDY    0x10
+#define I_READ_RDY     0x20
+#define I_ERR          0x017E8000
+#define I_CMD_TIMEOUT  0x10000
+#define C1_SRST_HC     0x01000000
+#define C1_SRST_CMD    0x02000000
+#define C1_SRST_DATA   0x04000000
+#define C1_CLK_EN      0x4
+#define C1_CLK_STABLE  0x2
+#define C1_CLK_INTLEN  0x1
+#define C1_TOUNIT_MAX  0x000e0000
+
+/* CMDTM: index << 24 | response | flags */
+#define T_NONE   0x00000000
+#define T_R48    0x00020000
+#define T_R48B   0x00030000
+#define T_CRC    0x00080000
+#define T_IDX    0x00100000
+#define T_DATA   0x00200000
+#define T_READ   0x00000010
+#define T_MULTI  0x00000022              /* multi block + block count enable */
+
+static u32 base_clk, hc_ver;
+static const char *werr = "";
+static u32 dbg_int, dbg_resp;
+
+static int reset_lines(void)
+{
+    mmio_write(CONTROL1, mmio_read(CONTROL1) | C1_SRST_CMD | C1_SRST_DATA);
+    u64 end = timer_us() + 100000;
+    while ((mmio_read(CONTROL1) & (C1_SRST_CMD | C1_SRST_DATA)) && timer_us() < end) ;
+    return -1;
+}
+
+static int wait_int(u32 mask, u32 ms)
+{
+    u64 end = timer_us() + (u64)ms * 1000;
+    u32 r;
+    while (!((r = mmio_read(INTERRUPT)) & (mask | I_ERR)))
+        if (timer_us() > end) { dbg_int = r; reset_lines(); return -1; }
+    dbg_int = r;
+    if (r & I_ERR) { mmio_write(INTERRUPT, r); reset_lines(); return -2; }
+    mmio_write(INTERRUPT, mask);
+    return 0;
+}
+
+/* a command; 0 = ok, the response in *resp */
+static int scmd(u32 tm, u32 arg, u32 *resp)
+{
+    u64 end = timer_us() + 100000;
+    u32 inh = SR_CMD_INHIBIT | ((tm & T_DATA) ? SR_DAT_INHIBIT : 0);
+    while (mmio_read(STATUS) & inh)
+        if (timer_us() > end) { reset_lines(); break; }
+    mmio_write(INTERRUPT, mmio_read(INTERRUPT));
+    mmio_write(ARG1, arg);
+    mmio_write(CMDTM, tm);
+    int e = wait_int(I_CMD_DONE, 200);
+    dbg_resp = mmio_read(RESP0);
+    if (resp) *resp = dbg_resp;
+    return e;
+}
+
+static void set_clock(u32 hz)
+{
+    u64 end = timer_us() + 100000;
+    while ((mmio_read(STATUS) & (SR_CMD_INHIBIT | SR_DAT_INHIBIT)) && timer_us() < end) ;
+    mmio_write(CONTROL1, mmio_read(CONTROL1) & ~C1_CLK_EN);
+    delay_us(2000);
+    u32 n = (base_clk + 2 * hz - 1) / (2 * hz), d;
+    if (hc_ver >= 2) { if (n > 0x3FF) n = 0x3FF; d = ((n & 0xFF) << 8) | ((n & 0x300) >> 2); }
+    else { u32 p = 1; while (p < n && p < 0x80) p <<= 1; d = (p & 0xFF) << 8; }
+    mmio_write(CONTROL1, (mmio_read(CONTROL1) & 0xFFFF003F) | d);
+    delay_us(2000);
+    mmio_write(CONTROL1, mmio_read(CONTROL1) | C1_CLK_EN);
+    end = timer_us() + 100000;
+    while (!(mmio_read(CONTROL1) & C1_CLK_STABLE) && timer_us() < end) ;
+}
+
+/* ---------------- SDIO commands ---------------- */
+
+enum { Fn0, Fn1, Fn2 };
+#define Ioenable  0x02
+#define Ioready   0x03
+#define Intenable 0x04
+#define Intpend   0x05
+#define Ioabort   0x06
+#define Busifc    0x07
+#define Fbr1      0x100
+#define Fbr2      0x200
+#define Blksize   0x10
+
+/* CMD52: one byte; returns the byte or < 0 */
+static int sdiord(int fn, u32 addr)
+{
+    u32 r;
+    if (scmd((52u << 24) | T_R48 | T_CRC | T_IDX, ((u32)(fn & 7) << 28) | ((addr & 0x1FFFF) << 9), &r)) return -1;
+    if (r & 0xCF00) return -2;
+    return (int)(r & 0xFF);
+}
+
+static int sdiowr(int fn, u32 addr, int data)
+{
+    u32 r = 0;
+    for (int retry = 0; retry < 10; retry++) {
+        if (!scmd((52u << 24) | T_R48 | T_CRC | T_IDX,
+                  (1u << 31) | ((u32)(fn & 7) << 28) | ((addr & 0x1FFFF) << 9) | (u32)(data & 0xFF), &r) && !(r & 0xCF00))
+            return 0;
+    }
+    return -1;
+}
+
+static int sdioset(int fn, u32 addr, int bits)
+{
+    int v = sdiord(fn, addr);
+    return v < 0 ? v : sdiowr(fn, addr, v | bits);
+}
+
+/* CMD53: len bytes; Fn1 blocks of 64, Fn2 blocks of 512; incr = address grows */
+static u8 xbuf[2048] __attribute__((aligned(4)));
+static int sdiorwext(int fn, int write, u8 *a, int len, u32 addr, int incr)
+{
+    int bsize = fn == Fn2 ? 512 : 64;
+    while (len > 0) {
+        int blk, bcount, m;
+        if (len > bsize) { blk = 1; bcount = len / bsize; if (bcount > 511) bcount = 511; m = bcount * bsize; }
+        else { blk = 0; bcount = len; m = len; }
+        if (m > (int)sizeof(xbuf)) { blk = 1; bcount = (int)sizeof(xbuf) / bsize; m = bcount * bsize; }
+        int words = (m + 3) / 4;
+        if (write) memcpy(xbuf, a, (size_t)m);
+        mmio_write(BLKSIZECNT, blk ? ((u32)bcount << 16) | (u32)bsize : (1u << 16) | (u32)bcount);
+        u32 tm = (53u << 24) | T_R48 | T_CRC | T_IDX | T_DATA | (write ? 0 : T_READ) | (blk ? T_MULTI : 0);
+        u32 arg = ((u32)write << 31) | ((u32)(fn & 7) << 28) | ((u32)blk << 27) | ((u32)incr << 26) |
+                  ((addr & 0x1FFFF) << 9) | ((u32)bcount & 0x1FF);
+        if (scmd(tm, arg, 0)) { werr = "CMD53"; return -1; }
+        /* the data, block by block (the FIFO raises READ_RDY / WRITE_RDY per block) */
+        int per = blk ? bsize / 4 : words, blocks = blk ? bcount : 1, w = 0;
+        u32 *x = (u32 *)xbuf;
+        for (int b = 0; b < blocks; b++) {
+            if (wait_int(write ? I_WRITE_RDY : I_READ_RDY, 500)) { werr = "CMD53 data"; return -1; }
+            for (int i = 0; i < per && w < words; i++, w++) {
+                if (write) mmio_write(DATA, x[w]);
+                else x[w] = mmio_read(DATA);
+            }
+        }
+        if (wait_int(I_DATA_DONE, 500)) { werr = "CMD53 done"; return -1; }
+        if (!write) memcpy(a, xbuf, (size_t)m);
+        len -= m;
+        a += m;
+        if (incr) addr += (u32)m;
+    }
+    return 0;
+}
+
+/* ---------------- the chip ---------------- */
+
+#define Sbwsize   0x8000
+#define Sb32bit   0x8000
+#define Sbaddr    0x1000a
+#define Enumbase  0x18000000
+#define Framectl  0x1000d
+#define Clkcsr    0x1000e
+#define Pullups   0x1000f
+#define Rfrmcnt   0x1001b
+#define ForceALP  0x01
+#define ForceHT   0x02
+#define ReqALP    0x08
+#define ReqHT     0x10
+#define Nohwreq   0x20
+#define ALPavail  0x40
+#define HTavail   0x80
+#define Ioctrl    0x408
+#define Resetctrl 0x800
+#define Coreinfo  0x00
+#define Bankidx   0x10
+#define Bankinfo  0x40
+#define Bankpda   0x44
+#define Cr4Cap    0x04
+#define Cr4Bankidx 0x40
+#define Cr4Bankinfo 0x44
+#define Cr4Cpuhalt 0x20
+#define Gpiopullup 0x58
+#define Gpiopulldown 0x5c
+#define Intstatus 0x20
+#define Intmask   0x24
+#define Sbmbox    0x40
+#define Sbmboxdata 0x48
+#define Hostmboxdata 0x4c
+#define FrameInt  (1 << 6)
+#define MailboxInt (1 << 7)
+#define Fcchange  (1 << 5)
+#define ARMcm3    0x82A
+#define ARM7tdmi  0x825
+#define ARMcr4    0x83E
+
+static struct {
+    int chipid, chiprev, armcore, up;
+    u32 chipcommon, armctl, armregs, d11ctl, socramregs, socramctl, sdregs;
+    int socramrev;
+    u32 socramsize, rambase, resetvec;
+    u16 reqid;
+    u8 txseq, txwindow, fcmask;
+    u8 mac[6];
+    char ver[96];
+} w;
+
+static u32 cur_window = 0xFFFFFFFF;
+static int sbwindow(u32 addr)
+{
+    addr &= ~(u32)(Sbwsize - 1);
+    if (addr == cur_window) return 0;
+    if (sdiowr(Fn1, Sbaddr, (int)(addr >> 8)) || sdiowr(Fn1, Sbaddr + 1, (int)(addr >> 16)) ||
+        sdiowr(Fn1, Sbaddr + 2, (int)(addr >> 24))) { cur_window = 0xFFFFFFFF; return -1; }
+    cur_window = addr;
+    return 0;
+}
+
+static u32 cfgreadl(u32 off)
+{
+    u8 b[4] = { 0, 0, 0, 0 };
+    sbwindow(off);
+    sdiorwext(Fn1, 0, b, 4, (off & (Sbwsize - 1)) | Sb32bit, 1);
+    return (u32)b[0] | (u32)b[1] << 8 | (u32)b[2] << 16 | (u32)b[3] << 24;
+}
+
+static void cfgwritel(u32 off, u32 v)
+{
+    u8 b[4] = { (u8)v, (u8)(v >> 8), (u8)(v >> 16), (u8)(v >> 24) };
+    sbwindow(off);
+    for (int retry = 0; retry < 3; retry++) {
+        if (!sdiorwext(Fn1, 1, b, 4, (off & (Sbwsize - 1)) | Sb32bit, 1)) return;
+        sdiowr(Fn0, Ioabort, Fn1);
+    }
+}
+
+/* chip memory through the 32 KB backplane window */
+static int sbmem(int write, u8 *buf, int len, u32 off)
+{
+    u32 n = ((off + Sbwsize) & ~(u32)(Sbwsize - 1)) - off;
+    while (len > 0) {
+        if ((int)n > len) n = (u32)len;
+        if (sbwindow(off)) return -1;
+        u32 o = off & (Sbwsize - 1);
+        int k = (int)n & ~3;
+        if (k && sdiorwext(Fn1, write, buf, k, o | Sb32bit, 1)) return -1;
+        for (int i = k; i < (int)n; i++) {                  /* the odd bytes one by one */
+            if (write) { if (sdiowr(Fn1, (o + (u32)i) | Sb32bit, buf[i])) return -1; }
+            else { int v = sdiord(Fn1, (o + (u32)i) | Sb32bit); if (v < 0) return -1; buf[i] = (u8)v; }
+        }
+        off += n; buf += n; len -= (int)n;
+        n = Sbwsize;
+    }
+    return 0;
+}
+
+static void sbdisable(u32 regs, u32 pre, u32 ioctl)
+{
+    if (cfgreadl(regs + Resetctrl) & 1) {
+        cfgwritel(regs + Ioctrl, 3 | ioctl);
+        cfgreadl(regs + Ioctrl);
+        return;
+    }
+    cfgwritel(regs + Ioctrl, 3 | pre);
+    cfgreadl(regs + Ioctrl);
+    cfgwritel(regs + Resetctrl, 1);
+    delay_us(10);
+    u64 end = timer_us() + 100000;
+    while (!(cfgreadl(regs + Resetctrl) & 1) && timer_us() < end) ;
+    cfgwritel(regs + Ioctrl, 3 | ioctl);
+    cfgreadl(regs + Ioctrl);
+}
+
+static void sbreset(u32 regs, u32 pre, u32 ioctl)
+{
+    sbdisable(regs, pre, ioctl);
+    u64 end = timer_us() + 100000;
+    while ((cfgreadl(regs + Resetctrl) & 1) && timer_us() < end) {
+        cfgwritel(regs + Resetctrl, 0);
+        delay_us(40);
+    }
+    cfgwritel(regs + Ioctrl, 1 | ioctl);
+    cfgreadl(regs + Ioctrl);
+}
+
+static void corescan(u32 r)
+{
+    static u8 buf[512];
+    int coreid = 0, corerev = 0;
+    sbmem(0, buf, sizeof(buf), r);
+    for (int i = 0; i < (int)sizeof(buf); i += 4) {
+        switch (buf[i] & 0xF) {
+        case 0xF: return;
+        case 0x1:
+            if ((buf[i + 4] & 0xF) != 0x1) break;
+            coreid = (buf[i + 1] | buf[i + 2] << 8) & 0xFFF;
+            i += 4;
+            corerev = buf[i + 3];
+            break;
+        case 0x5: {
+            u32 addr = ((u32)buf[i + 1] << 8 | (u32)buf[i + 2] << 16 | (u32)buf[i + 3] << 24) & ~0xFFFu;
+            int ctl = buf[i] & 0xC0;
+            switch (coreid) {
+            case 0x800: if (!ctl) w.chipcommon = addr; break;
+            case ARMcm3: case ARM7tdmi: case ARMcr4:
+                w.armcore = coreid;
+                if (ctl) { if (!w.armctl) w.armctl = addr; } else if (!w.armregs) w.armregs = addr;
+                break;
+            case 0x80E:
+                if (ctl) w.socramctl = addr; else if (!w.socramregs) w.socramregs = addr;
+                w.socramrev = corerev;
+                break;
+            case 0x829: if (!ctl) w.sdregs = addr; break;
+            case 0x812: if (ctl) w.d11ctl = addr; break;
+            }
+            break;
+        }
+        }
+    }
+}
+
+static int ramscan(void)
+{
+    u32 n, size = 0;
+    int banks;
+    if (w.armcore == ARMcr4) {
+        n = cfgreadl(w.armregs + Cr4Cap);
+        banks = (int)(((n >> 4) & 0xF) + (n & 0xF));
+        for (int i = 0; i < banks; i++) {
+            cfgwritel(w.armregs + Cr4Bankidx, (u32)i);
+            size += 8192 * ((cfgreadl(w.armregs + Cr4Bankinfo) & 0x3F) + 1);
+        }
+        w.socramsize = size;
+        w.rambase = 0x198000;
+        return 0;
+    }
+    if (w.socramrev <= 7 || w.socramrev == 12) { werr = "SOCRAM revision not supported"; return -1; }
+    sbreset(w.socramctl, 0, 0);
+    n = cfgreadl(w.socramregs + Coreinfo);
+    banks = (int)((n >> 4) & 0xF);
+    for (int i = 0; i < banks; i++) {
+        cfgwritel(w.socramregs + Bankidx, (u32)i);
+        size += 8192 * ((cfgreadl(w.socramregs + Bankinfo) & 0x3F) + 1);
+    }
+    w.socramsize = size;
+    w.rambase = 0;
+    if (w.chipid == 43430) {
+        cfgwritel(w.socramregs + Bankidx, 3);
+        cfgwritel(w.socramregs + Bankpda, 0);
+    }
+    return 0;
+}
+
+/* ---------------- power, SDIO bus, backplane ---------------- */
+
+static void chip_power(void)
+{
+    if (board_type() == 0x12) {                /* Zero 2 W: WL_ON = GPIO41 */
+        gpio_func(41, 1);
+        gpio_set(41, 0); delay_us(20000);
+        gpio_set(41, 1);
+    } else {                                   /* 3B / 3B+: WL_ON = firmware GPIO expander pin 1 */
+        u32 v[2] = { 129, 0 };
+        mbox_prop(0x00038041, v, 2);
+        delay_us(20000);
+        v[0] = 129; v[1] = 1;
+        mbox_prop(0x00038041, v, 2);
+    }
+    delay_us(150000);
+}
+
+static void pins_wifi(void)
+{
+    for (int p = 34; p <= 39; p++) gpio_func(p, 7);       /* ALT3 = Arasan */
+    /* 34 = CLK: no pull, 35-39 = CMD + DAT: pull-up */
+    mmio_write(GPPUD, 0); delay_cycles(150);
+    mmio_write(GPPUDCLK1, 1u << (34 - 32)); delay_cycles(150);
+    mmio_write(GPPUD, 0); mmio_write(GPPUDCLK1, 0);
+    mmio_write(GPPUD, 2); delay_cycles(150);
+    mmio_write(GPPUDCLK1, 0x3Eu << (34 - 32)); delay_cycles(150);
+    mmio_write(GPPUD, 0); mmio_write(GPPUDCLK1, 0);
+}
+
+static int stage(const char *s) { werr = s; return -1; }
+
+static int sdio_init(void)
+{
+    u32 r;
+    if (!strcmp(sd_controller(), "Arasan (EMMC)")) return stage("the SD card uses the Arasan (SDHOST failed) - no WiFi");
+    chip_power();
+    pins_wifi();
+    hc_ver = (mmio_read(SLOTISR_VER) >> 16) & 0xFF;
+    u32 clk[2] = { 1, 0 };
+    base_clk = mbox_prop(0x00030002, clk, 2) && clk[1] ? clk[1] : 41666666;
+    mmio_write(CONTROL0, 0);
+    mmio_write(CONTROL1, mmio_read(CONTROL1) | C1_SRST_HC);
+    u64 end = timer_us() + 1000000;
+    while (mmio_read(CONTROL1) & C1_SRST_HC) if (timer_us() > end) return stage("Arasan reset");
+    mmio_write(CONTROL1, mmio_read(CONTROL1) | C1_CLK_INTLEN | C1_TOUNIT_MAX);
+    set_clock(400000);
+    mmio_write(INT_EN, 0xFFFFFFFF);
+    mmio_write(INT_MASK, 0xFFFFFFFF);
+    delay_us(2000);
+
+    scmd(T_NONE, 0, 0);                                   /* CMD0 */
+    r = 0;
+    scmd((5u << 24) | T_R48, 0, &r);                      /* CMD5: OCR */
+    for (int i = 0; !(r & 0x80000000u); i++) {
+        if (i > 10) { werr = "CMD5: the WiFi chip does not answer"; return -1; }
+        scmd((5u << 24) | T_R48, 3u << 20, &r);           /* 3.2-3.4 V */
+        delay_us(100000);
+    }
+    if (scmd((3u << 24) | T_R48 | T_CRC | T_IDX, 0, &r)) return stage("CMD3 address");
+    u32 rca = r & 0xFFFF0000;
+    if (scmd((7u << 24) | T_R48B | T_CRC | T_IDX, rca, &r)) return stage("CMD7 select");
+    if (sdioset(Fn0, Busifc, 2)) return stage("4-bit bus");
+    mmio_write(CONTROL0, mmio_read(CONTROL0) | 0x2);      /* host 4-bit */
+    set_clock(25000000);
+    if (sdiowr(Fn0, Fbr1 + Blksize, 64) || sdiowr(Fn0, Fbr1 + Blksize + 1, 0) ||
+        sdiowr(Fn0, Fbr2 + Blksize, 512 & 0xFF) || sdiowr(Fn0, Fbr2 + Blksize + 1, 512 >> 8)) return stage("block sizes");
+    if (sdioset(Fn0, Ioenable, 1 << Fn1)) return stage("enable function 1");
+    sdiowr(Fn0, Intenable, 0);
+    for (int i = 0; !(sdiord(Fn0, Ioready) & (1 << Fn1)); i++) {
+        if (i == 10) return stage("function 1 not ready");
+        delay_us(100000);
+    }
+    return 0;
+}
+
+static int sb_init(void)
+{
+    cur_window = 0xFFFFFFFF;
+    sbwindow(Enumbase);
+    u32 r = cfgreadl(Enumbase);
+    w.chipid = (int)(r & 0xFFFF);
+    w.chiprev = (int)((r >> 16) & 0xF);
+    if (w.chipid != 43430 && w.chipid != 0x4345 && w.chipid != 0x4330 && w.chipid != 43362) return stage("unknown chip id");
+    corescan(cfgreadl(Enumbase + 63 * 4));
+    if (!w.armctl || !w.d11ctl || (w.armcore == ARMcm3 && (!w.socramctl || !w.socramregs))) return stage("core scan");
+    if (w.armcore == ARMcr4) sbreset(w.armctl, Cr4Cpuhalt, Cr4Cpuhalt);
+    else sbdisable(w.armctl, 0, 0);
+    sbreset(w.d11ctl, 8 | 4, 4);
+    if (ramscan()) return -1;
+    sdiowr(Fn1, Clkcsr, 0);
+    delay_us(10);
+    sdiowr(Fn1, Clkcsr, Nohwreq | ReqALP);
+    u64 end = timer_us() + 100000;
+    while (!(sdiord(Fn1, Clkcsr) & (HTavail | ALPavail))) if (timer_us() > end) return stage("ALP clock");
+    sdiowr(Fn1, Clkcsr, Nohwreq | ForceALP);
+    delay_us(65);
+    sdiowr(Fn1, Pullups, 0);
+    cfgwritel(w.chipcommon + Gpiopullup, 0);
+    cfgwritel(w.chipcommon + Gpiopulldown, 0);
+    return 0;
+}
+
+/* ---------------- firmware ---------------- */
+
+static const struct { int chipid, rev; const char *fw, *nv, *clm; } fwtab[] = {
+    { 43430, 1, "brcmfmac43430-sdio.bin", "brcmfmac43430-sdio.txt", 0 },
+    { 43430, 2, "brcmfmac43436-sdio.bin", "brcmfmac43436-sdio.txt", "brcmfmac43436-sdio.clm_blob" },
+    { 0x4345, 6, "brcmfmac43455-sdio.bin", "brcmfmac43455-sdio.txt", "brcmfmac43455-sdio.clm_blob" },
+    { 0x4345, 9, "brcmfmac43456-sdio.bin", "brcmfmac43456-sdio.txt", "brcmfmac43456-sdio.clm_blob" },
+};
+static int fwi = -1;
+static char missing[64];
+
+static int fw_open(const char *name, struct fat_file *f)
+{
+    char p[80] = "/FIRMWARE/";
+    int n = (int)strlen(p);
+    for (int i = 0; name[i] && n < 79; i++) p[n++] = name[i];
+    p[n] = 0;
+    if (fat_open(p, f) || f->is_dir) {
+        int k = 0;
+        for (const char *s = p; *s && k < 63; s++) missing[k++] = *s;
+        missing[k] = 0;
+        return -1;
+    }
+    return 0;
+}
+
+/* the NVRAM text -> "var=value\0...\0\0", padded to 4 bytes */
+static int condense(u8 *buf, int n)
+{
+    u8 *op = buf, *lp = buf;
+    int skip = 0;
+    for (int i = 0; i < n; i++) {
+        u8 c = buf[i];
+        if (c == '#') skip = 1;
+        else if (c == '\n' || c == 0) { skip = 0; if (op != lp) { *op++ = 0; lp = op; } }
+        else if (c != '\r' && !skip) *op++ = c;
+    }
+    if (!skip && op != lp) *op++ = 0;
+    *op++ = 0;
+    while ((op - buf) & 3) *op++ = 0;
+    return (int)(op - buf);
+}
+
+static int fw_load(void)
+{
+    struct fat_file f;
+    static u8 buf[2048] __attribute__((aligned(4))), cmp[2048] __attribute__((aligned(4)));
+    fwi = -1;
+    for (int i = 0; i < (int)(sizeof(fwtab) / sizeof(fwtab[0])); i++)
+        if (fwtab[i].chipid == w.chipid && fwtab[i].rev == w.chiprev) fwi = i;
+    if (fwi < 0) return stage("no firmware known for this chip revision");
+    if (fw_open(fwtab[fwi].fw, &f)) return stage("firmware file missing");
+    sdiowr(Fn1, Clkcsr, ReqALP);
+    u64 end = timer_us() + 100000;
+    while (!(sdiord(Fn1, Clkcsr) & ALPavail)) if (timer_us() > end) return stage("ALP clock");
+    u8 z[4] = { 0, 0, 0, 0 };
+    sbmem(1, z, 4, w.rambase + w.socramsize - 4);
+    /* the firmware, then read it back */
+    u32 off = 0;
+    int n;
+    while ((n = fat_read(&f, buf, sizeof(buf))) > 0) {
+        if (off == 0) w.resetvec = (u32)buf[0] | (u32)buf[1] << 8 | (u32)buf[2] << 16 | (u32)buf[3] << 24;
+        while (n & 3) buf[n++] = 0;
+        if (sbmem(1, buf, n, w.rambase + off)) return stage("firmware upload");
+        off += (u32)n;
+    }
+    u32 total = off;
+    f.pos = 0; f.cur_cluster = 0; f.cur_index = 0;
+    for (off = 0; off < total; off += (u32)n) {
+        n = fat_read(&f, buf, sizeof(buf));
+        if (n <= 0) break;
+        while (n & 3) buf[n++] = 0;
+        if (sbmem(0, cmp, n, w.rambase + off) || memcmp_n(buf, cmp, (size_t)n)) return stage("firmware check (read back differs)");
+    }
+    /* NVRAM at the end of RAM, then its length token */
+    if (fw_open(fwtab[fwi].nv, &f)) return stage("NVRAM file missing");
+    static u8 nv[4096] __attribute__((aligned(4)));
+    n = fat_read(&f, nv, sizeof(nv) - 8);
+    if (n <= 0) return stage("NVRAM file empty");
+    n = condense(nv, n);
+    if (sbmem(1, nv, n, w.rambase + w.socramsize - (u32)n - 4)) return stage("NVRAM upload");
+    u32 tok = (u32)n / 4;
+    tok = (tok & 0xFFFF) | (~tok << 16);
+    u8 t[4] = { (u8)tok, (u8)(tok >> 8), (u8)(tok >> 16), (u8)(tok >> 24) };
+    sbmem(1, t, 4, w.rambase + w.socramsize - 4);
+    kprintf("  firmware %u bytes + NVRAM %d bytes loaded\n", total, n);
+    if (w.armcore == ARMcr4) {
+        cfgwritel(w.sdregs + Intstatus, 0xFFFFFFFF);
+        if (w.resetvec) { u8 rv[4] = { (u8)w.resetvec, (u8)(w.resetvec >> 8), (u8)(w.resetvec >> 16), (u8)(w.resetvec >> 24) }; sbmem(1, rv, 4, 0); }
+        sbreset(w.armctl, Cr4Cpuhalt, 0);
+    } else sbreset(w.armctl, 0, 0);
+    return 0;
+}
+
+static int sb_enable(void)
+{
+    sdiowr(Fn1, Clkcsr, 0);
+    delay_us(1000);
+    sdiowr(Fn1, Clkcsr, ReqHT);
+    for (int i = 0; !(sdiord(Fn1, Clkcsr) & HTavail); i++) {
+        if (i == 50) return stage("HT clock (the firmware did not start)");
+        delay_us(100000);
+    }
+    sdiowr(Fn1, Clkcsr, sdiord(Fn1, Clkcsr) | ForceHT);
+    delay_us(10000);
+    cfgwritel(w.sdregs + Sbmboxdata, 4 << 16);            /* protocol version */
+    cfgwritel(w.sdregs + Intmask, FrameInt | MailboxInt | Fcchange);
+    sdioset(Fn0, Ioenable, 1 << Fn2);
+    for (int i = 0; !(sdiord(Fn0, Ioready) & (1 << Fn2)); i++) {
+        if (i == 30) return stage("function 2 not ready");
+        delay_us(100000);
+    }
+    sdiowr(Fn0, Intenable, (1 << Fn1) | (1 << Fn2) | 1);
+    return 0;
+}
+
+/* ---------------- SDPCM packets ---------------- */
+
+#define Sdpcmsz 12
+#define Cmdsz   16
+static u8 rx[2048] __attribute__((aligned(4)));
+
+static int packetrw(int write, u8 *buf, int len)
+{
+    while (len > 0) {
+        int n = len > 2048 ? 2048 : (len + 3) & ~3;
+        int ok = 0;
+        for (int retry = 0; retry < 3 && !ok; retry++) {
+            if (!sdiorwext(Fn2, write, buf, n, Enumbase, 0)) ok = 1;
+            else sdiowr(Fn0, Ioabort, Fn2);
+        }
+        if (!ok) return -1;
+        buf += n; len -= n;
+    }
+    return 0;
+}
+
+/* one packet into rx[]; its length, 0 = nothing waiting */
+static int readpkt(void)
+{
+    if (packetrw(0, rx, Sdpcmsz)) return -1;
+    int len = rx[0] | rx[1] << 8, lenck = rx[2] | rx[3] << 8;
+    if (len == 0) return 0;
+    if (lenck != (len ^ 0xFFFF) || len < Sdpcmsz || len > 2048) {
+        sdiowr(Fn1, Framectl, 1);                         /* read frame halt */
+        for (int i = 0; i < 100 && (sdiord(Fn1, Rfrmcnt + 1) > 0 || sdiord(Fn1, Rfrmcnt) > 0); i++) ;
+        return -1;
+    }
+    if (len > Sdpcmsz && packetrw(0, rx + Sdpcmsz, len - Sdpcmsz)) return -1;
+    w.txwindow = rx[9];
+    w.fcmask = rx[8];
+    return len;
+}
+
+/* something waiting? (interrupt pending on the chip) */
+static int pending(void)
+{
+    int i = sdiord(Fn0, Intpend);
+    if (i <= 0) return 0;
+    u32 ints = cfgreadl(w.sdregs + Intstatus);
+    cfgwritel(w.sdregs + Intstatus, ints);
+    if (ints & MailboxInt) {
+        cfgreadl(w.sdregs + Hostmboxdata);
+        cfgwritel(w.sdregs + Sbmbox, 2);                  /* ack */
+    }
+    return (ints & FrameInt) != 0;
+}
+
+/* events: escan results end up here */
+#define MAXBSS 32
+static struct bss { u8 bssid[6]; char ssid[33]; int rssi, chan, sec; } bsslist[MAXBSS];
+static int nbss, scan_done;
+
+static u32 be32(const u8 *p) { return (u32)p[0] << 24 | (u32)p[1] << 16 | (u32)p[2] << 8 | p[3]; }
+static u16 le16(const u8 *p) { return (u16)(p[0] | p[1] << 8); }
+static u32 le32(const u8 *p) { return (u32)p[0] | (u32)p[1] << 8 | (u32)p[2] << 16 | (u32)p[3] << 24; }
+
+static void add_bss(const u8 *p, int len)
+{
+    if (len < 0x80) return;
+    struct bss b;
+    memcpy(b.bssid, p + 8, 6);
+    int sl = p[18] > 32 ? 32 : p[18];
+    memcpy(b.ssid, p + 19, (size_t)sl);
+    b.ssid[sl] = 0;
+    b.rssi = (short)le16(p + 78);
+    b.chan = le16(p + 72) & 0xFF;
+    b.sec = (le16(p + 16) & 0x10) ? 1 : 0;               /* privacy bit: WEP or better */
+    u32 ieoff = le32(p + 0x74), ielen = le32(p + 0x78);
+    if (ielen && ieoff + ielen <= (u32)len) {
+        const u8 *t = p + ieoff, *e = t + ielen;
+        while (t + 2 <= e && t + 2 + t[1] <= e) {
+            if (t[0] == 0x30) b.sec = 3;                  /* RSN = WPA2/WPA3 */
+            else if (t[0] == 0xDD && t[1] >= 4 && t[2] == 0 && t[3] == 0x50 && t[4] == 0xF2 && t[5] == 1 && b.sec < 2) b.sec = 2;
+            t += 2 + t[1];
+        }
+    }
+    for (int i = 0; i < nbss; i++)
+        if (!memcmp_n(bsslist[i].bssid, b.bssid, 6)) { if (b.rssi > bsslist[i].rssi) bsslist[i].rssi = b.rssi; return; }
+    if (nbss < MAXBSS) bsslist[nbss++] = b;
+}
+
+static void event(const u8 *p, int len)
+{
+    if (len < 14 + 10 + 48) return;
+    p += 14 + 10; len -= 14 + 10;
+    u32 type = be32(p + 4), status = be32(p + 8);
+    if (type == 69) {                                     /* E_ESCAN_RESULT */
+        const u8 *r = p + 48;
+        int rl = len - 48;
+        if (rl < 12) return;
+        if (status == 8 && le16(r + 10)) add_bss(r + 12, rl - 12);   /* partial: one network */
+        else if (status != 8) scan_done = 1;              /* 0 = complete, else aborted */
+    }
+}
+
+/* handle one received packet; returns its channel (0 = command answer) */
+static int dispatch(int len, u16 *rsp_id)
+{
+    int ch = rx[5] & 0xF, doff = rx[7];
+    if (ch == 0 && len >= Sdpcmsz + Cmdsz) { *rsp_id = le16(rx + doff + 10); return 0; }
+    if (ch == 1 && len > doff + 4) {
+        int bdc = 4 + (rx[doff + 3] << 2);
+        if (len > doff + bdc) event(rx + doff + bdc, len - doff - bdc);
+    }
+    return ch;
+}
+
+static void poll_events(u32 ms)
+{
+    u64 end = timer_us() + (u64)ms * 1000;
+    while (timer_us() < end) {
+        if (!pending()) { delay_us(2000); continue; }
+        int n;
+        u16 id;
+        while ((n = readpkt()) > 0) dispatch(n, &id);
+    }
+}
+
+/* a firmware command (ioctl); write = data goes in, else the answer comes back into res */
+static int wlcmd(int write, u32 op, const void *data, int dlen, void *res, int rlen)
+{
+    static u8 b[1600] __attribute__((aligned(4)));
+    int tlen = write ? dlen + rlen : (dlen > rlen ? dlen : rlen);
+    int len = Sdpcmsz + Cmdsz + tlen;
+    if (len > (int)sizeof(b)) return stage("command too long");
+    memset(b, 0, (size_t)len);
+    b[0] = (u8)len; b[1] = (u8)(len >> 8); b[2] = (u8)~len; b[3] = (u8)(~len >> 8);
+    b[4] = w.txseq;
+    b[7] = Sdpcmsz;
+    u8 *q = b + Sdpcmsz;
+    q[0] = (u8)op; q[1] = (u8)(op >> 8); q[2] = (u8)(op >> 16); q[3] = (u8)(op >> 24);
+    q[4] = (u8)tlen; q[5] = (u8)(tlen >> 8);
+    q[8] = write ? 2 : 0;
+    w.reqid++;
+    q[10] = (u8)w.reqid; q[11] = (u8)(w.reqid >> 8);
+    if (dlen) memcpy(q + Cmdsz, data, (size_t)dlen);
+    if (write && rlen) memcpy(q + Cmdsz + dlen, res, (size_t)rlen);
+    if (packetrw(1, b, len)) return stage("command send");
+    w.txseq++;
+    u64 end = timer_us() + 2000000;
+    while (timer_us() < end) {
+        if (!pending()) { delay_us(500); continue; }
+        int n;
+        u16 id;
+        while ((n = readpkt()) > 0) {
+            if (dispatch(n, &id) == 0 && id == w.reqid) {
+                int doff = rx[7];
+                u32 st = le32(rx + doff + 12);
+                if (st) { werr = "firmware command error"; return -(int)st - 1; }
+                if (!write && rlen) memcpy(res, rx + doff + Cmdsz, (size_t)rlen);
+                return 0;
+            }
+        }
+    }
+    return stage("no answer from the firmware");
+}
+
+static int setvar(const char *name, const void *val, int len)
+{
+    static u8 t[1500];
+    int nl = (int)strlen(name) + 1;
+    memcpy(t, name, (size_t)nl);
+    memcpy(t + nl, val, (size_t)len);
+    return wlcmd(1, 263, t, nl + len, 0, 0);
+}
+static int getvar(const char *name, void *val, int len) { return wlcmd(0, 262, name, (int)strlen(name) + 1, val, len); }
+static int setint(const char *name, u32 v) { u8 b[4] = { (u8)v, (u8)(v >> 8), (u8)(v >> 16), (u8)(v >> 24) }; return setvar(name, b, 4); }
+static int cmdint(u32 op, u32 v) { u8 b[4] = { (u8)v, (u8)(v >> 8), (u8)(v >> 16), (u8)(v >> 24) }; return wlcmd(1, op, b, 4, 0, 0); }
+
+/* the regulatory data (.clm_blob) for 43436 / 43455 */
+static int clm_load(const char *file)
+{
+    struct fat_file f;
+    static u8 b[12 + 1400 + 8] __attribute__((aligned(4)));
+    if (fw_open(file, &f)) return stage("CLM file missing");
+    int flag = (1 << 12) | (1 << 1), n;
+    while (!(flag & (1 << 2))) {
+        n = fat_read(&f, b + 12, 1400);
+        if (n <= 0) break;
+        if (f.pos >= f.size) { while (n & 7) b[12 + n++] = 0; flag |= 1 << 2; }
+        b[0] = (u8)flag; b[1] = (u8)(flag >> 8);
+        b[2] = 2; b[3] = 0;                               /* type: CLM */
+        b[4] = (u8)n; b[5] = (u8)(n >> 8); b[6] = 0; b[7] = 0;
+        b[8] = b[9] = b[10] = b[11] = 0;
+        if (setvar("clmload", b, 12 + n)) return stage("CLM load");
+        flag &= ~(1 << 1);
+    }
+    return 0;
+}
+
+static int wl_init(void)
+{
+    if (getvar("cur_etheraddr", w.mac, 6)) return -1;
+    setint("assoc_listen", 10);
+    cmdint(0x56, 0);                                      /* power save off */
+    setint("bus:txglom", 0);
+    setint("bcn_timeout", 10);
+    setint("assoc_retry_max", 3);
+    u8 ev[16];
+    memset(ev, 0xFF, sizeof(ev));
+    ev[40 / 8] &= (u8)~(1 << (40 % 8));                   /* E_RADIO */
+    ev[44 / 8] &= (u8)~(1 << (44 % 8));                   /* E_PROBREQ_MSG */
+    ev[54 / 8] &= (u8)~(1 << (54 % 8));
+    ev[71 / 8] &= (u8)~(1 << (71 % 8));
+    ev[20 / 8] &= (u8)~(1 << (20 % 8));
+    ev[124 / 8] &= (u8)~(1 << (124 % 8));
+    setvar("event_msgs", ev, sizeof(ev));
+    cmdint(0xb9, 0x28);                                   /* scan channel time */
+    cmdint(0xbb, 0x28);                                   /* scan unassoc time */
+    cmdint(0x102, 0x82);                                  /* scan passive time */
+    cmdint(2, 0);                                         /* UP */
+    memset(w.ver, 0, sizeof(w.ver));
+    getvar("ver", w.ver, sizeof(w.ver) - 1);
+    for (int i = 0; w.ver[i]; i++) if (w.ver[i] == '\n' || w.ver[i] == '\r') w.ver[i] = 0;
+    setint("roam_off", 1);
+    cmdint(0x14, 1);                                      /* infrastructure mode */
+    cmdint(2, 1);
+    return 0;
+}
+
+/* ---------------- commands ---------------- */
+
+int wifi_up(void) { return w.up; }
+
+static int wifi_start(void)
+{
+    if (w.up) return 0;
+    memset(&w, 0, sizeof(w));
+    werr = "";
+    missing[0] = 0;
+    kprintf("WiFi: SDIO on GPIO34-39...\n");
+    if (sdio_init()) return -1;
+    if (sb_init()) return -1;
+    kprintf("  chip %d rev %d (%s core), RAM %u KB\n", w.chipid == 0x4345 ? 43455 : w.chipid, w.chiprev, w.armcore == ARMcr4 ? "Cortex-R4" : "Cortex-M3", w.socramsize / 1024);
+    if (fw_load()) return -1;
+    if (sb_enable()) return -1;
+    poll_events(100);
+    if (fwtab[fwi].clm && clm_load(fwtab[fwi].clm)) return -1;
+    if (wl_init()) return -1;
+    w.up = 1;
+    kprintf("  firmware: %s\n  MAC %02x:%02x:%02x:%02x:%02x:%02x\n", w.ver,
+            w.mac[0], w.mac[1], w.mac[2], w.mac[3], w.mac[4], w.mac[5]);
+    return 0;
+}
+
+static void scan(void)
+{
+    static const u8 params[4 + 2 + 2 + 4 + 32 + 6 + 1 + 1 + 4 * 4 + 2 + 2 + 14 * 2 + 32 + 4] = {
+        1, 0, 0, 0,                                       /* version */
+        1, 0,                                             /* action: start */
+        0x34, 0x12,                                       /* sync id */
+        0, 0, 0, 0,                                       /* ssid length */
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff,               /* any BSSID */
+        2,                                                /* bss type: any */
+        0,                                                /* active scan */
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,   /* nprobes, active, passive, home time: default */
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        14, 0,                                            /* 14 channels */
+        1, 0,
+        0x01, 0x2b, 0x02, 0x2b, 0x03, 0x2b, 0x04, 0x2b, 0x05, 0x2e, 0x06, 0x2e, 0x07, 0x2e,
+        0x08, 0x2b, 0x09, 0x2b, 0x0a, 0x2b, 0x0b, 0x2b, 0x0c, 0x2b, 0x0d, 0x2b, 0x0e, 0x2b,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    };
+    nbss = 0;
+    scan_done = 0;
+    cmdint(49, 0);                                        /* active scan */
+    if (setvar("escan", params, sizeof(params))) { kprintf("scan: %s\n", werr); return; }
+    kprintf("scanning...\n");
+    u64 end = timer_us() + 8000000;
+    while (!scan_done && timer_us() < end) {
+        poll_events(50);
+        if (con_trygetc() == 3) break;
+    }
+    /* strongest first */
+    for (int i = 1; i < nbss; i++)
+        for (int j = i; j > 0 && bsslist[j].rssi > bsslist[j - 1].rssi; j--) {
+            struct bss t = bsslist[j]; bsslist[j] = bsslist[j - 1]; bsslist[j - 1] = t;
+        }
+    static const char *const sec[4] = { "open", "WEP", "WPA", "WPA2/3" };
+    for (int i = 0; i < nbss; i++) {
+        struct bss *b = &bsslist[i];
+        kprintf("  %-32s ch %2d  %4d dBm  %-6s  %02x:%02x:%02x:%02x:%02x:%02x\n", b->ssid[0] ? b->ssid : "(hidden)",
+                b->chan, b->rssi, sec[b->sec], b->bssid[0], b->bssid[1], b->bssid[2], b->bssid[3], b->bssid[4], b->bssid[5]);
+    }
+    kprintf("%d network(s)%s\n", nbss, scan_done ? "" : " (scan did not finish)");
+}
+
+void wifi_cmd(int argc, char **argv)
+{
+    if (argc > 1 && (!strcmp(argv[1], "init") || !strcmp(argv[1], "scan"))) {
+        if (!strcmp(argv[1], "init")) w.up = 0;
+        if (wifi_start()) {
+            kprintf("WiFi: %s", werr);
+            if (missing[0]) kprintf(" (%s)", missing);
+            kprintf("  [INT=%x RESP=%x]\n", dbg_int, dbg_resp);
+            if (missing[0]) kprintf("  copy the files from Raspberry Pi OS /lib/firmware/brcm to /FIRMWARE on the card\n");
+            return;
+        }
+        if (!strcmp(argv[1], "scan")) scan();
+        return;
+    }
+    if (argc > 1) { kprintf("usage: wifi [init | scan]\n"); return; }
+    if (!w.up) { kprintf("WiFi off ('wifi init' or 'wifi scan' starts it; firmware in /FIRMWARE)\n"); return; }
+    kprintf("WiFi: chip %d rev %d, firmware %s\n  MAC %02x:%02x:%02x:%02x:%02x:%02x\n",
+            w.chipid == 0x4345 ? 43455 : w.chipid, w.chiprev, w.ver,
+            w.mac[0], w.mac[1], w.mac[2], w.mac[3], w.mac[4], w.mac[5]);
+}

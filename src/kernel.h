@@ -183,6 +183,10 @@ void ping_cmd(int argc, char **argv);
 void http_cmd(int argc, char **argv);
 const char *ip_address_str(void);
 
+/* wifi.c - CYW43438/43436/43455 over SDIO (Arasan, GPIO34-39) */
+void wifi_cmd(int argc, char **argv);
+int  wifi_up(void);
+
 /* rng.c */
 int  rng_bytes(void *out, int n);        /* 1 = from the hardware RNG */
 

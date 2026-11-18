@@ -612,6 +612,7 @@ static const struct cmd cmds[] = {
     { "ip",     "[dhcp|set a [m] [g]]", "IP address (DHCP or static)",     ip_cmd     },
     { "ping",   "<address|name> [n]",   "ping another computer",           ping_cmd   },
     { "http",   "[on|off|token|tls]",   "web page, JSON API, HTTPS",       http_cmd   },
+    { "wifi",   "[init|scan]",          "WiFi chip: firmware, scan",       wifi_cmd   },
     { "time",   "[sync|zone|server]",   "date and time (NTP), time zone",  time_cmd   },
     { "ls",     "[path]",               "list a directory on the SD card", cmd_ls     },
     { "cd",     "[dir]",                "change directory (.. = up, / = top)", cmd_cd },
