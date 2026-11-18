@@ -2,7 +2,7 @@
 #include "usb.h"
 #include "sd.h"
 
-#define VERSION "0.24"
+#define VERSION "0.25"
 
 const char *os_version(void) { return VERSION; }
 

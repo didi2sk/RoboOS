@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.24**
+Aktuálna verzia: **0.25**
 
 ## Podporované dosky
 
@@ -514,6 +514,7 @@ Systém komunikuje po anglicky.
 | `beep [Hz] [ms]` | tón na zvukovom jacku |
 | `play <noty>` | zahrá melódiu, napr. `play T120 L4 C D E F G2` |
 | `sound [volume n\|out jack\|gpio\|i2s\|off]` | výstup a hlasitosť zvuku |
+| `sound test` | nič nepočuť? tri testy za sebou (tón z PWM, sínus zapisovaný procesorom, sínus cez DMA) s registrami na obrazovke - povedz, ktorý bolo počuť |
 | `playwav <súbor>` | prehrá súbor WAV (jack, GPIO18/19 alebo I2S DAC) |
 | `sd [init]` | info o SD karte / znovu inicializovať po výmene karty |
 | `screen [ŠxV\|auto]` | rozlíšenie obrazovky (uloží sa do `/SCREEN.TXT`) |

@@ -535,6 +535,17 @@ void audio_close(int now)
 
 u32 i2s_segments(void) { return segments; }
 
+/* for 'sound test': the DMA channel and the PWM status, on the screen */
+void audio_diag(void)
+{
+    kprintf("  DMA%d CS=%x CONBLK=%x DEBUG=%x ENABLE=%x  segments %u, restarts %u, DMA errors %u\n", DMA_CH,
+            mmio_read(DMA_CS), mmio_read(DMA_CONBLK), mmio_read(DMA_DEBUG), mmio_read(DMA_ENABLE),
+            segments, restarts, dma_errors);
+    kprintf("  PWM CTL=%x STA=%x DMAC=%x RNG1=%u  CM_PWMCTL=%x CM_PWMDIV=%x\n",
+            mmio_read(PWM_CTL), mmio_read(PWM_BASE + 0x04), mmio_read(PWM_DMAC), mmio_read(PWM_BASE + 0x10),
+            mmio_read(CM_PWMCTL), mmio_read(CM_PWMDIV));
+}
+
 void i2s_status(void)
 {
     u32 cs = mmio_read(PCM_CS);

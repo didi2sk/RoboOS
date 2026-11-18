@@ -47,6 +47,9 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
   curl in Windows cmd works (JSON quoted as "{\"pin\":17,\"value\":1}"; PowerShell `curl` is Invoke-WebRequest).
   The first curl timeout was a wrong address (192.168.1.30). Idle browser connections exhausting slots/pcbs
   was reproduced in QEMU and fixed in v0.22 anyway (see lessons).
+- v0.24: **no sound from the jack** on the RPi 3B (owner, via the JSON API). v0.25 adds `sound test`: step 1 PWM
+  mark-space tone (osc clock), step 2 CPU writes a sine into the PWM FIFO (PLLD/2, USEF, no DMA), step 3 the
+  DMA ring (audio_open/write) - with PWM/CM/GPIO/DMA registers on screen. Waiting for the owner's photo.
 - v0.22: ip.c strips 802.1Q tags before lwIP (lwIP drops them; the owner's LAN sends type 8100 frames) and
   `ip` prints frame counters (in: ARP/IPv4/other/VLAN, out/errors) - for photo debugging.
 - Not yet verified on hardware: RoboOS messages between two boards (v0.9, tested only with `net loop on`

@@ -530,7 +530,8 @@ static void cmd_sound(int argc, char **argv)
     else if (argc > 2 && !strcmp(argv[1], "out") && !strcmp(argv[2], "gpio")) sound_output(1);
     else if (argc > 2 && !strcmp(argv[1], "out") && !strcmp(argv[2], "i2s")) sound_output(2);
     else if (argc > 1 && !strcmp(argv[1], "off")) sound_stop();
-    else if (argc > 1) { need("sound [volume 0-100 | out jack|gpio|i2s | off]"); return; }
+    else if (argc > 1 && !strcmp(argv[1], "test")) { sound_test(); return; }
+    else if (argc > 1) { need("sound [volume 0-100 | out jack|gpio|i2s | off | test]"); return; }
     kprintf("output: %s\nvolume: %d %%\n", sound_pins(), sound_get_volume());
     if (sound_output_mode() == 2 || i2s_segments()) i2s_status();
 }
@@ -621,7 +622,7 @@ static const struct cmd cmds[] = {
     { "basic",  "[file]",               "BASIC interpreter",               cmd_basic  },
     { "beep",   "[Hz] [ms]",            "a tone on the audio jack",        cmd_beep   },
     { "play",   "<notes>",              "play music: play T120 C D E F G", cmd_play   },
-    { "sound",  "[volume|out|off]",     "sound: volume, out jack/gpio/i2s", cmd_sound },
+    { "sound",  "[volume|out|off]",     "sound: volume, out, off, test",  cmd_sound },
     { "playwav", "<file>",              "play a WAV file",                 cmd_playwav },
     { "sd",     "[init]",               "SD card info / re-initialize",    cmd_sd     },
     { "screen", "[WxH|auto]",           "screen resolution (saved)",       cmd_screen },
