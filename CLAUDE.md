@@ -65,7 +65,10 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
   firmware 399344 B + NVRAM 680 B, firmware "wl0: Jul 19 2021 ... version 7.45.98 (TOB)", MAC b8:27:eb:..
   (so SDIO, CMD52/53, backplane, upload, HT clock, Fn2, SDPCM commands all work). `wifi scan`: the "escan"
   setvar got a firmware error status. v0.30: no channel list (all channels, like Linux) + the 9front list as a
-  fallback, and the BCME error code + command number are printed.
+  fallback, and the BCME error code + command number are printed. v0.30 on the 3B: escan -> error **-4 = BCME_NOTUP**
+  (both lists): the radio never came up. v0.31: firmware 7.45.98 (Cypress) needs its CLM blob
+  (brcmfmac43430-sdio.clm_blob = cypress/cyfmac43430-sdio.clm_blob) loaded via "clmload" before UP - 9front's
+  table had none for 43430 rev 1 (old firmware had CLM built in); wl_init now prints every failing step and UP.
 - Not yet verified on hardware: RoboOS messages between two boards (v0.9, tested only with `net loop on`
   in QEMU), program loader, BASIC, line editor / full-screen editor,
   board detection, Zero 2 W (ACT LED GPIO29 active-low is an assumption).
