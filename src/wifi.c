@@ -495,7 +495,7 @@ static int sb_init(void)
 /* ---------------- firmware ---------------- */
 
 static const struct { int chipid, rev; const char *fw, *nv, *clm; } fwtab[] = {
-    { 43430, 1, "brcmfmac43430-sdio.bin", "brcmfmac43430-sdio.txt", 0 },
+    { 43430, 1, "brcmfmac43430-sdio.bin", "brcmfmac43430-sdio.txt", "brcmfmac43430-sdio.clm_blob" },
     { 43430, 2, "brcmfmac43436-sdio.bin", "brcmfmac43436-sdio.txt", "brcmfmac43436-sdio.clm_blob" },
     { 0x4345, 6, "brcmfmac43455-sdio.bin", "brcmfmac43455-sdio.txt", "brcmfmac43455-sdio.clm_blob" },
     { 0x4345, 9, "brcmfmac43456-sdio.bin", "brcmfmac43456-sdio.txt", "brcmfmac43456-sdio.clm_blob" },
@@ -820,14 +820,21 @@ static int clm_load(const char *file)
     return 0;
 }
 
+/* a setup step that went wrong is shown, but the next ones still run */
+static int chk(const char *what, int r)
+{
+    if (r) kprintf("  %s: %s\n", what, werr);
+    return r;
+}
+
 static int wl_init(void)
 {
-    if (getvar("cur_etheraddr", w.mac, 6)) return -1;
-    setint("assoc_listen", 10);
-    cmdint(0x56, 0);                                      /* power save off */
-    setint("bus:txglom", 0);
-    setint("bcn_timeout", 10);
-    setint("assoc_retry_max", 3);
+    if (chk("cur_etheraddr", getvar("cur_etheraddr", w.mac, 6))) return -1;
+    chk("assoc_listen", setint("assoc_listen", 10));
+    chk("power save off", cmdint(0x56, 0));
+    chk("bus:txglom", setint("bus:txglom", 0));
+    chk("bcn_timeout", setint("bcn_timeout", 10));
+    chk("assoc_retry_max", setint("assoc_retry_max", 3));
     u8 ev[16];
     memset(ev, 0xFF, sizeof(ev));
     ev[40 / 8] &= (u8)~(1 << (40 % 8));                   /* E_RADIO */
@@ -836,17 +843,16 @@ static int wl_init(void)
     ev[71 / 8] &= (u8)~(1 << (71 % 8));
     ev[20 / 8] &= (u8)~(1 << (20 % 8));
     ev[124 / 8] &= (u8)~(1 << (124 % 8));
-    setvar("event_msgs", ev, sizeof(ev));
-    cmdint(0xb9, 0x28);                                   /* scan channel time */
-    cmdint(0xbb, 0x28);                                   /* scan unassoc time */
-    cmdint(0x102, 0x82);                                  /* scan passive time */
-    cmdint(2, 0);                                         /* UP */
+    chk("event_msgs", setvar("event_msgs", ev, sizeof(ev)));
+    chk("scan channel time", cmdint(0xb9, 0x28));
+    chk("scan unassoc time", cmdint(0xbb, 0x28));
+    chk("scan passive time", cmdint(0x102, 0x82));
     memset(w.ver, 0, sizeof(w.ver));
     getvar("ver", w.ver, sizeof(w.ver) - 1);
     for (int i = 0; w.ver[i]; i++) if (w.ver[i] == '\n' || w.ver[i] == '\r') w.ver[i] = 0;
-    setint("roam_off", 1);
-    cmdint(0x14, 1);                                      /* infrastructure mode */
-    cmdint(2, 1);
+    chk("roam_off", setint("roam_off", 1));
+    chk("infrastructure mode", cmdint(0x14, 1));
+    if (chk("UP (radio on)", cmdint(2, 1))) return -1;    /* WLC_UP */
     return 0;
 }
 
@@ -867,7 +873,15 @@ static int wifi_start(void)
     if (fw_load()) return -1;
     if (sb_enable()) return -1;
     poll_events(100);
-    if (fwtab[fwi].clm && clm_load(fwtab[fwi].clm)) return -1;
+    if (fwtab[fwi].clm) {                                 /* newer firmware needs its CLM blob to switch the radio on */
+        if (clm_load(fwtab[fwi].clm)) kprintf("  CLM (regulatory data): %s%s%s\n", werr, missing[0] ? " " : "", missing);
+        else {
+            u8 st[4] = { 0, 0, 0, 0 };
+            if (!getvar("clmload_status", st, 4) && (st[0] | st[1] | st[2] | st[3])) kprintf("  CLM: the firmware did not accept it (status %d)\n", st[0]);
+            else kprintf("  CLM loaded (%s)\n", fwtab[fwi].clm);
+        }
+        missing[0] = 0;
+    }
     if (wl_init()) return -1;
     w.up = 1;
     kprintf("  firmware: %s\n  MAC %02x:%02x:%02x:%02x:%02x:%02x\n", w.ver,

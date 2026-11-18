@@ -12,6 +12,7 @@ mkdir -p "$D"
 get() { curl -sSfL -o "$D/$2" "$B/$1"; echo "  $2"; }
 get cypress/cyfmac43430-sdio.bin        brcmfmac43430-sdio.bin        # Pi 3B, Pi Zero W
 get brcm/brcmfmac43430-sdio.txt         brcmfmac43430-sdio.txt
+get cypress/cyfmac43430-sdio.clm_blob   brcmfmac43430-sdio.clm_blob   # newer firmware needs it
 get brcm/brcmfmac43436-sdio.bin         brcmfmac43436-sdio.bin        # Zero 2 W
 get brcm/brcmfmac43436-sdio.txt         brcmfmac43436-sdio.txt
 get brcm/brcmfmac43436-sdio.clm_blob    brcmfmac43436-sdio.clm_blob
