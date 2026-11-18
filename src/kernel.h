@@ -226,6 +226,7 @@ void sound_exclusive(int on);            /* a WAV / video owns the sound: the JS
 int  sound_is_exclusive(void);
 void sound_test(void);                   /* 'sound test': three ways to the jack, registers on screen */
 void audio_diag(void);                   /* i2s.c: DMA + PWM registers */
+int  audio_sine(u32 phase);              /* i2s.c: 256-step sine, phase 2^32 = one wave */
 const char *sound_pins(void);
 
 /* i2s.c - I2S DAC module on GPIO18/19/21 */

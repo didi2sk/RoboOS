@@ -237,9 +237,7 @@ void sound_test(void)
     mmio_write(PWM_CTL, (1 << 0) | (1 << 5) | (1 << 8) | (1 << 13));   /* PWEN + USEF, both channels */
     gpio_func(pin_a, pin_fn);
     gpio_func(pin_b, pin_fn);
-    /* a 440 Hz sine from a 16-step table, interpolated: 44100 / 440 = ~100 samples per wave */
-    static const short tab[16] = { 0, 12539, 23170, 30273, 32767, 30273, 23170, 12539,
-                                   0, -12539, -23170, -30273, -32767, -30273, -23170, -12539 };
+    /* a 440 Hz sine, the phase runs on without breaks */
     u32 phase = 0, step = (u32)(((u64)440 << 32) / 44100);
     u64 end = timer_us() + 2000000;
     int stopped = 0;
@@ -249,8 +247,7 @@ void sound_test(void)
             if (c == 3 || c == 'q') { stopped = 1; break; }
             continue;
         }
-        int i = (int)(phase >> 28);
-        int s = tab[i] * volume / 100;
+        int s = audio_sine(phase) * volume / 100;
         u32 v = (u32)(((s + 32768) * (int)range) >> 16);
         mmio_write(PWM_FIF1, v);                         /* left */
         mmio_write(PWM_FIF1, v);                         /* right */
@@ -269,11 +266,13 @@ void sound_test(void)
     gpio_func(pin_b, pin_fn);
     if (audio_open(44100, 0) == 0) {
         static short buf[441 * 2];
-        for (int k = 0; k < 441; k++) {                  /* 10 ms = 4.4 waves */
-            int s = tab[(k * 16 * 440 / 44100) & 15] * volume / 100;
-            buf[k * 2] = buf[k * 2 + 1] = (short)s;
-        }
-        for (int n = 0; n < 200 && !stopped; n++) {      /* 2 s */
+        phase = 0;
+        for (int n = 0; n < 200 && !stopped; n++) {      /* 2 s in 10 ms pieces, the phase continues */
+            for (int k = 0; k < 441; k++) {
+                int s = audio_sine(phase) * volume / 100;
+                buf[k * 2] = buf[k * 2 + 1] = (short)s;
+                phase += step;
+            }
             audio_write(buf, 441);
             int c = con_trygetc();
             if (c == 3 || c == 'q') stopped = 1;
