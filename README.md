@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.25**
+Current version: **0.27**
 
 ## Supported boards
 
@@ -304,6 +304,45 @@ reply from 192.168.1.1: seq=1 ttl=64 time=0.9 ms
   saved in `/HTTP.TXT`, so the page (and the API below) comes back after a reboot.
 - IPv4 only.
 
+### Date and time (NTP)
+
+When the network is up, the board asks an NTP server for the time (at once, then every hour) and
+prints `[NET] time 2026-11-18 21:05:07 (NTP pool.ntp.org)`. The settings are in `/TIME.TXT`:
+
+```
+time                     the date, time, zone and when it was synced
+time zone +1 eu          UTC offset (+5:30 works too); eu = EU summer time, without it none
+time server pool.ntp.org NTP server ('off' = none)
+time sync                ask now
+time set 2026-11-18 21:05   set by hand (local time), e.g. without a network
+```
+
+The time is in `GET /api/status` (`"time":"2026-11-18T21:05:07+01:00"`, `"unix"`), on the web page,
+in BASIC (`PRINT DATE$; " "; TIME$`, `HOUR`, `MINUTE`, `SECOND`, `UNIXTIME`), in C (`unixTime()`,
+`timeText(buf)`, API version 9) and in the alarm demo's messages. The Pi has no battery clock: after
+a power cut the time comes back with the network (or `time set`).
+
+### HTTPS (TLS)
+
+`http tls on` switches on HTTPS on port 443 (saved in `/HTTP.TXT`, it comes back after a reboot).
+Then the JSON API answers **only over HTTPS** - on port 80 it says to use `https://` - so the token
+never goes over the network in clear text. `http tls off` switches it off, `http tls new` makes a
+new certificate.
+
+- The first `http tls on` makes an ECDSA P-256 key and a **self-signed certificate** for the board's
+  name and address (valid 20 years): `/TLS/KEY.PEM` and `/TLS/CERT.PEM`. `http` shows its SHA-256
+  fingerprint. A browser warns once ("not secure" - it does not know who made it); curl needs
+  `-k`, or better, copy `CERT.PEM` to the PC and trust exactly this certificate:
+
+  ```
+  curl --cacert CERT.PEM -H "Authorization: Bearer secret123" https://192.168.1.50/api/status
+  ```
+- Your own certificate (e.g. from your own CA, or `openssl req -x509 -newkey ec -pkeyopt
+  ec_paramgen_curve:P-256 -nodes -keyout KEY.PEM -out CERT.PEM -days 3650 -subj /CN=robo`):
+  put `CERT.PEM` (PEM or DER, a chain is fine) and `KEY.PEM` (EC or RSA) into `/TLS`.
+- TLS 1.2 with ECDHE and AES-GCM / ChaCha20 by [BearSSL](https://bearssl.org) 0.6 (MIT); a
+  connection is about 40 ms in QEMU. At most 4 HTTPS connections at once; sessions are resumed.
+
 ### JSON API: pins and reboot over the network
 
 With a token set (`http token <secret>`, 8-63 characters, saved in `/HTTP.TXT`), the web
@@ -498,6 +537,8 @@ If you connect after boot, press Enter.
 | `ping <address\|name> [n]` | ping another computer |
 | `http on\|off` | small web page with board info (saved) |
 | `http token [<secret>\|off]` | JSON API token (Bearer), see the JSON API section |
+| `http tls on\|off\|new` | HTTPS on port 443 (the API then only there), new certificate |
+| `time [sync\|zone\|server\|set]` | date and time from NTP, time zone, set by hand |
 | `ls [path]` | list a directory on the SD card (default: the current one) |
 | `cd [dir]` | change directory (`..` = up, `/` = top, no argument = top) |
 | `pwd` | show the current directory |
@@ -647,5 +688,6 @@ qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial stdio -device usb-kbd
   (bztsrc/raspi3-tutorial); the periodic split scheduling follows Circle/USPi.
 - TCP/IP: lwIP by Adam Dunkels and the lwIP developers (BSD license, `lwip/COPYING`).
 - Pictures: stb_image by Sean Barrett (public domain / MIT, `third_party/stb_image.h`).
+- TLS: BearSSL by Thomas Pornin (MIT, `third_party/bearssl`).
 - Video: pl_mpeg by Dominic Szablewski (MIT, `third_party/pl_mpeg.h`).
 - The LAN7515 (Pi 3B+) register layout follows the Linux `lan78xx` driver.

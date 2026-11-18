@@ -281,6 +281,14 @@ static i64 primary(void)
 
     /* functions */
     if (!strcmp(name, "MILLIS")) { opt_parens(); return (i64)(timer_us() / 1000); }
+    if (!strcmp(name, "UNIXTIME")) { opt_parens(); return (i64)clock_now(); }
+    if (!strcmp(name, "HOUR") || !strcmp(name, "MINUTE") || !strcmp(name, "SECOND")) {   /* local time, -1 = not known */
+        opt_parens();
+        u64 t = clock_now();
+        if (!t) return -1;
+        u64 l = (t + (u64)((long)clock_offset(t) * 60)) % 86400;
+        return name[0] == 'H' ? (i64)(l / 3600) : name[0] == 'M' ? (i64)(l / 60 % 60) : (i64)(l % 60);
+    }
     if (!strcmp(name, "MICROS")) { opt_parens(); return (i64)timer_us(); }
     if (!strcmp(name, "TEMP"))   { opt_parens(); return temp_c(); }
     if (!strcmp(name, "INKEY"))  {
@@ -418,6 +426,18 @@ static void jump_to(int num)
 
 static int at_end(void) { skip(); return *pc == 0 || *pc == ':'; }
 
+/* TIME$ / DATE$ in PRINT and SOCKPRINT: "21:05:07" / "2026-11-18", "--" when the time is not known */
+static int time_text(char *out, int date)
+{
+    char b[32];
+    u64 t = clock_now();
+    if (!t) { memcpy(out, date ? "----------" : "--:--:--", date ? 10 : 8); return date ? 10 : 8; }
+    clock_format(b, t, 0);
+    if (date) { memcpy(out, b, 10); return 10; }
+    memcpy(out, b + 11, 8);
+    return 8;
+}
+
 static void st_print(void)
 {
     int newline = 1;
@@ -431,6 +451,10 @@ static void st_print(void)
         } else if (kw("CHR$")) {
             expect('('); i64 c = expr(); expect(')');
             con_putc((char)c);
+        } else if (kw("TIME$") || kw("DATE$")) {
+            char t[12];
+            int n = time_text(t, up(pc[-5]) == 'D');
+            for (int i = 0; i < n; i++) con_putc(t[i]);
         } else {
             kprintf("%ld", expr());
         }
@@ -603,6 +627,10 @@ static void sock_items(char *b, int *n, int max)
         } else if (kw("CHR$")) {
             expect('('); i64 c = expr(); expect(')');
             if (*n < max) b[(*n)++] = (char)c;
+        } else if (kw("TIME$") || kw("DATE$")) {
+            char t[12];
+            int k = time_text(t, up(pc[-5]) == 'D');
+            for (int i = 0; i < k && *n < max; i++) b[(*n)++] = t[i];
         } else {
             i64 v = expr();
             char d[24]; int k = 0;
@@ -963,6 +991,7 @@ static void help(void)
              "  GPIO:     PINMODE pin, OUT|IN|PULLUP|PULLDOWN   GPIO pin, HIGH|LOW\n"
              "            LED ON|OFF   WAIT ms   GPIO(pin)\n"
              "  Functions: ABS() RND(n) MIN(,) MAX(,) MILLIS MICROS INKEY TEMP CHR$() (in PRINT)\n"
+             "  Time:     HOUR MINUTE SECOND (local, -1 = not known) UNIXTIME   PRINT DATE$; \" \"; TIME$\n"
              "  Network:  NETSEND \"name\"|\"ALL\", \"text\"|number   NETAVAIL   NETRECV   NETOK\n"
              "  Sound:    SOUND Hz, ms (ms 0 = keep on, SOUND 0,0 = off)  PLAY \"T120 L4 C D E8 F#8 G2\"  VOLUME 0-100\n"
              "            PLAYWAV \"file.wav\" (jack, GPIO18/19 or an I2S DAC: 'sound out' in the shell)\n"

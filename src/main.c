@@ -2,7 +2,7 @@
 #include "usb.h"
 #include "sd.h"
 
-#define VERSION "0.25"
+#define VERSION "0.27"
 
 const char *os_version(void) { return VERSION; }
 
@@ -99,6 +99,7 @@ void kernel_main(void)
         if (sde) sd_print_fail(sde); else con_puts("no FAT16/FAT32 partition\n");
     }
     net_name();                          /* /NAME.TXT and /IP.TXT are read here, on core 0 */
+    clock_prepare();                     /* /TIME.TXT */
     ip_prepare();
     api_sound_scan();                    /* /SOUNDS for the JSON API, before core 1 starts */
     int io = smp_start_io();             /* core 1 takes over USB + network */

@@ -535,6 +535,13 @@ void audio_close(int now)
 
 u32 i2s_segments(void) { return segments; }
 
+/* one value of the 256-step sine table (phase: a full wave = 2^32) */
+int audio_sine(u32 phase)
+{
+    if (!sine[64]) make_sine();
+    return sine[phase >> 24];
+}
+
 /* for 'sound test': the DMA channel and the PWM status, on the screen */
 void audio_diag(void)
 {

@@ -183,6 +183,30 @@ void ping_cmd(int argc, char **argv);
 void http_cmd(int argc, char **argv);
 const char *ip_address_str(void);
 
+/* rng.c */
+int  rng_bytes(void *out, int n);        /* 1 = from the hardware RNG */
+
+/* clock.c - wall clock (NTP / by hand), time zone */
+void clock_set_time(u64 unix_s, int by);      /* by: 1 NTP, 2 by hand */
+u64  clock_now(void);                    /* Unix seconds, 0 = not known */
+int  clock_offset(u64 t);                /* local - UTC in minutes */
+int  clock_format(char *b, u64 t, int iso);   /* local "YYYY-MM-DD HH:MM:SS", iso: with T and +hh:mm */
+void clock_prepare(void);                /* core 0: /TIME.TXT */
+const char *clock_server(void);
+int  clock_ntp_wanted(void);             /* core 1 asks: sync now? */
+void clock_ntp_again(void);
+int  clock_how(void);
+void time_cmd(int argc, char **argv);
+
+/* tls.c - HTTPS (BearSSL) */
+struct tls_conn;
+int  tls_prepare(int renew, const char *ip);   /* core 0: /TLS/CERT.PEM + KEY.PEM, made if missing */
+int  tls_ready(void);
+const char *tls_error(void);
+const char *tls_fingerprint(void);
+struct tls_conn *tls_open(void);
+void tls_close(struct tls_conn *c);
+
 /* webapi.c - JSON API behind 'http on' (Bearer token) */
 void api_set_token(const char *t);
 const char *api_token(void);
@@ -226,6 +250,7 @@ void sound_exclusive(int on);            /* a WAV / video owns the sound: the JS
 int  sound_is_exclusive(void);
 void sound_test(void);                   /* 'sound test': three ways to the jack, registers on screen */
 void audio_diag(void);                   /* i2s.c: DMA + PWM registers */
+int  audio_sine(u32 phase);              /* i2s.c: 256-step sine, phase 2^32 = one wave */
 const char *sound_pins(void);
 
 /* i2s.c - I2S DAC module on GPIO18/19/21 */
