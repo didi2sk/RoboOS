@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.23**
+Aktuálna verzia: **0.24**
 
 ## Podporované dosky
 
@@ -318,12 +318,23 @@ vypnuté (403). `http token` ukáže token, `http token off` API vypne.
 | `GET /api/gpio` | všetky piny 0-27: `{"pin":17,"mode":"out","value":1}` ... |
 | `GET /api/gpio/17` | jeden pin |
 | `POST /api/gpio` | `{"pin":17,"value":1}` - nastaví pin (stane sa výstupom); `value` 0, 1, true, false alebo `"toggle"`; `{"pin":4,"mode":"in","pull":"up"}` - vstup s pull-upom (`pull` up/down/off); zoznam `[{...},{...}]` nastaví viac pinov (najprv sa skontrolujú všetky, potom sa nastavia) |
+| `POST /api/sound` | prehrá WAV z priečinka `/SOUNDS`: `{"file":"dingdong.wav","out":"jack"}` - `out` je `jack`, `gpio` (GPIO18/19) alebo `i2s` (DAC modul, aj `"dac"` / `"device"`), bez neho aktuálny výstup (`sound out`); voliteľne `"volume":0-100`. `{"tone":880,"ms":500}` zahrá tón, `{"stop":true}` zastaví. Odpovie hneď kódom 202 |
+| `GET /api/sound` | čo hrá, výsledok posledného zvuku, výstup, hlasitosť a súbory v `/SOUNDS` |
 | `POST /api/reboot` | odpovie `{"ok":true,"rebooting":true}` a o 0,5 s reštartuje |
 
 ```
 curl -H "Authorization: Bearer tajne123" http://192.168.1.50/api/status
 curl -H "Authorization: Bearer tajne123" -d '{"pin":17,"value":1}' http://192.168.1.50/api/gpio
 curl -H "Authorization: Bearer tajne123" -X POST http://192.168.1.50/api/reboot
+```
+
+Zvuky: WAV súbory (PCM 8/16 bitov, 8-48 kHz) daj na kartu do `/SOUNDS` (sú tam
+`DINGDONG.WAV`, `BEEP.WAV`, `SIREN.WAV`). Prehrá ich jadro 0, keď čaká v shelli, BASICu alebo
+programe (SD karta patrí jadru 0), nie počas `playwav` ani videa; výstup sa potom prepne späť
+a voľba v `/SOUND.TXT` ostane.
+
+```
+curl -H "Authorization: Bearer tajne123" -d "{\"file\":\"dingdong.wav\",\"out\":\"i2s\"}" http://192.168.1.50/api/sound
 ```
 
 Chyby prídu ako `{"ok":false,"error":"..."}` s kódom 400 / 401 / 403 / 404 / 405. API môže

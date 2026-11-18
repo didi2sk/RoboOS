@@ -137,10 +137,12 @@ void sound_volume(int v)
 }
 int  sound_get_volume(void) { return volume; }
 
-/* 0 = jack, 1 = GPIO18/19 (PWM), 2 = I2S DAC; saved in /SOUND.TXT */
-void sound_output(int mode)
+/* 0 = jack, 1 = GPIO18/19 (PWM), 2 = I2S DAC; sound_output saves it in /SOUND.TXT,
+ * sound_use only switches (the JSON API plays one sound on another output) */
+static void set_output(int mode, int save)
 {
     static const char *name[3] = { "jack\r\n", "gpio\r\n", "i2s\r\n" };
+    read_config();
     if (playing) sound_stop();
     mmio_write(PWM_CTL, 0);
     if (pin_a) { gpio_func(pin_a, 0); gpio_func(pin_b, 0); pin_a = 0; }   /* release the old pins */
@@ -149,8 +151,10 @@ void sound_output(int mode)
     cfg_read = 1;
     pick_pins();
     if (mode == OUT_I2S) { i2s_volume(volume); i2s_start(); }
-    if (fat_mounted()) fat_write_file("/SOUND.TXT", name[mode], (u32)strlen(name[mode]));
+    if (save && fat_mounted()) fat_write_file("/SOUND.TXT", name[mode], (u32)strlen(name[mode]));
 }
+void sound_output(int mode) { set_output(mode, 1); }
+void sound_use(int mode)    { set_output(mode, 0); }
 
 /* a sound stream (video) on the current output; 0 = ok */
 int sound_stream_open(int hz)
@@ -166,8 +170,22 @@ int sound_stream_open(int hz)
     return audio_open(hz, 0);
 }
 
-/* WAV: on the I2S DAC, or on the PWM (jack / GPIO18-19) by DMA */
+/* > 0 while a WAV or a video owns the sound (the JSON API waits) */
+static int exclusive;
+void sound_exclusive(int on) { exclusive += on ? 1 : -1; if (exclusive < 0) exclusive = 0; }
+int  sound_is_exclusive(void) { return exclusive; }
+
+static int sound_wav_l(const char *path, int (*idle)(void));
 int sound_wav(const char *path, int (*idle)(void))
+{
+    sound_exclusive(1);
+    int r = sound_wav_l(path, idle);
+    sound_exclusive(0);
+    return r;
+}
+
+/* WAV: on the I2S DAC, or on the PWM (jack / GPIO18-19) by DMA */
+static int sound_wav_l(const char *path, int (*idle)(void))
 {
     pick_pins();
     i2s_volume(volume);

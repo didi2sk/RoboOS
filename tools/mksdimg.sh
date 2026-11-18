@@ -17,6 +17,7 @@ for a in $AUTO;  do mcopy -i /tmp/part.img sdk/bin/$a.bin ::/RUN/; done
 for a in $OTHER; do mcopy -i /tmp/part.img sdk/bin/$a.bin ::/APPS/; done
 for b in sd/APPS/*.bas sd/APPS/*.wav; do mcopy -i /tmp/part.img "$b" ::/APPS/; done
 [ -f sd/SPLASH.PNG ] && mcopy -i /tmp/part.img sd/SPLASH.PNG ::/
+if [ -d sd/SOUNDS ]; then mmd -i /tmp/part.img ::/SOUNDS; mcopy -i /tmp/part.img sd/SOUNDS/*.WAV ::/SOUNDS/; fi
 if [ -d sd/ALARM ]; then mmd -i /tmp/part.img ::/ALARM; mcopy -i /tmp/part.img sd/ALARM/*.WAV ::/ALARM/; fi
 printf 'Hello from a text file on the SD card.\nLine two.\n' > /tmp/readme.txt
 mcopy -i /tmp/part.img /tmp/readme.txt "::/Read me please.txt"

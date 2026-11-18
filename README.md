@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.23**
+Current version: **0.24**
 
 ## Supported boards
 
@@ -317,12 +317,23 @@ the API is off (403). `http token` shows the token, `http token off` turns the A
 | `GET /api/gpio` | all pins 0-27: `{"pin":17,"mode":"out","value":1}` ... |
 | `GET /api/gpio/17` | one pin |
 | `POST /api/gpio` | `{"pin":17,"value":1}` - sets a pin (it becomes an output); `value` 0, 1, true, false or `"toggle"`; `{"pin":4,"mode":"in","pull":"up"}` - input with a pull-up (`pull` up/down/off); a list `[{...},{...}]` sets several pins (all are checked first, then set) |
+| `POST /api/sound` | plays a WAV from the `/SOUNDS` folder: `{"file":"dingdong.wav","out":"jack"}` - `out` is `jack`, `gpio` (GPIO18/19) or `i2s` (the DAC module, also `"dac"` / `"device"`), without it the current output (`sound out`); optional `"volume":0-100`. `{"tone":880,"ms":500}` plays a tone, `{"stop":true}` stops. Answers 202 at once |
+| `GET /api/sound` | what plays, the result of the last sound, output, volume and the files in `/SOUNDS` |
 | `POST /api/reboot` | answers `{"ok":true,"rebooting":true}` and reboots after 0.5 s |
 
 ```
 curl -H "Authorization: Bearer secret123" http://192.168.1.50/api/status
 curl -H "Authorization: Bearer secret123" -d '{"pin":17,"value":1}' http://192.168.1.50/api/gpio
 curl -H "Authorization: Bearer secret123" -X POST http://192.168.1.50/api/reboot
+```
+
+Sounds: put WAV files (PCM 8/16 bit, 8-48 kHz) into `/SOUNDS` on the card (it comes with
+`DINGDONG.WAV`, `BEEP.WAV`, `SIREN.WAV`). Core 0 plays them while it waits in the shell, BASIC or
+a program (the SD card belongs to core 0), not during `playwav` or a video; the output switches
+back afterwards and the choice in `/SOUND.TXT` stays.
+
+```
+curl -H "Authorization: Bearer secret123" -d "{\"file\":\"dingdong.wav\",\"out\":\"i2s\"}" http://192.168.1.50/api/sound
 ```
 
 Errors come back as `{"ok":false,"error":"..."}` with 400 / 401 / 403 / 404 / 405. A web page

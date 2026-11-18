@@ -187,6 +187,8 @@ const char *ip_address_str(void);
 void api_set_token(const char *t);
 const char *api_token(void);
 void api_poll(void);
+void api_sound_poll(void);               /* core 0, from con_trygetc: plays what the API asked */
+void api_sound_scan(void);               /* core 0: list /SOUNDS for GET /api/sound */
 int  api_handle(const char *method, const char *path, const char *auth, const char *body, int blen,
                 const char *from, char *out, int max);
 const char *os_version(void);
@@ -219,6 +221,9 @@ int  sound_play(const char *music, int (*idle)(void), int *err);   /* 0 ok, 1 st
 void sound_volume(int v);                /* 0..100 */
 int  sound_get_volume(void);
 void sound_output(int gpio);             /* 0 = jack, 1 = GPIO18/19 */
+void sound_use(int mode);                /* like sound_output, not saved */
+void sound_exclusive(int on);            /* a WAV / video owns the sound: the JSON API waits */
+int  sound_is_exclusive(void);
 const char *sound_pins(void);
 
 /* i2s.c - I2S DAC module on GPIO18/19/21 */

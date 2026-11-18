@@ -111,6 +111,7 @@ int con_trygetc(void)
         usb_hotplug();
     }
     sound_poll();
+    api_sound_poll();                           /* a sound asked for over the JSON API */
     return kbd_getc();
 }
 
