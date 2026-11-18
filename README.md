@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.21**
+Current version: **0.22**
 
 ## Supported boards
 
@@ -253,6 +253,9 @@ reply from 192.168.1.1: seq=1 ttl=64 time=0.9 ms
 - `ip` shows the address; `ip set <address> [mask] [gateway]` sets a fixed address,
   `ip dhcp` goes back to DHCP. The choice is saved in `/IP.TXT` on the SD card.
 - `ping <address or name> [count]` - names are looked up with DNS.
+- `ip` also counts the frames: `in` (ARP, IPv4, other, VLAN-tagged) and `out` (errors) -
+  if `in` stays near 0, nothing reaches the board (cable, switch, router). Frames with a
+  VLAN tag (802.1Q, also the "priority only" tag some routers add) have the tag removed.
 - `http on` starts a small web page with the board's name, version, uptime and CPU
   temperature: open `http://<address>/` in a browser. `http off` stops it. The choice is
   saved in `/HTTP.TXT`, so the page (and the API below) comes back after a reboot.

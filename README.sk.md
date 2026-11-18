@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.21**
+Aktuálna verzia: **0.22**
 
 ## Podporované dosky
 
@@ -254,6 +254,9 @@ reply from 192.168.1.1: seq=1 ttl=64 time=0.9 ms
 - `ip` ukáže adresu; `ip set <adresa> [maska] [brána]` nastaví pevnú adresu,
   `ip dhcp` vráti DHCP. Voľba sa uloží do `/IP.TXT` na SD karte.
 - `ping <adresa alebo meno> [počet]` - mená sa prekladajú cez DNS.
+- `ip` počíta aj rámce: `in` (ARP, IPv4, iné, s VLAN značkou) a `out` (chyby) - ak
+  `in` ostáva blízko 0, k doske nič nechodí (kábel, switch, router). Rámcom s VLAN značkou
+  (802.1Q, aj „len priorita“, ktorú pridávajú niektoré routery) sa značka odstráni.
 - `http on` spustí malú webovú stránku s menom dosky, verziou, dobou behu a teplotou
   CPU: otvor `http://<adresa>/` v prehliadači. `http off` ju vypne. Voľba sa uloží do
   `/HTTP.TXT`, takže stránka (aj API nižšie) sa po reštarte spustí sama.

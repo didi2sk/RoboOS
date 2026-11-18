@@ -57,6 +57,9 @@ void lwip_port_assert(const char *msg, int line, const char *file)
 
 /* ---------------- network interface ---------------- */
 
+/* frame counters for 'ip' (diagnostics on the screen) */
+static u32 rx_all, rx_arp, rx_ip, rx_vlan, rx_other, tx_all, tx_err;
+
 static err_t link_out(struct netif *n, struct pbuf *p)
 {
     static u8 f[1536];
@@ -65,7 +68,9 @@ static err_t link_out(struct netif *n, struct pbuf *p)
     pbuf_copy_partial(p, f, p->tot_len, 0);
     int len = p->tot_len;
     if (len < 60) { memset(f + len, 0, 60 - len); len = 60; }   /* minimum frame */
-    return eth_send(f, len) < 0 ? ERR_IF : ERR_OK;
+    tx_all++;
+    if (eth_send(f, len) < 0) { tx_err++; return ERR_IF; }
+    return ERR_OK;
 }
 
 static err_t nif_init(struct netif *n)
@@ -147,7 +152,19 @@ int ip_started(void) { return started; }
 /* a frame from the wire that is not a RoboOS message */
 void ipstack_input(const u8 *f, int n)
 {
+    static u8 t[1536];
     if (!started || n < 14) return;
+    rx_all++;
+    if (n >= 18 && f[12] == 0x81 && f[13] == 0x00) {     /* 802.1Q tag (also VLAN 0 = priority only): */
+        if (n - 4 > (int)sizeof(t)) return;              /* lwIP drops tagged frames, so step over it */
+        memcpy(t, f, 12);
+        memcpy(t + 12, f + 16, (size_t)(n - 16));
+        f = t; n -= 4;
+        rx_vlan++;
+    }
+    if (f[12] == 0x08 && f[13] == 0x06) rx_arp++;
+    else if (f[12] == 0x08 && f[13] == 0x00) rx_ip++;
+    else rx_other++;
     struct pbuf *p = pbuf_alloc(PBUF_RAW, (u16_t)n, PBUF_POOL);
     if (!p) return;
     pbuf_take(p, f, (u16_t)n);
@@ -251,6 +268,8 @@ static void ip_cmd_l(int argc, char **argv)
     kprintf("  (%s)\n", use_dhcp ? "DHCP" : "static, /IP.TXT");
     kprintf("gateway: "); put_ip(netif_ip4_gw(&nif));
     kprintf("\ndns:     "); put_ip(ip_2_ip4(dns)); con_putc('\n');
+    kprintf("frames:  in %u (ARP %u, IPv4 %u, other %u; VLAN-tagged %u), out %u (errors %u)\n",
+            rx_all, rx_arp, rx_ip, rx_other, rx_vlan, tx_all, tx_err);
 }
 
 /* ---------------- command: ping ---------------- */

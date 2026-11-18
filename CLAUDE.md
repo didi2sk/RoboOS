@@ -43,7 +43,10 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
   `net speed 100` is the fallback. Traffic through the LAN7515 (frames, DHCP) not yet confirmed either.
 - Not yet verified on hardware (v0.20): `screen` resolutions + `/SCREEN.TXT`, the two framebuffer pages
   (virtual height 2h, offset tag 0x48009), worker cores 2-3, `video` (decode speed, sound stream).
-- Not yet verified on hardware (v0.21): the JSON API (only QEMU + curl).
+- v0.21 web page **works on hardware** (owner: "web funguje", board at 192.168.1.30); the first curl to
+  /api/status timed out (probably before DHCP / `http on`), the API itself is not yet confirmed on hardware.
+- v0.22: ip.c strips 802.1Q tags before lwIP (lwIP drops them; the owner's LAN sends type 8100 frames) and
+  `ip` prints frame counters (in: ARP/IPv4/other/VLAN, out/errors) - for photo debugging.
 - Not yet verified on hardware: RoboOS messages between two boards (v0.9, tested only with `net loop on`
   in QEMU), program loader, BASIC, line editor / full-screen editor,
   board detection, Zero 2 W (ACT LED GPIO29 active-low is an assumption).
