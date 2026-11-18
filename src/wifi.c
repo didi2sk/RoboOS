@@ -694,11 +694,31 @@ static void add_bss(const u8 *p, int len)
     if (nbss < MAXBSS) bsslist[nbss++] = b;
 }
 
+/* joining: set by events (on core 1 once WiFi is up) */
+static volatile int j_ssid_ok, j_link, j_keyed, j_fail, j_need_key, j_told;
+static char j_ssid[33];
+
 static void event(const u8 *p, int len)
 {
     if (len < 14 + 10 + 48) return;
     p += 14 + 10; len -= 14 + 10;
     u32 type = be32(p + 4), status = be32(p + 8);
+    u32 flags = (u32)p[2] << 8 | p[3];
+    switch (type) {
+    case 0:                                               /* E_SET_SSID: the join finished */
+        if (status == 0) j_ssid_ok = 1; else j_fail = 1 + (int)status;   /* 1 fail, 2 timeout, 3 no network */
+        return;
+    case 16:                                              /* E_LINK */
+        if (flags & 1) j_link = 1; else { j_link = 0; j_keyed = 0; }
+        return;
+    case 46:                                              /* E_PSK_SUP: the firmware's WPA supplicant */
+        if (status == 6) j_keyed = 1;                     /* keyed */
+        else if (status == 7 || status == 0) { if (j_need_key && !j_keyed) j_fail = 100 + (int)status; }   /* timeout = wrong password? */
+        return;
+    case 5: case 6: case 12:                              /* deauth / disassoc */
+        j_link = 0; j_keyed = 0;
+        return;
+    }
     if (type == 69) {                                     /* E_ESCAN_RESULT */
         const u8 *r = p + 48;
         int rl = len - 48;
@@ -919,16 +939,20 @@ static void scan(void)
     };
     nbss = 0;
     scan_done = 0;
+    io_lock();                                            /* core 1 reads the chip too once WiFi is up */
     if (cmdint(49, 0)) kprintf("  (active scan: %s)\n", werr);   /* SET_PASSIVE_SCAN 0 */
-    if (setvar("escan", params, sizeof(params))) {
+    int bad = setvar("escan", params, sizeof(params));
+    if (bad) {
         kprintf("  escan: %s - trying the old channel list\n", werr);
-        if (setvar("escan", params_old, sizeof(params_old))) { kprintf("scan: %s\n", werr); return; }
+        bad = setvar("escan", params_old, sizeof(params_old));
     }
+    io_unlock();
+    if (bad) { kprintf("scan: %s\n", werr); return; }
     kprintf("scanning...\n");
     u64 end = timer_us() + 8000000;
-    while (!scan_done && timer_us() < end) {
-        poll_events(50);
+    while (!scan_done && timer_us() < end) {              /* the I/O core handles the results */
         if (con_trygetc() == 3) break;
+        delay_us(20000);
     }
     /* strongest first */
     for (int i = 1; i < nbss; i++)
@@ -944,10 +968,188 @@ static void scan(void)
     kprintf("%d network(s)%s\n", nbss, scan_done ? "" : " (scan did not finish)");
 }
 
+/* ---------------- joined: frames for the network stack (core 1, io lock) ---------------- */
+
+int wifi_joined(void) { return w.up && j_link && j_ssid_ok && (j_keyed || !j_need_key); }
+const u8 *wifi_mac(void) { return w.mac; }
+const char *wifi_ssid(void) { return j_ssid; }
+
+static volatile int rx_more;
+
+/* the next data frame (Ethernet) into buf, 0 = none; events are handled on the way.
+ * want_data = 0: only events (WiFi is up but Ethernet carries the traffic) */
+int wifi_recv(void *buf, int max, int want_data)
+{
+    if (!w.up) return 0;
+    for (int guard = 0; guard < 8; guard++) {
+        if (!rx_more) { if (!pending()) break; rx_more = 1; }
+        int n = readpkt();
+        if (n <= 0) { rx_more = 0; break; }
+        u16 id;
+        int ch = dispatch(n, &id);
+        if (ch == 2 && want_data) {
+            int doff = rx[7];
+            if (n <= doff + 4) continue;
+            int off = doff + 4 + (rx[doff + 3] << 2), len = n - off;
+            if (len < 14 || len > max) continue;
+            memcpy(buf, rx + off, (size_t)len);
+            return len;
+        }
+    }
+    if (wifi_joined() && !j_told) {                       /* tell once: connected */
+        j_told = 1;
+        con_color(COL_CYAN); kprintf("\n[NET] WiFi connected to %s\n", j_ssid); con_color(COL_DEFAULT);
+    } else if (!wifi_joined() && j_told == 1 && j_ssid_ok) {
+        j_told = 2;
+        con_color(COL_YELLOW); kprintf("\n[NET] WiFi lost %s\n", j_ssid); con_color(COL_DEFAULT);
+    }
+    return 0;
+}
+
+/* an Ethernet frame out: SDPCM header (channel 2) + BDC header + frame */
+int wifi_send(const void *f, int len)
+{
+    static u8 tb[1600] __attribute__((aligned(4)));
+    if (!wifi_joined() || len > 1514) return -1;
+    if (w.txseq == w.txwindow || (w.fcmask & (1 << 2))) return -2;   /* the firmware has no room now */
+    int total = Sdpcmsz + 4 + len;
+    memset(tb, 0, Sdpcmsz + 4);
+    tb[0] = (u8)total; tb[1] = (u8)(total >> 8); tb[2] = (u8)~total; tb[3] = (u8)(~total >> 8);
+    tb[4] = w.txseq;
+    tb[5] = 2;                                            /* data channel */
+    tb[7] = Sdpcmsz;                                      /* data offset */
+    tb[Sdpcmsz] = 0x20;                                   /* BDC version 2 */
+    memcpy(tb + Sdpcmsz + 4, f, (size_t)len);
+    if (packetrw(1, tb, total)) return -3;
+    w.txseq++;
+    return len;
+}
+
+/* ---------------- join / leave (core 0) ---------------- */
+
+static int join_send(const char *ssid, const char *pass)
+{
+    int sl = (int)strlen(ssid), pl = pass ? (int)strlen(pass) : 0;
+    if (sl < 1 || sl > 32) { werr = "the network name must be 1-32 characters"; return -1; }
+    if (pl && (pl < 8 || pl > 63)) { werr = "a WPA password has 8-63 characters"; return -1; }
+    j_ssid_ok = j_link = j_keyed = j_fail = j_told = 0;
+    j_need_key = pl > 0;
+    memcpy(j_ssid, ssid, (size_t)sl);
+    j_ssid[sl] = 0;
+    /* WPA (TKIP) only networks need the old WPA mode; everything else WPA2 (AES) */
+    u32 auth = 0x80;                                      /* WPA2_AUTH_PSK */
+    for (int i = 0; i < nbss; i++) if (!strcmp(bsslist[i].ssid, ssid) && bsslist[i].sec == 2) auth = 0x04;
+    int r = 0;
+    io_lock();
+    r |= chk("wsec", setint("wsec", pl ? 6 : 0));        /* TKIP + AES */
+    r |= chk("sup_wpa", setint("sup_wpa", pl ? 1 : 0));   /* the firmware does the WPA handshake */
+    if (pl) {
+        setint("sup_wpa2_eapver", 0xFFFFFFFF);
+        setint("sup_wpa_tmo", 2500);
+        u8 pmk[68];
+        memset(pmk, 0, sizeof(pmk));
+        pmk[0] = (u8)pl;
+        pmk[2] = 1;                                       /* WSEC_PASSPHRASE */
+        memcpy(pmk + 4, pass, (size_t)pl);
+        delay_us(2000);
+        r |= chk("password", wlcmd(1, 268, pmk, sizeof(pmk), 0, 0));   /* WLC_SET_WSEC_PMK */
+    }
+    r |= chk("infrastructure", cmdint(20, 1));
+    r |= chk("auth open", cmdint(22, 0));
+    r |= chk("wpa_auth", cmdint(165, pl ? auth : 0));
+    u8 sb[36];
+    memset(sb, 0, sizeof(sb));
+    sb[0] = (u8)sl;
+    memcpy(sb + 4, ssid, (size_t)sl);
+    r |= chk("join", wlcmd(1, 26, sb, sizeof(sb), 0, 0));   /* WLC_SET_SSID */
+    io_unlock();
+    return r ? -1 : 0;
+}
+
+/* /WIFI.TXT: "ssid=<name>" and "psk=<password>" lines */
+static char cfg_ssid[33], cfg_psk[64];
+static int load_cfg(void)
+{
+    struct fat_file f;
+    char b[200];
+    cfg_ssid[0] = cfg_psk[0] = 0;
+    if (!fat_mounted() || fat_open("/WIFI.TXT", &f) || f.is_dir) return 0;
+    int n = fat_read(&f, b, sizeof(b) - 1);
+    if (n <= 0) return 0;
+    b[n] = 0;
+    for (char *l = b; l && *l; ) {
+        char *e = strchr(l, '\n');
+        if (e) *e = 0;
+        int k = (int)strlen(l);
+        while (k && (l[k - 1] == '\r' || l[k - 1] == ' ')) l[--k] = 0;
+        char *dst = 0; int max = 0;
+        if (!strncmp(l, "ssid=", 5)) { dst = cfg_ssid; max = 32; l += 5; }
+        else if (!strncmp(l, "psk=", 4)) { dst = cfg_psk; max = 63; l += 4; }
+        if (dst) { int i = 0; for (; l[i] && i < max; i++) dst[i] = l[i]; dst[i] = 0; }
+        l = e ? e + 1 : 0;
+    }
+    return cfg_ssid[0] != 0;
+}
+
+static void save_cfg(const char *ssid, const char *psk)
+{
+    char b[120];
+    int n = 0;
+    const char *t = "ssid=";
+    while (*t) b[n++] = *t++;
+    while (*ssid && n < 50) b[n++] = *ssid++;
+    t = "\r\npsk=";
+    while (*t) b[n++] = *t++;
+    while (psk && *psk && n < 116) b[n++] = *psk++;
+    b[n++] = '\r'; b[n++] = '\n';
+    if (!fat_mounted() || fat_write_file("/WIFI.TXT", b, (u32)n)) kprintf("(not saved: no SD card or write error)\n");
+}
+
+/* core 0 at boot (before core 1 starts): /WIFI.TXT -> start the chip and ask to join, do not wait */
+void wifi_boot(void)
+{
+    if (!load_cfg()) return;
+    if (wifi_start()) { kprintf("WiFi: %s%s%s\n", werr, missing[0] ? " " : "", missing); return; }
+    if (join_send(cfg_ssid, cfg_psk[0] ? cfg_psk : 0)) kprintf("WiFi join: %s\n", werr);
+    else kprintf("WiFi: joining %s (in the background)\n", cfg_ssid);
+}
+
+static void wait_join(void)
+{
+    u64 end = timer_us() + 20000000;
+    int shown = 0;
+    while (!wifi_joined() && !j_fail && timer_us() < end) {
+        if (j_link && !shown) { kprintf("  associated%s\n", j_need_key ? ", waiting for the keys (WPA)" : ""); shown = 1; }
+        if (con_trygetc() == 3) { kprintf("^C\n"); return; }
+        delay_us(20000);
+    }
+    if (wifi_joined()) { j_told = 1; kprintf("connected to %s - the address comes by DHCP ('ip')\n", j_ssid); return; }
+    if (j_fail == 4) kprintf("join failed: network %s not found\n", j_ssid);
+    else if (j_fail >= 100) kprintf("join failed: the WPA handshake did not finish (wrong password?)\n");
+    else if (j_fail) kprintf("join failed (status %d)\n", j_fail - 1);
+    else kprintf("join: no answer in 20 s%s\n", j_link ? " (associated, but no WPA keys - wrong password?)" : "");
+}
+
 void wifi_cmd(int argc, char **argv)
 {
+    if (argc > 2 && !strcmp(argv[1], "join")) {
+        if (!w.up && wifi_start()) { kprintf("WiFi: %s%s%s\n", werr, missing[0] ? " " : "", missing); return; }
+        const char *pass = argc > 3 ? argv[3] : 0;
+        if (join_send(argv[2], pass)) { kprintf("join: %s\n", werr); return; }
+        save_cfg(argv[2], pass);
+        kprintf("joining %s... (Ctrl+C stops waiting; saved in /WIFI.TXT)\n", argv[2]);
+        wait_join();
+        return;
+    }
+    if (argc > 1 && (!strcmp(argv[1], "leave") || !strcmp(argv[1], "forget"))) {
+        if (w.up) { io_lock(); wlcmd(1, 52, 0, 0, 0, 0); io_unlock(); }   /* WLC_DISASSOC */
+        j_link = j_keyed = j_ssid_ok = 0; j_told = 0;
+        if (!strcmp(argv[1], "forget") && fat_mounted()) { fat_remove("/WIFI.TXT"); kprintf("/WIFI.TXT removed\n"); }
+        kprintf("WiFi: not connected\n");
+        return;
+    }
     if (argc > 1 && (!strcmp(argv[1], "init") || !strcmp(argv[1], "scan"))) {
-        if (!strcmp(argv[1], "init")) w.up = 0;
+        if (!strcmp(argv[1], "init")) { io_lock(); w.up = 0; io_unlock(); }
         if (wifi_start()) {
             kprintf("WiFi: %s", werr);
             if (missing[0]) kprintf(" (%s)", missing);
@@ -958,9 +1160,18 @@ void wifi_cmd(int argc, char **argv)
         if (!strcmp(argv[1], "scan")) scan();
         return;
     }
-    if (argc > 1) { kprintf("usage: wifi [init | scan]\n"); return; }
+    if (argc > 1) { kprintf("usage: wifi [init | scan | join <network> [password] | leave | forget]\n"); return; }
     if (!w.up) { kprintf("WiFi off ('wifi init' or 'wifi scan' starts it; firmware in /FIRMWARE)\n"); return; }
     kprintf("WiFi: chip %d rev %d, firmware %s\n  MAC %02x:%02x:%02x:%02x:%02x:%02x\n",
             w.chipid == 0x4345 ? 43455 : w.chipid, w.chiprev, w.ver,
             w.mac[0], w.mac[1], w.mac[2], w.mac[3], w.mac[4], w.mac[5]);
+    if (wifi_joined()) {
+        u8 r[4] = { 0, 0, 0, 0 };
+        io_lock();
+        wlcmd(0, 127, 0, 0, r, 4);                        /* WLC_GET_RSSI */
+        io_unlock();
+        kprintf("  connected to %s, signal %d dBm%s\n", j_ssid, (int)(r[0] | r[1] << 8 | r[2] << 16 | (u32)r[3] << 24),
+                link_wifi() ? ", carries the network now" : " (Ethernet carries the network)");
+    } else if (j_ssid[0]) kprintf("  not connected (%s)\n", j_ssid);
+    else kprintf("  not connected ('wifi join <network> <password>')\n");
 }

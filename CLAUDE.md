@@ -69,6 +69,18 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
   (both lists): the radio never came up. v0.31: firmware 7.45.98 (Cypress) needs its CLM blob
   (brcmfmac43430-sdio.clm_blob = cypress/cyfmac43430-sdio.clm_blob) loaded via "clmload" before UP - 9front's
   table had none for 43430 rev 1 (old firmware had CLM built in); wl_init now prints every failing step and UP.
+  v0.31 on the 3B: **`wifi scan` WORKS** - "CLM loaded", 21 networks with channel / dBm / WPA2 / BSSID. Next: join.
+  (Owner tip: the card must be re-flashed AND the board rebooted - `wifi init` does not reload the kernel.)
+  v0.33 (NOT yet on hardware): `wifi join <ssid> [psk]` with the firmware supplicant (as cyw43-driver / brcmfmac):
+  wsec 6 (TKIP+AES), sup_wpa 1, sup_wpa2_eapver -1, sup_wpa_tmo 2500, WLC_SET_WSEC_PMK (268) {u16 len, u16 flags=1
+  passphrase, key[64]}, SET_INFRA 1, SET_AUTH 0, SET_WPA_AUTH (165) 0x80 WPA2-PSK (0x04 if the scan saw WPA only),
+  WLC_SET_SSID (26) {u32 len, ssid[32]}. Events: E_SET_SSID (0) status 0 ok / 3 no network, E_LINK (16) flags&1,
+  E_PSK_SUP (46) status 6 = keyed, 7 = timeout; deauth/disassoc 5/6/12. Joined = SET_SSID ok + link + keyed.
+  Data: SDPCM chan 2, doffset 12, BDC 0x20; window = rx header byte 9 (send only while txseq != window).
+  After `w.up` core 1 owns the chip (wifi_recv from net_poll via netdev.c, io lock); core 0 sends commands
+  under io_lock and waits for flags set by core 1. /WIFI.TXT (ssid=, psk=) -> wifi_boot() in kernel_main
+  before core 1 (firmware load ~1-2 s, join not awaited). `netdev.c`: Ethernet if link up, else WiFi if joined;
+  ip_poll sees the MAC change -> link down, etharp cleanup, DHCP restart, "[NET] now on WiFi".
 - Not yet verified on hardware: RoboOS messages between two boards (v0.9, tested only with `net loop on`
   in QEMU), program loader, BASIC, line editor / full-screen editor,
   board detection, Zero 2 W (ACT LED GPIO29 active-low is an assumption).
@@ -96,6 +108,7 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
 | `src/tls.c` | v0.27 HTTPS with BearSSL 0.6 (`third_party/bearssl`, built into `build/libbearssl.a` with BR_* defines in the Makefile; from the Ubuntu orig tarball, sha256 102a625b...). /TLS/CERT.PEM + KEY.PEM (PEM/DER, EC or RSA via br_skey_decoder) or made on board: ECDSA P-256 keygen (hmac_drbg seeded by `rng.c` = BCM2835 RNG) + hand-built X.509 v3 DER (CN + SAN DNS/IP, UTCTime, ecdsa-with-SHA256) - openssl verifies it. 4 server contexts (BR_SSL_BUFSIZE_BIDI each) + LRU session cache. ip.c: `https_accept`/`tls_pump` (SENDREC -> tcp_write, RECVREC <- held pbuf `pin`, ERR_MEM while busy, RECVAPP -> request, answer via SENDAPP then close_notify), `https_sent` keeps pumping. `http tls on|off|new`, /HTTP.TXT word "tls"; with HTTPS on, /api on port 80 answers 403. Testing curl by NAME needs `--noproxy '*'` (sandbox proxy) |
 | `src/kbd.c` | HID boot keyboard, US layout, keypad, LEDs, autorepeat, runtime method lock |
 | `src/sdhost.c` | v0.28 (WiFi step 1): the card on the BCM2835 SDHOST controller (0x3F202000, GPIO48-53 ALT0), register names from the Linux bcm2835 driver: SDCMD NEW 0x8000 / FAIL 0x4000 / BUSYWAIT 0x800 / NO_RESP 0x400 / LONG 0x200 / WRITE 0x80 / READ 0x40, SDHSTS errors 0xF8 (clear 0x7F8), SDEDM FIFO count bits 8:4 + FSM bits 3:0, thresholds 4, SDHCFG WIDE_INT + SLOW_CARD (+ WIDE_EXT for 4-bit), clock = core clock (mailbox clock 4) / (div+2). R2 is the full 128 bits (RSP3 = 127..96, unlike the Arasan). ACMD41 CRC7 error is normal. PIO single blocks via the FIFO count; after a write: FSM back to DATA, then CMD13 until ready + tran. `sd.c` `sd_init_on(0 auto / 1 sdhost / 2 emmc)`: SDHOST first, Arasan fallback (yellow `SDHOST:` boot line), `sd init sdhost|emmc`. QEMU quirk: QEMU moves the card back to the SDHCI only when GPIO48-53 are INPUT (fsel 0), so pins_alt3 sets input first. Tested in QEMU: SDSC + 4 GB SDHC image, read/write/fsck, switching both ways, forced-failure fallback, video + HTTPS |
+| `src/netdev.c` | v0.33: link_* = Ethernet (cable in) or WiFi (joined) for lwIP (ip.c link_out, nif hwaddr, ip_poll up) and RoboOS messages (net.c) |
 | `src/wifi.c` | v0.29 WiFi step 2 (NOT yet run on hardware): port of 9front `sys/src/9/bcm/ether4330.c` (Richard Miller, MIT per 9front /lib/legal/NOTICE). Power: WL_ON = firmware expander pin 129 (3B/3B+, mailbox 0x38041) or GPIO41 (Zero 2 W), off 20 ms / on / 150 ms. Arasan as SDIO host on GPIO34-39 ALT3 (34 no pull, 35-39 up): CMD0, CMD5 (R4, no CRC check) until bit 31, CMD3, CMD7, Busifc 4-bit, 25 MHz, FBR block sizes 64 (Fn1) / 512 (Fn2), enable Fn1. CMD52 = `sdiord/sdiowr`, CMD53 = `sdiorwext` (PIO via 2 KB `xbuf`, READ_RDY/WRITE_RDY per block, then DATA_DONE). Backplane window 0x1000a (cached `cur_window`), 32-bit access = (addr & 0x7FFF) or 0x8000 (Linux brcmfmac; 9front masks 0x1FFFF). Core scan from EROM (Enumbase+63*4), ramscan (43430 bank 3 PDA = 0), firmware upload + read-back compare, NVRAM condensed at the end of RAM + length token, ARM reset, HT clock, Fn2 ready. SDPCM: 12-byte header, chan 0 = command answer (id at +10, status at +12), 1 = event (BDC header, then bcm event: type BE at +4, status at +8, data at +48), 2 = data. Escan (event 69, status 8 = partial / 0 = done), bss_info offsets 8 BSSID / 18 SSID / 72 chanspec / 78 RSSI / 0x74 IE offset. Firmware NOT in the repo (Cypress/Synaptics binary-redist + GPL-2 NVRAM): `tools/getwifi.sh` -> /FIRMWARE with Linux names. QEMU has no WiFi: only the "CMD5 does not answer" path is tested |
 | `src/sd.c` / `src/fat.c` | Arasan SDHCI (GPIO48-53 ALT3), PIO single-block read/write; FAT16/32 with LFN read, 8.3 write, `fat_mkdir` (8.3, mixed case stored in capitals, `.`/`..` with `..` = 0 for the root), `fat_remove` (file or empty dir, also marks its LFN entries 0xE5 so fsck stays clean); shell `mkdir`, `rm` (refuses the cwd and its parents, boot files in / need `-f`), BASIC MKDIR/RMDIR/KILL |
 | `src/app.c` | loads `.bin` at 0x01000000, API table (`sdk/robos.h`), Ctrl+C via `ctx_save/ctx_restore` (`src/ctx.S`), autostart `/RUN` |
@@ -147,6 +160,9 @@ Keys: `con_getkey()` decodes escape sequences into `K_UP`... (kbd.c sends the sa
 - `fat_read` reads whole sectors straight into the caller's buffer only if it is 4-byte aligned (sd_read stores
   u32 words); pl_mpeg's ring buffer hands odd addresses.
 - In BASIC, compute an array index (which may allocate) before reading `v->arr` (evaluation-order bug fixed once).
+- **Floating UART RX**: GPIO15 had no pull - with no USB-TTL cable the noise became random characters at boot
+  ("kk" before the first command). v0.32: pull-up on RX, DR error bits (FE/PE/BE/OE) dropped, a fresh keyboard's
+  reports ignored for 300 ms, and input that arrived during boot is flushed before autostart / the shell.
 - The font covers ASCII 32-126 only - keep all on-screen strings ASCII.
 - Keep exceptions inside programs recoverable: exception stack is separate so `app_crashed()` can longjmp back.
 

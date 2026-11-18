@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.31**
+Aktuálna verzia: **0.33**
 
 ## Podporované dosky
 
@@ -312,20 +312,28 @@ reply from 192.168.1.1: seq=1 ttl=64 time=0.9 ms
 ### WiFi (vo výstavbe)
 
 WiFi čip (CYW43438 na Pi 3B, CYW43436 na Zero 2 W, CYW43455 na Pi 3B+) visí na SDIO. Zatiaľ ho
-RoboOS vie spustiť a hľadať siete:
+RoboOS spustí, hľadá siete a pripojí sa (WPA2-PSK alebo otvorená sieť):
 
 ```
-wifi scan        nahrá firmvér do čipu a vypíše siete okolo
-wifi init        len spustí čip
-wifi             čip, verzia firmvéru, MAC adresa
+wifi scan                     nahrá firmvér do čipu a vypíše siete okolo
+wifi join MojaSiet heslo      pripojí sa (uloží sa do /WIFI.TXT: po reštarte sa pripojí sama)
+wifi join "Moja Siet" heslo   meno s medzerami
+wifi                          čip, firmvér, MAC adresa, sieť, signál
+wifi leave                    odpojí sa;  wifi forget  zmaže aj /WIFI.TXT
 ```
+
+WPA2 handshake robí firmvér čipu sám. Jedno IP rozhranie nesie všetko (DHCP, web, API, HTTPS,
+NTP, programy): **Ethernet, keď je zapojený kábel, inak WiFi** - vytiahnutie kábla prepne na
+WiFi (`[NET] now on WiFi`, nová adresa cez DHCP). `ip` ukáže, ktoré sa používa. Zero 2 W
+Ethernet nemá, takže WiFi je jej sieť.
 
 Čip potrebuje svoj firmvér na karte v `/FIRMWARE` (súbory z Raspberry Pi OS `/lib/firmware/brcm`,
 alebo ich stiahne `tools/getwifi.sh`): `brcmfmac43430-sdio.bin` + `.txt` + `.clm_blob` (Pi 3B; novší
 firmvér bez `.clm_blob` nezapne rádio),
 `brcmfmac43436-sdio.bin` + `.txt` + `.clm_blob` (Zero 2 W), `brcmfmac43455-sdio.bin` + `.txt` +
 `.clm_blob` (Pi 3B+). V tomto repozitári nie sú (licencie Cypress / Synaptics). WiFi potrebuje
-SD kartu na SDHOST (pozri časť o SD karte). Pripojenie k sieti príde ďalej.
+SD kartu na SDHOST (pozri časť o SD karte). Scan na Pi 3B funguje; pripojenie je nové v 0.33 a na
+doske ešte nebolo vyskúšané.
 
 ### Dátum a čas (NTP)
 
@@ -561,7 +569,7 @@ Systém komunikuje po anglicky.
 | `http on\|off` | malá webová stránka s údajmi o doske (uloží sa) |
 | `http token [<tajne>\|off]` | token pre JSON API (Bearer), pozri časť o JSON API |
 | `http tls on\|off\|new` | HTTPS na porte 443 (API potom len tam), nový certifikát |
-| `wifi [init\|scan]` | WiFi čip: nahrá firmvér, vypíše siete |
+| `wifi [scan\|join <sieť> [heslo]\|leave\|forget]` | WiFi: siete, pripojenie (uloží sa), stav |
 | `time [sync\|zone\|server\|set]` | dátum a čas z NTP, časové pásmo, ručné nastavenie |
 | `ls [cesta]` | obsah priečinka na SD karte (bez cesty: aktuálneho) |
 | `cd [priečinok]` | zmena priečinka (`..` = vyššie, `/` = navrch, bez argumentu = navrch) |
@@ -622,6 +630,7 @@ v starších verziách (hlási to riadok pri štarte); bez pomocníkov prepočí
 | `lwip/` | TCP/IP stack lwIP 2.2.1 (bez úprav, licencia BSD) |
 | `src/kbd.c` | HID klávesnica: boot protocol, preklad scan kódov, autorepeat |
 | `src/sd.c` | SD karta: výber radiča; ovládač Arasan SDHCI (GPIO48-53 ALT3), čítanie aj zápis |
+| `src/netdev.c` | Ethernet alebo WiFi pod IP vrstvou (Ethernet, keď je zapojený kábel) |
 | `src/wifi.c` | WiFi čip cez SDIO (Arasan, GPIO34-39): firmvér, príkazy, scan (port 9front ether4330.c, MIT) |
 | `src/sdhost.c` | SD karta na radiči SDHOST (GPIO48-53 ALT0), predvolený od 0.28 |
 | `src/fat.c` | FAT16/FAT32: dlhé mená, čítanie, zápis (mená 8.3), mkdir, mazanie, obe kópie FAT |

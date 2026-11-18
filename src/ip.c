@@ -71,7 +71,7 @@ static err_t link_out(struct netif *n, struct pbuf *p)
     int len = p->tot_len;
     if (len < 60) { memset(f + len, 0, 60 - len); len = 60; }   /* minimum frame */
     tx_all++;
-    if (eth_send(f, len) < 0) { tx_err++; return ERR_IF; }
+    if (link_send(f, len) < 0) { tx_err++; return ERR_IF; }
     return ERR_OK;
 }
 
@@ -82,7 +82,7 @@ static err_t nif_init(struct netif *n)
     n->linkoutput = link_out;
     n->mtu = 1500;
     n->hwaddr_len = 6;
-    memcpy(n->hwaddr, eth_mac(), 6);
+    memcpy(n->hwaddr, link_mac(), 6);
     n->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP | NETIF_FLAG_ETHERNET;
     netif_set_hostname(n, net_name());
     return ERR_OK;
@@ -251,10 +251,19 @@ static void ntp_tick(void)
 void ip_poll(int notify)
 {
     if (!started) {
-        if (!eth_present() || eth_error(0, 0)) return;
+        if (!link_present()) return;
         start();
     }
-    int up = eth_present() && !eth_error(0, 0) && eth_link_cached() > 0;
+    /* Ethernet <-> WiFi: the other MAC address, so ask DHCP again */
+    const u8 *mac = link_mac();
+    if (memcmp_n(nif.hwaddr, mac, 6)) {
+        memcpy(nif.hwaddr, mac, 6);
+        netif_set_link_down(&nif);
+        etharp_cleanup_netif(&nif);
+        if (use_dhcp) { dhcp_release_and_stop(&nif); dhcp_start(&nif); }
+        if (notify) { con_color(COL_CYAN); kprintf("\n[NET] now on %s\n", link_name()); con_color(COL_DEFAULT); }
+    }
+    int up = link_up();
     if (up && !netif_is_link_up(&nif)) netif_set_link_up(&nif);
     if (!up && netif_is_link_up(&nif)) netif_set_link_down(&nif);
     sys_check_timeouts();
@@ -288,7 +297,8 @@ static int run_ms(u32 ms)
 static int need_net(void)
 {
     if (started) return 1;
-    if (!eth_present()) kprintf("no Ethernet chip found\n");
+    if (!link_present()) kprintf("no network: no Ethernet chip, WiFi not started ('wifi join <network> <password>')\n");
+    else if (!eth_present()) kprintf("network not started yet (WiFi: 'wifi')\n");
     else kprintf("network not started (Ethernet init failed - see 'net')\n");
     return 0;
 }
@@ -332,7 +342,8 @@ static void ip_cmd_l(int argc, char **argv)
     }
     const ip_addr_t *dns = dns_getserver(0);
     kprintf("host:    %s\n", net_name());
-    kprintf("link:    %s\n", netif_is_link_up(&nif) ? "up" : "down (cable?)");
+    if (link_wifi()) kprintf("link:    WiFi %s, %s\n", wifi_ssid(), netif_is_link_up(&nif) ? "up" : "not connected");
+    else kprintf("link:    Ethernet, %s\n", netif_is_link_up(&nif) ? "up" : "down (cable?)");
     kprintf("address: ");
     if (ip4_addr_isany_val(*netif_ip4_addr(&nif))) kprintf(use_dhcp ? "none yet (waiting for DHCP)" : "none");
     else { put_ip(netif_ip4_addr(&nif)); kprintf(" / "); put_ip(netif_ip4_netmask(&nif)); }

@@ -2,7 +2,7 @@
 #include "usb.h"
 #include "sd.h"
 
-#define VERSION "0.31"
+#define VERSION "0.33"
 
 const char *os_version(void) { return VERSION; }
 
@@ -102,6 +102,7 @@ void kernel_main(void)
         con_puts("SD card: ");
         if (sde) sd_print_fail(sde); else con_puts("no FAT16/FAT32 partition\n");
     }
+    wifi_boot();                         /* /WIFI.TXT: start the WiFi chip and join (core 0, before core 1) */
     net_name();                          /* /NAME.TXT and /IP.TXT are read here, on core 0 */
     clock_prepare();                     /* /TIME.TXT */
     ip_prepare();
@@ -117,6 +118,8 @@ void kernel_main(void)
             (u32)(ram_end >> 20), (u32)(timer_us() / 1000));
     con_puts("  Type 'help' for a list of commands.\n\n");
     img_splash_end();                    /* the picture stays at least 2.5 s (a key ends it) */
+    { u64 end = timer_us() + 20000;      /* what came in during boot (noise, keyboard junk) is dropped */
+      while (timer_us() < end) con_trygetc(); }
     app_autostart();
 
     shell_run();
