@@ -331,7 +331,7 @@ The chip needs its firmware on the card in `/FIRMWARE` (files from Raspberry Pi 
 `.clm_blob` (Pi 3B; the newer firmware does not switch the radio on without the `.clm_blob`), `brcmfmac43436-sdio.bin` + `.txt` + `.clm_blob` (Zero 2 W), `brcmfmac43455-sdio.bin` +
 `.txt` + `.clm_blob` (Pi 3B+). They are not in this repository (Cypress / Synaptics licenses).
 WiFi needs the SD card on SDHOST (see the SD card section). The scan works on the Pi 3B;
-joining is new in 0.33 and not tested on a board yet.
+joining works too (tested on the Pi 3B; the Pi 3B+ and the Zero 2 W are not tested yet).
 
 ### Date and time (NTP)
 

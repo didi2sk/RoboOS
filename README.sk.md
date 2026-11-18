@@ -332,8 +332,8 @@ alebo ich stiahne `tools/getwifi.sh`): `brcmfmac43430-sdio.bin` + `.txt` + `.clm
 firmvér bez `.clm_blob` nezapne rádio),
 `brcmfmac43436-sdio.bin` + `.txt` + `.clm_blob` (Zero 2 W), `brcmfmac43455-sdio.bin` + `.txt` +
 `.clm_blob` (Pi 3B+). V tomto repozitári nie sú (licencie Cypress / Synaptics). WiFi potrebuje
-SD kartu na SDHOST (pozri časť o SD karte). Scan na Pi 3B funguje; pripojenie je nové v 0.33 a na
-doske ešte nebolo vyskúšané.
+SD kartu na SDHOST (pozri časť o SD karte). Scan na Pi 3B funguje; pripojenie tiež funguje (vyskúšané na Pi 3B; Pi 3B+ a
+Zero 2 W ešte nie).
 
 ### Dátum a čas (NTP)
 
