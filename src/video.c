@@ -231,6 +231,7 @@ int video_play(const char *path, int info)
     busy = 0; shown = dropped = 0; target = 0;
     fb_hold(1);
     clear_pages();
+    sound_exclusive(1);
 
     int result = 0, paused = 0;
     u64 t0 = timer_us(), last = t0, paused_us = 0;
@@ -263,6 +264,7 @@ int video_play(const char *path, int info)
         if (read_err) { err = "read error"; result = -4; break; }
     }
     finish_frame();
+    sound_exclusive(0);
     u64 played = timer_us() - t0 - paused_us;
     if (sound_on) audio_close(result != 0);
     if (pages > 1) fb_show_page(0);

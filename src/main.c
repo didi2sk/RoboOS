@@ -2,7 +2,7 @@
 #include "usb.h"
 #include "sd.h"
 
-#define VERSION "0.23"
+#define VERSION "0.24"
 
 const char *os_version(void) { return VERSION; }
 
@@ -100,6 +100,7 @@ void kernel_main(void)
     }
     net_name();                          /* /NAME.TXT and /IP.TXT are read here, on core 0 */
     ip_prepare();
+    api_sound_scan();                    /* /SOUNDS for the JSON API, before core 1 starts */
     int io = smp_start_io();             /* core 1 takes over USB + network */
     status(io);
     if (io) con_puts("Core 1: USB + network\n");

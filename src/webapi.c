@@ -12,10 +12,17 @@
  *                               {"pin":4,"mode":"in","pull":"up"}  modes in/out, pull up/down/off
  *                               [{...},{...}] several at once
  *   POST /api/reboot            answers, then reboots in 0.5 s
+ *   GET  /api/sound             what plays, the last result, the files in /SOUNDS
+ *   POST /api/sound             {"file":"bell.wav","out":"jack"}   a WAV from /SOUNDS; out = jack, gpio,
+ *                               i2s (also "dac" / "device"), or none = the current output; "volume":0-100
+ *                               {"tone":880,"ms":500}   a tone      {"stop":true}   stop it
+ *                               (core 0 plays it - the SD card is core 0 only - while it waits in the
+ *                               shell, BASIC or a program; the answer comes at once: 202 queued)
  *
  * Runs on the I/O core (from the lwIP callbacks in ip.c); no lwIP here.
  */
 #include "kernel.h"
+#include "sd.h"
 
 static char token[64];
 static u64 reboot_at;
@@ -68,7 +75,7 @@ static void head(int code)
     put("HTTP/1.0 ");
     put_i(code);
     put(code == 200 ? " OK" : code == 400 ? " Bad Request" : code == 401 ? " Unauthorized" :
-        code == 403 ? " Forbidden" : code == 404 ? " Not Found" : code == 405 ? " Method Not Allowed" : " Error");
+        code == 202 ? " Accepted" : code == 403 ? " Forbidden" : code == 404 ? " Not Found" : code == 405 ? " Method Not Allowed" : " Error");
     put("\r\nContent-Type: application/json\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n");
     if (code == 401) put("WWW-Authenticate: Bearer\r\n");
     put("\r\n");
@@ -215,6 +222,176 @@ static int post_gpio(const char *body, int blen)
     return olen;
 }
 
+/* ---------------- sound: queued on core 1, played on core 0 ---------------- */
+
+#define SND_DIR "/SOUNDS"
+static const char *const out_names[3] = { "jack", "gpio", "i2s" };
+
+struct snd_req { char file[48]; int out, volume, tone, ms, stop; };
+static struct snd_req req;                 /* the newest request (snd_lock) */
+static volatile u32 req_seq, done_seq;
+static volatile int snd_stop;
+static int snd_lock;
+static char playing[48], last[64] = "nothing played yet";
+static char files[32][24];
+static int nfiles;
+
+static void slock(void)   { while (__atomic_test_and_set(&snd_lock, __ATOMIC_ACQUIRE)) ; }
+static void sunlock(void) { __atomic_clear(&snd_lock, __ATOMIC_RELEASE); }
+static void scopy(char *d, const char *s, int max) { int i = 0; for (; s && s[i] && i < max - 1; i++) d[i] = s[i]; d[i] = 0; }
+
+static char scan[32][24];
+static int nscan;
+static int list_cb(const struct fat_dirent *e, void *ctx)
+{
+    (void)ctx;
+    if (!e->is_dir && nscan < 32) scopy(scan[nscan++], e->name, sizeof(scan[0]));
+    return 0;
+}
+
+static volatile int cur_out;               /* the current output, kept by core 0 for core 1 */
+
+/* core 0 (boot, after each sound): the file list and the output for GET /api/sound */
+void api_sound_scan(void)
+{
+    if (smp_core() != 0) return;
+    cur_out = sound_output_mode();
+    if (!fat_mounted()) return;
+    nscan = 0;
+    fat_list(SND_DIR, list_cb, 0);
+    slock();
+    for (int i = 0; i < nscan; i++) scopy(files[i], scan[i], sizeof(files[0]));
+    nfiles = nscan;
+    sunlock();
+}
+
+/* while a WAV plays: stop on {"stop":true} or when a newer request comes */
+static int snd_idle(void) { return snd_stop || req_seq != done_seq; }
+
+static int restore_out = -1;               /* a tone on another output: switch back afterwards */
+static u64 restore_at;
+
+void api_sound_poll(void)
+{
+    static int busy;
+    if (busy || smp_core() != 0 || io_held() || sound_is_exclusive()) return;
+    if (req_seq == done_seq) {
+        cur_out = sound_output_mode();
+        if (restore_out >= 0 && timer_us() >= restore_at) { sound_stop(); sound_use(restore_out); restore_out = -1; }
+        return;
+    }
+    struct snd_req r;
+    slock(); r = req; done_seq = req_seq; snd_stop = 0; sunlock();
+    busy = 1;
+    if (restore_out >= 0) { sound_stop(); sound_use(restore_out); restore_out = -1; }
+    if (r.stop) {
+        sound_stop();
+        slock(); scopy(last, "stopped", sizeof(last)); sunlock();
+        busy = 0;
+        return;
+    }
+    int prev = sound_output_mode();
+    if (r.volume >= 0) sound_volume(r.volume);
+    if (r.out >= 0 && r.out != prev) sound_use(r.out);
+    if (r.file[0]) {
+        char path[64];
+        scopy(path, SND_DIR "/", sizeof(path));
+        scopy(path + 8, r.file, (int)sizeof(path) - 8);
+        slock(); scopy(playing, r.file, sizeof(playing)); sunlock();
+        kprintf("\n[API] sound %s on %s\n", path, out_names[sound_output_mode()]);
+        int e = sound_wav(path, snd_idle);
+        slock();
+        playing[0] = 0;
+        if (e < 0) {
+            scopy(last, r.file, sizeof(last));
+            int k = (int)strlen(last);
+            scopy(last + k, ": ", (int)sizeof(last) - k);
+            k = (int)strlen(last);
+            scopy(last + k, i2s_wav_error(e), (int)sizeof(last) - k);
+        }
+        else scopy(last, snd_stop ? "stopped" : e == 1 ? "interrupted" : "ok", sizeof(last));
+        sunlock();
+        if (sound_output_mode() != prev) sound_use(prev);
+        api_sound_scan();
+    } else if (r.tone) {
+        int ms = r.ms > 0 ? r.ms : 500;
+        sound_tone(r.tone, ms);
+        slock(); scopy(last, "tone", sizeof(last)); sunlock();
+        if (sound_output_mode() != prev) { restore_out = prev; restore_at = timer_us() + (u64)ms * 1000 + 50000; }
+    }
+    busy = 0;
+}
+
+static int post_sound(const char *body, int blen)
+{
+    struct snd_req r = { "", -1, -1, 0, 0, 0 };
+    char key[16], sv[48];
+    long n = 0;
+    jp = body; jend = body + blen; jerr = 0;
+    if (!eat('{')) return fail(400, "expected an object {...}");
+    int empty = eat('}');
+    if (!empty) do {
+        if (value(&n, key, sizeof(key)) != J_STR) return fail(400, jerr ? jerr : "expected a key");
+        if (!eat(':')) return fail(400, "expected ':'");
+        int k = value(&n, sv, sizeof(sv));
+        if (k == J_NONE) return fail(400, jerr);
+        if (!strcmp(key, "file")) {
+            if (k != J_STR || !sv[0]) return fail(400, "file: a name in " SND_DIR);
+            for (int i = 0; sv[i]; i++)
+                if (sv[i] == '/' || sv[i] == '\\' || (u8)sv[i] < 32 || (sv[i] == '.' && sv[i + 1] == '.'))
+                    return fail(400, "file: a plain name, no folders");
+            scopy(r.file, sv, sizeof(r.file));
+        } else if (!strcmp(key, "out")) {
+            if (k != J_STR) return fail(400, "out: jack, gpio or i2s");
+            if (!strcmp(sv, "jack")) r.out = 0;
+            else if (!strcmp(sv, "gpio")) r.out = 1;
+            else if (!strcmp(sv, "i2s") || !strcmp(sv, "dac") || !strcmp(sv, "device")) r.out = 2;
+            else return fail(400, "out: jack, gpio or i2s");
+        } else if (!strcmp(key, "volume")) {
+            if (k != J_NUM || n < 0 || n > 100) return fail(400, "volume: 0-100");
+            r.volume = (int)n;
+        } else if (!strcmp(key, "tone")) {
+            if (k != J_NUM || n < 20 || n > 20000) return fail(400, "tone: 20-20000 Hz");
+            r.tone = (int)n;
+        } else if (!strcmp(key, "ms")) {
+            if (k != J_NUM || n < 1 || n > 60000) return fail(400, "ms: 1-60000");
+            r.ms = (int)n;
+        } else if (!strcmp(key, "stop")) {
+            r.stop = k == J_TRUE || (k == J_NUM && n);
+        } else return fail(400, "unknown key (file, out, volume, tone, ms, stop)");
+    } while (eat(','));
+    if (!empty && !eat('}')) return fail(400, "expected ',' or '}'");
+    if (peek() != -1) return fail(400, "extra text after the JSON");
+    if (!r.stop && !r.file[0] && !r.tone) return fail(400, "give file, tone or stop");
+    slock();
+    req = r;
+    req_seq++;
+    if (r.stop) snd_stop = 1;
+    sunlock();
+    head(202);
+    put("{\"ok\":true,\"queued\":");
+    put_str(r.stop ? "stop" : r.file[0] ? r.file : "tone");
+    put(",\"out\":"); put_str(r.out >= 0 ? out_names[r.out] : "current");
+    put("}\n");
+    return olen;
+}
+
+static int get_sound(void)
+{
+    head(200);
+    slock();
+    put("{\"ok\":true,\"folder\":\"" SND_DIR "\",\"playing\":");
+    if (playing[0]) put_str(playing); else put("null");
+    put(",\"last\":"); put_str(last);
+    put(",\"out\":"); put_str(out_names[cur_out]);
+    put(",\"volume\":"); put_i(sound_get_volume());
+    put(",\"files\":[");
+    for (int i = 0; i < nfiles; i++) { if (i) put(","); put_str(files[i]); }
+    put("]}\n");
+    sunlock();
+    return olen;
+}
+
 /* ---------------- requests ---------------- */
 
 static int same_token(const char *a, int alen)
@@ -278,6 +455,11 @@ int api_handle(const char *method, const char *path, const char *auth, const cha
         put("{\"ok\":true,\"gpio\":"); put_pin(p); put("}\n");
         return olen;
     }
+    if (!strcmp(path, "/api/sound")) {
+        if (post) return post_sound(body, blen);
+        if (!get) return fail(405, "use GET or POST");
+        return get_sound();
+    }
     if (!strcmp(path, "/api/reboot")) {
         if (!post) return fail(405, "use POST");
         kprintf("\n[API] reboot asked by %s\n", from);
@@ -286,5 +468,5 @@ int api_handle(const char *method, const char *path, const char *auth, const cha
         put("{\"ok\":true,\"rebooting\":true}\n");
         return olen;
     }
-    return fail(404, "unknown: GET /api/status, GET|POST /api/gpio, GET /api/gpio/<pin>, POST /api/reboot");
+    return fail(404, "unknown: GET /api/status, GET|POST /api/gpio, GET /api/gpio/<pin>, GET|POST /api/sound, POST /api/reboot");
 }
