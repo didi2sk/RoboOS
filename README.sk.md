@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.20**
+Aktuálna verzia: **0.21**
 
 ## Podporované dosky
 
@@ -255,8 +255,36 @@ reply from 192.168.1.1: seq=1 ttl=64 time=0.9 ms
   `ip dhcp` vráti DHCP. Voľba sa uloží do `/IP.TXT` na SD karte.
 - `ping <adresa alebo meno> [počet]` - mená sa prekladajú cez DNS.
 - `http on` spustí malú webovú stránku s menom dosky, verziou, dobou behu a teplotou
-  CPU: otvor `http://<adresa>/` v prehliadači. `http off` ju vypne.
+  CPU: otvor `http://<adresa>/` v prehliadači. `http off` ju vypne. Voľba sa uloží do
+  `/HTTP.TXT`, takže stránka (aj API nižšie) sa po reštarte spustí sama.
 - Len IPv4.
+
+### JSON API: piny a reštart cez sieť
+
+Keď je nastavený token (`http token <tajne>`, 8-63 znakov, uloží sa do `/HTTP.TXT`),
+webový server odpovedá aj na JSON požiadavky pod `/api/`. Každá požiadavka potrebuje
+hlavičku `Authorization: Bearer <tajne>`; bez nej príde 401, bez nastaveného tokenu je API
+vypnuté (403). `http token` ukáže token, `http token off` API vypne.
+
+| Požiadavka | Čo robí |
+|------------|---------|
+| `GET /api/status` | meno, doska, verzia, adresa, doba behu, teplota CPU (v tisícinách stupňa) |
+| `GET /api/gpio` | všetky piny 0-27: `{"pin":17,"mode":"out","value":1}` ... |
+| `GET /api/gpio/17` | jeden pin |
+| `POST /api/gpio` | `{"pin":17,"value":1}` - nastaví pin (stane sa výstupom); `value` 0, 1, true, false alebo `"toggle"`; `{"pin":4,"mode":"in","pull":"up"}` - vstup s pull-upom (`pull` up/down/off); zoznam `[{...},{...}]` nastaví viac pinov (najprv sa skontrolujú všetky, potom sa nastavia) |
+| `POST /api/reboot` | odpovie `{"ok":true,"rebooting":true}` a o 0,5 s reštartuje |
+
+```
+curl -H "Authorization: Bearer tajne123" http://192.168.1.50/api/status
+curl -H "Authorization: Bearer tajne123" -d '{"pin":17,"value":1}' http://192.168.1.50/api/gpio
+curl -H "Authorization: Bearer tajne123" -X POST http://192.168.1.50/api/reboot
+```
+
+Chyby prídu ako `{"ok":false,"error":"..."}` s kódom 400 / 401 / 403 / 404 / 405. API môže
+volať aj webová stránka z inej adresy (CORS je povolený). Doska vypíše
+`[API] reboot asked by <adresa>` a `[API] wrong or missing token from <adresa>`.
+**HTTP nie je šifrované**: kto vidí do tvojej siete, prečíta aj token, takže API používaj
+len vo vlastnej sieti, nie z internetu. Piny 14/15 sú UART.
 
 ### TCP a UDP v programoch
 
@@ -413,7 +441,8 @@ Systém komunikuje po anglicky.
 | `net test [s]`, `net loop on\|off` | test rámcov, loopback |
 | `ip` | IP adresa, `ip dhcp`, `ip set <adresa> [maska] [brána]` |
 | `ping <adresa\|meno> [n]` | ping na iný počítač |
-| `http on\|off` | malá webová stránka s údajmi o doske |
+| `http on\|off` | malá webová stránka s údajmi o doske (uloží sa) |
+| `http token [<tajne>\|off]` | token pre JSON API (Bearer), pozri časť o JSON API |
 | `ls [cesta]` | obsah priečinka na SD karte (bez cesty: aktuálneho) |
 | `cd [priečinok]` | zmena priečinka (`..` = vyššie, `/` = navrch, bez argumentu = navrch) |
 | `pwd` | ukáže aktuálny priečinok |
@@ -468,6 +497,7 @@ v starších verziách (hlási to riadok pri štarte); bez pomocníkov prepočí
 | `src/eth.c` | Ethernet: LAN9514 (3B) a LAN7515 (3B+) cez USB bulk endpointy, surové rámce |
 | `src/net.c` | správy medzi RoboOS doskami (mená, who, odoslanie s potvrdením, schránka) |
 | `src/ip.c` | TCP/IP: port lwIP, sieťové rozhranie, DHCP, `ip`, `ping`, `http`, sockety pre programy |
+| `src/webapi.c` | JSON API za `http`: Bearer token, GPIO, stav, reštart |
 | `lwip/` | TCP/IP stack lwIP 2.2.1 (bez úprav, licencia BSD) |
 | `src/kbd.c` | HID klávesnica: boot protocol, preklad scan kódov, autorepeat |
 | `src/sd.c` | ovládač SD karty (Arasan SDHCI, GPIO48-53 ALT3), čítanie aj zápis |

@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.20**
+Current version: **0.21**
 
 ## Supported boards
 
@@ -254,8 +254,36 @@ reply from 192.168.1.1: seq=1 ttl=64 time=0.9 ms
   `ip dhcp` goes back to DHCP. The choice is saved in `/IP.TXT` on the SD card.
 - `ping <address or name> [count]` - names are looked up with DNS.
 - `http on` starts a small web page with the board's name, version, uptime and CPU
-  temperature: open `http://<address>/` in a browser. `http off` stops it.
+  temperature: open `http://<address>/` in a browser. `http off` stops it. The choice is
+  saved in `/HTTP.TXT`, so the page (and the API below) comes back after a reboot.
 - IPv4 only.
+
+### JSON API: pins and reboot over the network
+
+With a token set (`http token <secret>`, 8-63 characters, saved in `/HTTP.TXT`), the web
+server also answers JSON requests under `/api/`. Every request needs the header
+`Authorization: Bearer <secret>`; without it the answer is 401, without any token set
+the API is off (403). `http token` shows the token, `http token off` turns the API off.
+
+| Request | What it does |
+|---------|--------------|
+| `GET /api/status` | name, board, version, address, uptime, CPU temperature (thousandths of a degree) |
+| `GET /api/gpio` | all pins 0-27: `{"pin":17,"mode":"out","value":1}` ... |
+| `GET /api/gpio/17` | one pin |
+| `POST /api/gpio` | `{"pin":17,"value":1}` - sets a pin (it becomes an output); `value` 0, 1, true, false or `"toggle"`; `{"pin":4,"mode":"in","pull":"up"}` - input with a pull-up (`pull` up/down/off); a list `[{...},{...}]` sets several pins (all are checked first, then set) |
+| `POST /api/reboot` | answers `{"ok":true,"rebooting":true}` and reboots after 0.5 s |
+
+```
+curl -H "Authorization: Bearer secret123" http://192.168.1.50/api/status
+curl -H "Authorization: Bearer secret123" -d '{"pin":17,"value":1}' http://192.168.1.50/api/gpio
+curl -H "Authorization: Bearer secret123" -X POST http://192.168.1.50/api/reboot
+```
+
+Errors come back as `{"ok":false,"error":"..."}` with 400 / 401 / 403 / 404 / 405. A web page
+from another address may call the API too (CORS is allowed). The board prints
+`[API] reboot asked by <address>` and `[API] wrong or missing token from <address>`.
+**HTTP is not encrypted**: anybody who can watch your LAN can read the token, so use the
+API only on your own network, not from the internet. Pins 14/15 are the UART.
 
 ### TCP and UDP in programs
 
@@ -411,7 +439,8 @@ If you connect after boot, press Enter.
 | `net test [s]`, `net loop on\|off` | frame test, loopback |
 | `ip` | IP address, `ip dhcp`, `ip set <address> [mask] [gateway]` |
 | `ping <address\|name> [n]` | ping another computer |
-| `http on\|off` | small web page with board info |
+| `http on\|off` | small web page with board info (saved) |
+| `http token [<secret>\|off]` | JSON API token (Bearer), see the JSON API section |
 | `ls [path]` | list a directory on the SD card (default: the current one) |
 | `cd [dir]` | change directory (`..` = up, `/` = top, no argument = top) |
 | `pwd` | show the current directory |
@@ -467,6 +496,7 @@ converted on core 0.
 | `src/eth.c` | Ethernet: LAN9514 (3B) and LAN7515 (3B+) over USB bulk endpoints, raw frames |
 | `src/net.c` | messages between RoboOS boards (names, who, send with confirmation, inbox) |
 | `src/ip.c` | TCP/IP: lwIP port, network interface, DHCP, `ip`, `ping`, `http`, sockets for programs |
+| `src/webapi.c` | JSON API behind `http`: Bearer token, GPIO, status, reboot |
 | `lwip/` | lwIP 2.2.1 TCP/IP stack (unmodified, BSD license) |
 | `src/kbd.c` | HID keyboard: boot protocol, scan code translation, autorepeat |
 | `src/sd.c` | SD card driver (Arasan SDHCI, GPIO48-53 ALT3), read + write |

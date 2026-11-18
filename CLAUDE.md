@@ -22,7 +22,7 @@ Automated QEMU testing (no display): `tools/qemu_test.py kernel8.img "cmd1" "cmd
 - verify FAT writes: `dd if=sd.img of=p.img bs=512 skip=2048; fsck.fat -n p.img`
   ("Free cluster summary uninitialized" is expected - we invalidate FSInfo on purpose)
 
-Network in QEMU: `tools/qemu_net_test.py kernel8.img sd.img "http on" "@get5" "ping 10.0.2.2"` - QEMU
+Network in QEMU: `tools/qemu_net_test.py kernel8.img sd.img "http on" "@get5" "ping 10.0.2.2"` (`"@sh:curl -s http://127.0.0.1:18080/api/status -H 'Authorization: Bearer x'"` runs a host command) - QEMU
 `usb-net` (its 2nd configuration is CDC-ECM, which `eth.c` drives) on user networking: DHCP 10.0.2.15,
 gateway 10.0.2.2, board port 80 forwarded to host 127.0.0.1:18080. This sandbox has no DNS: to test names,
 run a tiny DNS responder on host 127.0.0.1:53 and use `ip set 10.0.2.20 255.255.255.0 10.0.2.2`.
@@ -43,6 +43,7 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
   `net speed 100` is the fallback. Traffic through the LAN7515 (frames, DHCP) not yet confirmed either.
 - Not yet verified on hardware (v0.20): `screen` resolutions + `/SCREEN.TXT`, the two framebuffer pages
   (virtual height 2h, offset tag 0x48009), worker cores 2-3, `video` (decode speed, sound stream).
+- Not yet verified on hardware (v0.21): the JSON API (only QEMU + curl).
 - Not yet verified on hardware: RoboOS messages between two boards (v0.9, tested only with `net loop on`
   in QEMU), program loader, BASIC, line editor / full-screen editor,
   board detection, Zero 2 W (ACT LED GPIO29 active-low is an assumption).
@@ -65,6 +66,7 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
 | `src/eth.c` | Ethernet over USB: LAN9514 (0424:ec00, 3B), LAN7515/LAN7800 (0424:7800, 3B+) and any CDC-ECM adapter (QEMU usb-net); vendor control requests 0xA0/0xA1 for registers, bulk IN/OUT for frames (`usb_bulk`), polled; `link_tick()` follows the link once a second (LAN78xx: MAC speed/duplex only while TX/RX are off, started on link-up) |
 | `src/net.c` | RoboOS messages on raw frames (EtherType 0x88B5): names (`/NAME.TXT`), WHO/HERE, MSG with ACK + 3 tries, inbox of 8; polled every 5 ms from `con_trygetc()`; `net loop on` = loopback for QEMU tests |
 | `src/ip.c` | sockets for programs (handles 1..8, 4 KB rx ring each, TCP flow control by refusing data, UDP records len/addr/port; blocking calls take an `idle()` that polls the network: app.c `poll_input`, BASIC `check_break`; closed when a program / BASIC run ends); TCP/IP glue for lwIP 2.2.1 (`lwip/`, unmodified, NO_SYS raw API; port in `src/lwip_port/`: lwipopts.h, arch/cc.h, tiny string/stdlib/stdio shims): netif -> `eth_send`, non-0x88B5 frames from `net.c` -> lwIP, `sys_check_timeouts()` from `net_poll`; DHCP (hostname = board name), `/IP.TXT` static config, `ip`, `ping` (raw ICMP, DNS), `http on` (one page) |
+| `src/webapi.c` | v0.21 JSON API behind `http on` (runs on core 1 from lwIP callbacks, no lwIP inside): `Authorization: Bearer <token>` (constant-time compare; no token = 403), GET /api/status, GET /api/gpio[/n], POST /api/gpio (object or list, all validated before any pin changes, value -> output), POST /api/reboot (`sys_reboot()` from `api_poll()` in ip_poll 0.5 s later). ip.c collects each request (4 connections x 2 KB, headers + Content-Length, 5 s idle timeout, CORS OPTIONS). `/HTTP.TXT` = "on|off [token]", read in ip_prepare on core 0, `http on` autostarts in start() |
 | `src/kbd.c` | HID boot keyboard, US layout, keypad, LEDs, autorepeat, runtime method lock |
 | `src/sd.c` / `src/fat.c` | Arasan SDHCI (GPIO48-53 ALT3), PIO single-block read/write; FAT16/32 with LFN read, 8.3 write, `fat_mkdir` (8.3, mixed case stored in capitals, `.`/`..` with `..` = 0 for the root), `fat_remove` (file or empty dir, also marks its LFN entries 0xE5 so fsck stays clean); shell `mkdir`, `rm` (refuses the cwd and its parents, boot files in / need `-f`), BASIC MKDIR/RMDIR/KILL |
 | `src/app.c` | loads `.bin` at 0x01000000, API table (`sdk/robos.h`), Ctrl+C via `ctx_save/ctx_restore` (`src/ctx.S`), autostart `/RUN` |

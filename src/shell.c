@@ -164,18 +164,12 @@ static void cmd_mem(int argc, char **argv)
     }
 }
 
-#define PM_RSTC     (MMIO_BASE + 0x10001C)
-#define PM_WDOG     (MMIO_BASE + 0x100024)
-#define PM_PASSWORD 0x5A000000
-
 static void cmd_reboot(int argc, char **argv)
 {
     (void)argc; (void)argv;
     kprintf("rebooting...\n");
     delay_us(50000);
-    mmio_write(PM_WDOG, PM_PASSWORD | 10);
-    mmio_write(PM_RSTC, PM_PASSWORD | (mmio_read(PM_RSTC) & ~0x30u) | 0x20);
-    for (;;) __asm__ volatile("wfe");
+    sys_reboot();
 }
 
 static void cmd_halt(int argc, char **argv)
