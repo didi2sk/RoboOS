@@ -69,6 +69,8 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
   (both lists): the radio never came up. v0.31: firmware 7.45.98 (Cypress) needs its CLM blob
   (brcmfmac43430-sdio.clm_blob = cypress/cyfmac43430-sdio.clm_blob) loaded via "clmload" before UP - 9front's
   table had none for 43430 rev 1 (old firmware had CLM built in); wl_init now prints every failing step and UP.
+  v0.31 on the 3B: **`wifi scan` WORKS** - "CLM loaded", 21 networks with channel / dBm / WPA2 / BSSID. Next: join.
+  (Owner tip: the card must be re-flashed AND the board rebooted - `wifi init` does not reload the kernel.)
 - Not yet verified on hardware: RoboOS messages between two boards (v0.9, tested only with `net loop on`
   in QEMU), program loader, BASIC, line editor / full-screen editor,
   board detection, Zero 2 W (ACT LED GPIO29 active-low is an assumption).
@@ -147,6 +149,9 @@ Keys: `con_getkey()` decodes escape sequences into `K_UP`... (kbd.c sends the sa
 - `fat_read` reads whole sectors straight into the caller's buffer only if it is 4-byte aligned (sd_read stores
   u32 words); pl_mpeg's ring buffer hands odd addresses.
 - In BASIC, compute an array index (which may allocate) before reading `v->arr` (evaluation-order bug fixed once).
+- **Floating UART RX**: GPIO15 had no pull - with no USB-TTL cable the noise became random characters at boot
+  ("kk" before the first command). v0.32: pull-up on RX, DR error bits (FE/PE/BE/OE) dropped, a fresh keyboard's
+  reports ignored for 300 ms, and input that arrived during boot is flushed before autostart / the shell.
 - The font covers ASCII 32-126 only - keep all on-screen strings ASCII.
 - Keep exceptions inside programs recoverable: exception stack is separate so `app_crashed()` can longjmp back.
 

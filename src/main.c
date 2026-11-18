@@ -2,7 +2,7 @@
 #include "usb.h"
 #include "sd.h"
 
-#define VERSION "0.31"
+#define VERSION "0.32"
 
 const char *os_version(void) { return VERSION; }
 
@@ -117,6 +117,8 @@ void kernel_main(void)
             (u32)(ram_end >> 20), (u32)(timer_us() / 1000));
     con_puts("  Type 'help' for a list of commands.\n\n");
     img_splash_end();                    /* the picture stays at least 2.5 s (a key ends it) */
+    { u64 end = timer_us() + 20000;      /* what came in during boot (noise, keyboard junk) is dropped */
+      while (timer_us() < end) con_trygetc(); }
     app_autostart();
 
     shell_run();

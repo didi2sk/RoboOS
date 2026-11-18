@@ -23,10 +23,18 @@ void uart_init(void)
     gpio_func(33, 0);
     gpio_func(14, 4);
     gpio_func(15, 4);
-    mmio_write(GPPUD, 0);                    /* no pull-up/down */
+    mmio_write(GPPUD, 0);                    /* TX: no pull-up/down */
     delay_cycles(150);
-    mmio_write(GPPUDCLK0, (1 << 14) | (1 << 15));
+    mmio_write(GPPUDCLK0, 1 << 14);
     delay_cycles(150);
+    mmio_write(GPPUDCLK0, 0);
+    /* RX: pull-up = the idle level of a serial line. Without it a pin with no
+     * cable floats and noise turns into random characters (seen at boot) */
+    mmio_write(GPPUD, 2);
+    delay_cycles(150);
+    mmio_write(GPPUDCLK0, 1 << 15);
+    delay_cycles(150);
+    mmio_write(GPPUD, 0);
     mmio_write(GPPUDCLK0, 0);
 
     mmio_write(UART0_ICR, 0x7FF);            /* clear interrupts */
@@ -51,5 +59,7 @@ int uart_has_char(void)
 char uart_getc(void)
 {
     while (mmio_read(UART0_FR) & 0x10) ;     /* RX FIFO empty */
-    return (char)(mmio_read(UART0_DR) & 0xFF);
+    u32 d = mmio_read(UART0_DR);
+    if (d & 0xF00) return 0;                 /* framing / parity / break / overrun: noise, not a key */
+    return (char)(d & 0xFF);
 }

@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.31**
+Current version: **0.32**
 
 ## Supported boards
 
@@ -323,7 +323,8 @@ The chip needs its firmware on the card in `/FIRMWARE` (files from Raspberry Pi 
 `/lib/firmware/brcm`, or `tools/getwifi.sh` downloads them): `brcmfmac43430-sdio.bin` + `.txt` +
 `.clm_blob` (Pi 3B; the newer firmware does not switch the radio on without the `.clm_blob`), `brcmfmac43436-sdio.bin` + `.txt` + `.clm_blob` (Zero 2 W), `brcmfmac43455-sdio.bin` +
 `.txt` + `.clm_blob` (Pi 3B+). They are not in this repository (Cypress / Synaptics licenses).
-WiFi needs the SD card on SDHOST (see the SD card section). Joining a network comes next.
+WiFi needs the SD card on SDHOST (see the SD card section). The scan works on the Pi 3B;
+joining a network comes next.
 
 ### Date and time (NTP)
 

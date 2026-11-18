@@ -6,6 +6,7 @@
 #include "usb.h"
 
 static struct usb_dev *kd;
+static u64 k_quiet;                /* ignore reports until then (just attached) */
 static u8  k_iface, k_ep, k_mps, k_pid, k_interval;
 static int k_use_getreport, k_errors;
 static u8  prev[8];
@@ -59,6 +60,7 @@ int kbd_attach(struct usb_dev *d, const u8 *cfg, int len)
         } else if (cfg[i + 1] == 5 && found && !kd) {        /* endpoint */
             if ((cfg[i + 2] & 0x80) && (cfg[i + 3] & 3) == 3) {
                 kd = d;
+                k_quiet = timer_us() + 300000;       /* the first reports may be junk */
                 k_iface = iface;
                 k_ep = cfg[i + 2] & 0xF;
                 k_mps = cfg[i + 4];
@@ -217,6 +219,7 @@ void kbd_poll(void)
     }
     k_errors = 0;
     if (n < 3) return;
+    if (now < k_quiet) return;                                   /* just attached: drop */
 
     int pressed = r[0] || r[2] || r[3];
     if (usb_debug && (pressed || k_lock)) trace(r, n, use_int ? 'I' : 'G');

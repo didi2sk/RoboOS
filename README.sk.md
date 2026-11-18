@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.31**
+Aktuálna verzia: **0.32**
 
 ## Podporované dosky
 
@@ -325,7 +325,7 @@ alebo ich stiahne `tools/getwifi.sh`): `brcmfmac43430-sdio.bin` + `.txt` + `.clm
 firmvér bez `.clm_blob` nezapne rádio),
 `brcmfmac43436-sdio.bin` + `.txt` + `.clm_blob` (Zero 2 W), `brcmfmac43455-sdio.bin` + `.txt` +
 `.clm_blob` (Pi 3B+). V tomto repozitári nie sú (licencie Cypress / Synaptics). WiFi potrebuje
-SD kartu na SDHOST (pozri časť o SD karte). Pripojenie k sieti príde ďalej.
+SD kartu na SDHOST (pozri časť o SD karte). Scan na Pi 3B funguje; pripojenie k sieti príde ďalej.
 
 ### Dátum a čas (NTP)
 

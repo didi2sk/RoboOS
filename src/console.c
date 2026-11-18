@@ -101,7 +101,10 @@ void kprintf(const char *fmt, ...)
 /* ---------------- input: UART + USB keyboard ---------------- */
 int con_trygetc(void)
 {
-    if (uart_has_char()) return (u8)uart_getc();
+    if (uart_has_char()) {
+        char c = uart_getc();
+        if (c) return (u8)c;                    /* 0 = noise on the line (framing error) */
+    }
     if (!io_core_active()) {                    /* no I/O core: poll USB + network here */
         io_lock();
         io_poll_all();
