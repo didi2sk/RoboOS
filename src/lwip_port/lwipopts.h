@@ -15,9 +15,9 @@
 #define MEM_SIZE                    (96 * 1024)
 #define MEMP_NUM_PBUF               32
 #define MEMP_NUM_UDP_PCB            8
-#define MEMP_NUM_TCP_PCB            8
+#define MEMP_NUM_TCP_PCB            24   /* browsers keep several idle connections open */
 #define MEMP_NUM_TCP_PCB_LISTEN     4
-#define MEMP_NUM_TCP_SEG            32
+#define MEMP_NUM_TCP_SEG            48
 #define MEMP_NUM_SYS_TIMEOUT        12
 #define PBUF_POOL_SIZE              32
 
