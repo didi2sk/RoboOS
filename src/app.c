@@ -118,6 +118,13 @@ static int  a_image(const char *p, int x, int y, int w, int h)
     return img_draw(full, x, y, w, h, 0);
 }
 
+static int  a_video(const char *p)
+{
+    char full[PATH_MAX_LEN];
+    if (path_abs(p, full, sizeof(full))) return -1;
+    return video_play(full, 0);
+}
+
 static int a_temp(void)
 {
     u32 v[2] = { 0, 0 };
@@ -167,6 +174,8 @@ static const struct robos_api api_table = {
     .playWav = a_wav,
     .drawImage = a_image,
     .imageError = img_error,
+    .playVideo = a_video,
+    .videoError = video_error,
 };
 
 /* called from the exception handler: a crash inside a program ends the program */
@@ -184,7 +193,7 @@ static void sync_icache(u64 start, u64 len)
 {
     for (u64 a = start & ~63UL; a < start + len; a += 64)
         __asm__ volatile("dc cvau, %0" :: "r"(a) : "memory");
-    __asm__ volatile("dsb ish\n ic iallu\n dsb ish\n isb" ::: "memory");
+    __asm__ volatile("dsb ish\n ic ialluis\n dsb ish\n isb" ::: "memory");   /* all cores */
 }
 
 /* find the file: as given, in /RUN or /APPS, with or without .bin / .bas */

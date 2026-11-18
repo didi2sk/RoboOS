@@ -18,7 +18,7 @@ typedef unsigned long      size_t;
 
 #define APP_BASE    0x01000000UL
 #define APP_MAGIC   "ROBOAPP1"
-#define API_VERSION 6
+#define API_VERSION 7
 
 #define INPUT          0
 #define OUTPUT         1
@@ -86,6 +86,10 @@ struct robos_api {
      * the box w x h (0 = up to the screen edge); 0 = ok, < 0 = error (imageError() says why) */
     int      (*drawImage)(const char *path, int x, int y, int w, int h);
     const char *(*imageError)(void);
+    /* API version 7: video (.mpg = MPEG-1 video + MP2 sound) on the whole HDMI screen; waits
+     * until the end or a key (q / Enter / Ctrl+C): 0 = end, 1 = stopped, < 0 = error (videoError()) */
+    int      (*playVideo)(const char *path);
+    const char *(*videoError)(void);
 };
 
 extern const struct robos_api *api;
@@ -131,6 +135,8 @@ extern const struct robos_api *api;
 #define playWav(path)                   (api->playWav)(path)
 #define drawImage(p, x, y, w, h)        (api->drawImage)(p, x, y, w, h)
 #define imageError()                    (api->imageError)()
+#define playVideo(path)                 (api->playVideo)(path)
+#define videoError()                    (api->videoError)()
 
 void *memset(void *d, int c, size_t n);
 void *memcpy(void *d, const void *s, size_t n);

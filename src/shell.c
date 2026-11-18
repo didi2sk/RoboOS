@@ -61,7 +61,7 @@ static void cmd_info(int argc, char **argv)
     con_color(COL_CYAN); con_puts("System\n"); con_color(COL_DEFAULT);
     kprintf("  MMU/cache    %s\n", mmu_enabled() ? "enabled" : "disabled");
     if (io_core_active())
-        kprintf("  Cores        0: shell + programs, 1: USB + network (%u rounds), 2-3: idle\n", (u32)smp_io_loops());
+        kprintf("  Cores        0: shell + programs, 1: USB + network (%u rounds), 2-3: %d worker(s)\n", (u32)smp_io_loops(), smp_workers());
     else
         kprintf("  Cores        only core 0 is used (core 1 did not start)\n");
     if (fb_ready()) kprintf("  Display      %ux%u, 32 bpp\n", fb_width(), fb_height());
@@ -541,6 +541,37 @@ static void cmd_sound(int argc, char **argv)
     if (sound_output_mode() == 2 || i2s_segments()) i2s_status();
 }
 
+static void cmd_screen(int argc, char **argv)
+{
+    u32 nw, nh;
+    fb_native(&nw, &nh);
+    if (argc > 1) {
+        u32 w = 0, h = 0;
+        char save[24];
+        int n = 0;
+        if (!strcmp(argv[1], "auto")) {
+            for (const char *s = "auto"; *s; s++) save[n++] = *s;
+        } else {
+            const char *p = argv[1];
+            while (*p >= '0' && *p <= '9') w = w * 10 + (u32)(*p++ - '0');
+            if (*p == 'x' || *p == 'X') p++;
+            while (*p >= '0' && *p <= '9') h = h * 10 + (u32)(*p++ - '0');
+            if (*p || w < 320 || h < 200 || w > 2048 || h > 1280) {
+                need("screen [WIDTHxHEIGHT | auto]   (320x200 .. 2048x1280, auto = the monitor's own)");
+                return;
+            }
+            for (const char *s = argv[1]; *s && n < 20; s++) save[n++] = *s;
+        }
+        if (!fb_ready()) { kprintf("no HDMI screen\n"); return; }
+        if (!screen_set(w, h)) { kprintf("the firmware refused %s\n", argv[1]); screen_set(1024, 768); return; }
+        save[n++] = '\r'; save[n++] = '\n'; save[n] = 0;
+        if (fat_mounted()) fat_write_file("/SCREEN.TXT", save, (u32)n);
+    }
+    if (fb_ready()) kprintf("screen:  %ux%u pixels, %ux%u characters\n", fb_width(), fb_height(), fb_width() / 8, fb_height() / 16);
+    else            kprintf("screen:  no HDMI\n");
+    kprintf("monitor: %ux%u (screen auto)\n", nw, nh);
+}
+
 static void cmd_basic(int argc, char **argv)
 {
     basic_main(argc > 1 ? argv[1] : 0);
@@ -587,6 +618,7 @@ static const struct cmd cmds[] = {
     { "cd",     "[dir]",                "change directory (.. = up, / = top)", cmd_cd },
     { "pwd",    "",                     "show the current directory",      cmd_pwd    },
     { "view",   "[picture|dir]",        "show pictures (JPEG PNG BMP GIF)", view_cmd  },
+    { "video",  "<file.mpg>",           "play MPEG-1 video + MP2 sound",    video_cmd },
     { "mkdir",  "<dir>",                "make a directory",                cmd_mkdir  },
     { "rm",     "[-f] <file|dir>",      "delete a file or an empty directory", cmd_rm },
     { "cat",    "<file>",               "print a text file",               cmd_cat    },
@@ -598,6 +630,7 @@ static const struct cmd cmds[] = {
     { "sound",  "[volume|out|off]",     "sound: volume, out jack/gpio/i2s", cmd_sound },
     { "playwav", "<file>",              "play a WAV file",                 cmd_playwav },
     { "sd",     "[init]",               "SD card info / re-initialize",    cmd_sd     },
+    { "screen", "[WxH|auto]",           "screen resolution (saved)",       cmd_screen },
     { "clear",  "",                     "clear the screen",                cmd_clear  },
     { "reboot", "",                     "reboot via watchdog",             cmd_reboot },
     { "halt",   "",                     "halt the system",                 cmd_halt   },

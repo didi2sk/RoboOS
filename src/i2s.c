@@ -92,7 +92,7 @@ extern char __dma_start[];
 #define SEG(i)    ((volatile u32 *)(AREA + 0x400 + (i) * SEG_BYTES))
 #define BUS(p)    ((u32)(uintptr_t)(p) | 0xC0000000u)
 
-static int running, rate = 44100, volume = 50;
+static int running, rate = 44100, volume = 50, stream_on, st_n;
 enum { SINK_I2S = 1, SINK_PWM = 2 };
 static int sink, pwm_range;
 static int q_start, q_len;                     /* queued segments, oldest first */
@@ -316,7 +316,7 @@ static void pump(int wav)
             if (q_len) { restarts++; dma_start_at(q_start); cs = mmio_read(DMA_CS); }
         }
     }
-    if (wav_on && !wav) return;                            /* the WAV loop fills by itself */
+    if ((wav_on && !wav) || stream_on) return;            /* the WAV loop / the stream fills by itself */
     int target = wav_on ? AHEAD_WAV : AHEAD_TONE;
     int added = 0;
     while (q_len < target) {
@@ -414,10 +414,9 @@ int i2s_wav(const char *path, int (*idle)(void))
 
 /* WAV on the PWM (jack or GPIO18/19 - sound.c has set the pins); the PWM is
  * left switched off and its clock changed, the tone code sets them up again */
-int pwm_wav(const char *path, int (*idle)(void))
+/* the PWM as the DMA sink (the pins are set by sound.c) */
+static void pwm_open(int hz)
 {
-    struct fat_file probe;
-    if (fat_open(path, &probe) || probe.is_dir) return -1;
     if (running) i2s_stop();
     if (!sine[64]) make_sine();
     sink = SINK_PWM;
@@ -432,14 +431,17 @@ int pwm_wav(const char *path, int (*idle)(void))
     mmio_write(CM_PWMCTL, CM_PASSWD | CM_SRC_PLLD | CM_ENAB);
     end = timer_us() + 10000;
     while (!(mmio_read(CM_PWMCTL) & CM_BUSY) && timer_us() < end) ;
-    set_rate(44100);
+    set_rate(hz);
     mmio_write(PWM_CTL, 1u << 6);                                   /* clear the FIFO */
     delay_us(10);
     ring_init();
     mmio_write(PWM_DMAC, (1u << 31) | (7u << 8) | 7u);             /* DMA on, panic 7, DREQ 7 */
     mmio_write(PWM_CTL, (1u << 0) | (1u << 5) | (1u << 8) | (1u << 13));   /* PWEN + USEF, both */
     running = 1;
-    int r = wav_play(path, idle);
+}
+
+static void pwm_close(void)
+{
     dma_stop();
     mmio_write(PWM_CTL, 0);
     mmio_write(PWM_DMAC, 0);
@@ -447,7 +449,88 @@ int pwm_wav(const char *path, int (*idle)(void))
     sink = 0;
     wav_on = 0;
     rate = 44100;
+}
+
+int pwm_wav(const char *path, int (*idle)(void))
+{
+    struct fat_file probe;
+    if (fat_open(path, &probe) || probe.is_dir) return -1;
+    pwm_open(44100);
+    int r = wav_play(path, idle);
+    pwm_close();
     return r;
+}
+
+/* ---------------- a sound stream (video) ---------------- */
+
+/* start: on the I2S DAC if it is the output, else on the PWM (sound.c has set the pins) */
+int audio_open(int hz, int on_i2s)
+{
+    if (hz < 8000 || hz > 48000) return -3;
+    if (on_i2s) {
+        if (!running && i2s_start()) return -4;
+        gen_on = 0;
+        while (q_len) pump(0);
+        if (hz != rate) set_rate(hz);
+    } else {
+        pwm_open(hz);
+    }
+    stream_on = 1;
+    st_n = 0;
+    return 0;
+}
+
+static void commit(int i)
+{
+    CBS[i].next = 0;
+    __asm__ volatile("dsb sy" ::: "memory");
+    if (q_len) CBS[(i + NSEG - 1) % NSEG].next = BUS(&CBS[i]);
+    q_len++;
+    __asm__ volatile("dsb sy" ::: "memory");
+    if (!(mmio_read(DMA_CS) & DCS_ACTIVE)) dma_start_at(q_start);
+}
+
+/* stereo 16-bit frames into the ring; waits while it is full */
+void audio_write(const short *lr, int frames)
+{
+    while (frames > 0 && stream_on) {
+        pump(0);
+        if (q_len >= NSEG - 1) continue;                   /* full: the DMA drains it */
+        int i = (q_start + q_len) % NSEG;
+        volatile u32 *w = SEG(i);
+        while (frames > 0 && st_n < SEG_FRAMES) {
+            put(w, st_n++, lr[0] * volume / 100, lr[1] * volume / 100);
+            lr += 2;
+            frames--;
+        }
+        if (st_n == SEG_FRAMES) { commit(i); st_n = 0; }
+    }
+}
+
+/* how much is queued, in ms (for keeping the picture in step with the sound) */
+int audio_queued_ms(void)
+{
+    pump(0);
+    return (int)((long)(q_len * SEG_FRAMES + st_n) * 1000 / rate);
+}
+
+/* play what is left and stop; now = drop what is queued */
+void audio_close(int now)
+{
+    if (!stream_on) return;
+    if (!now && st_n) {                                    /* pad the last piece with silence */
+        int i = (q_start + q_len) % NSEG;
+        for (; st_n < SEG_FRAMES; st_n++) put(SEG(i), st_n, 0, 0);
+        commit(i);
+    }
+    if (!now) { u64 end = timer_us() + 1000000; while (q_len && timer_us() < end) pump(0); }
+    stream_on = 0;
+    st_n = 0;
+    if (sink == SINK_PWM) pwm_close();
+    else {
+        if (now) { dma_stop(); mmio_write(PCM_CS, mmio_read(PCM_CS) | CS_TXCLR); }
+        if (rate != 44100) set_rate(44100);
+    }
 }
 
 u32 i2s_segments(void) { return segments; }

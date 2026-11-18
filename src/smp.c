@@ -3,7 +3,8 @@
  * sound. Core 1 is the I/O core: it polls the USB controller all the time
  * (keyboard, hot-plug, Ethernet) and runs the network (RoboOS messages, lwIP
  * with its timers), so the network answers and keys arrive even while a
- * program computes. Cores 2 and 3 stay parked for now.
+ * program computes. Cores 2 and 3 are workers: core 0 hands them a function
+ * to run (smp_run / smp_wait), e.g. turning video frames into pixels.
  *
  * Shared things are guarded by locks:
  *   io lock      - the USB controller, Ethernet, lwIP, sockets, RoboOS messages
@@ -21,6 +22,10 @@
 struct rlock { volatile u32 lock; volatile int owner, depth; };
 static struct rlock io_l = { 0, -1, 0 }, con_l = { 0, -1, 0 }, mbox_l = { 0, -1, 0 };
 static volatile int io_running;
+
+/* worker cores 2 and 3 */
+struct job { void (*fn)(void *); void *arg; volatile int busy, alive; };
+static struct job jobs[4];
 static volatile u64 io_loops;
 
 int smp_core(void)
@@ -88,10 +93,46 @@ void io_poll_all(void)
     net_poll();
 }
 
+static void worker(int core)
+{
+    struct job *j = &jobs[core];
+    __atomic_store_n(&j->alive, 1, __ATOMIC_RELEASE);
+    for (;;) {
+        while (!__atomic_load_n(&j->busy, __ATOMIC_ACQUIRE)) __asm__ volatile("wfe");
+        j->fn(j->arg);
+        __atomic_store_n(&j->busy, 0, __ATOMIC_RELEASE);
+        __asm__ volatile("dsb sy\n sev");
+    }
+}
+
+/* run fn(arg) on worker core 2 or 3; -1 = that core is not there or busy */
+int smp_run(int core, void (*fn)(void *), void *arg)
+{
+    if (core < 2 || core > 3 || !jobs[core].alive || jobs[core].busy) return -1;
+    jobs[core].fn = fn;
+    jobs[core].arg = arg;
+    __atomic_store_n(&jobs[core].busy, 1, __ATOMIC_RELEASE);
+    __asm__ volatile("dsb sy\n sev");
+    return 0;
+}
+
+/* wait until the core has finished; -1 = it did not within ms (it is given up) */
+int smp_wait(int core, u32 ms)
+{
+    if (core < 2 || core > 3) return -1;
+    u64 end = timer_us() + (u64)ms * 1000;
+    while (__atomic_load_n(&jobs[core].busy, __ATOMIC_ACQUIRE))
+        if (timer_us() > end) { jobs[core].alive = 0; return -1; }
+    return 0;
+}
+
+int smp_workers(void) { return (jobs[2].alive ? 1 : 0) + (jobs[3].alive ? 1 : 0); }
+int smp_worker_ok(int core) { return core >= 2 && core <= 3 && jobs[core].alive; }
+
 void secondary_main(int core)
 {
     mmu_enable();
-    if (core != 1) for (;;) __asm__ volatile("wfe");   /* 2 and 3: not used yet */
+    if (core >= 2) worker(core);
     io_running = 1;
     for (;;) {
         io_lock();
@@ -111,6 +152,9 @@ void smp_crashed(int core)
         if (con_l.owner == 1) { con_l.owner = -1; con_l.depth = 0; __atomic_store_n(&con_l.lock, 0, __ATOMIC_RELEASE); }
         if (mbox_l.owner == 1) { mbox_l.owner = -1; mbox_l.depth = 0; __atomic_store_n(&mbox_l.lock, 0, __ATOMIC_RELEASE); }
     }
+    if (core >= 2) { jobs[core].alive = 0; __atomic_store_n(&jobs[core].busy, 0, __ATOMIC_RELEASE); }
+    for (int c = 2; c <= 3; c++)                       /* a lock left behind by a worker */
+        if (con_l.owner == c) { con_l.owner = -1; con_l.depth = 0; __atomic_store_n(&con_l.lock, 0, __ATOMIC_RELEASE); }
 }
 
 /* wake core 1 through the firmware's spin table; 1 = it runs */
@@ -126,3 +170,17 @@ int smp_start_io(void)
 }
 
 u64 smp_io_loops(void) { return io_loops; }
+
+/* wake cores 2 and 3 as workers; returns how many run */
+int smp_start_workers(void)
+{
+    extern char secondary_entry[];
+    for (int c = 2; c <= 3; c++) {
+        volatile u64 *spin = (volatile u64 *)(uintptr_t)(0xE0 + (c - 1) * 8);   /* 0xE8, 0xF0 */
+        *spin = (u64)(uintptr_t)secondary_entry;
+        __asm__ volatile("dc civac, %0\n dsb sy\n sev" :: "r"(spin) : "memory");
+    }
+    u64 end = timer_us() + 200000;
+    while (smp_workers() < 2 && timer_us() < end) ;
+    return smp_workers();
+}

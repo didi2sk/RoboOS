@@ -742,6 +742,13 @@ static void statement(void)
         if (img_draw(p, (int)x, (int)y, (int)w, (int)h, 0)) { kprintf("?%s\n", img_error()); error("IMAGE ERROR"); }
         return;
     }
+    if (kw("VIDEO")) {                                    /* VIDEO "file.mpg" */
+        char a[64], p[PATH_MAX_LEN];
+        str_lit(a, sizeof(a));
+        if (path_abs(a, p, sizeof(p))) error("BAD FILE NAME");
+        if (video_play(p, 0) < 0) { kprintf("?%s\n", video_error()); error("VIDEO ERROR"); }
+        return;
+    }
     int mk = 0;
     if ((mk = kw("MKDIR")) || kw("RMDIR") || kw("KILL")) {   /* MKDIR "dir", RMDIR "dir", KILL "file" */
         char a[64], p[PATH_MAX_LEN];
@@ -950,6 +957,7 @@ static void help(void)
              "  Commands: RUN  LIST [a-b]  NEW  SAVE \"name\"  LOAD \"name\"  DIR [path]  BYE\n"
              "            MKDIR \"dir\"  RMDIR \"dir\"  KILL \"file\"  (also inside programs)\n"
              "  Pictures: IMAGE \"file\", x, y [, w, h]   (JPEG PNG BMP GIF on the HDMI screen)\n"
+             "  Video:    VIDEO \"file.mpg\"   (MPEG-1 + MP2; q stop, space pause, arrows seek)\n"
              "  Program:  PRINT ?  INPUT  LET  IF..THEN..ELSE  GOTO  GOSUB  RETURN  FOR..TO..STEP  NEXT\n"
              "            DIM  END  REM '  CLS  RANDOMIZE   (separate statements with :)\n"
              "  GPIO:     PINMODE pin, OUT|IN|PULLUP|PULLDOWN   GPIO pin, HIGH|LOW\n"

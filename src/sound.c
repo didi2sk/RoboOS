@@ -152,6 +152,20 @@ void sound_output(int mode)
     if (fat_mounted()) fat_write_file("/SOUND.TXT", name[mode], (u32)strlen(name[mode]));
 }
 
+/* a sound stream (video) on the current output; 0 = ok */
+int sound_stream_open(int hz)
+{
+    pick_pins();
+    i2s_volume(volume);
+    if (out_gpio == OUT_I2S) return audio_open(hz, 1);
+    if (!pin_a) return -5;
+    sound_stop();
+    gpio_func(pin_a, pin_fn);
+    gpio_func(pin_b, pin_fn);
+    clock_on = 0;                          /* the PWM clock changes */
+    return audio_open(hz, 0);
+}
+
 /* WAV: on the I2S DAC, or on the PWM (jack / GPIO18-19) by DMA */
 int sound_wav(const char *path, int (*idle)(void))
 {

@@ -2,9 +2,27 @@
 #include "usb.h"
 #include "sd.h"
 
-#define VERSION "0.19"
+#define VERSION "0.20"
 
 const char *os_version(void) { return VERSION; }
+
+/* /SCREEN.TXT: "1280x720", or "auto" = the monitor's own resolution (0 x 0) */
+void screen_choice(u32 *w, u32 *h)
+{
+    struct fat_file f;
+    char b[24];
+    if (fat_open("/SCREEN.TXT", &f) || f.is_dir) return;
+    int n = fat_read(&f, b, sizeof(b) - 1);
+    if (n <= 0) return;
+    b[n] = 0;
+    if (b[0] == 'a' || b[0] == 'A') { *w = 0; *h = 0; return; }
+    u32 x = 0, y = 0;
+    const char *p = b;
+    while (*p >= '0' && *p <= '9') x = x * 10 + (u32)(*p++ - '0');
+    if (*p == 'x' || *p == 'X') p++;
+    while (*p >= '0' && *p <= '9') y = y * 10 + (u32)(*p++ - '0');
+    if (x >= 320 && y >= 200 && x <= 2048 && y <= 1280) { *w = x; *h = y; }
+}
 
 static void status(int good)
 {
@@ -43,12 +61,14 @@ void kernel_main(void)
     if (ram_end == 0) ram_end = 0x3B400000;
     mmu_init(ram_end);
 
-    int fb_ok = fb_init(1024, 768);
-
-    /* the SD card first: a boot picture (/SPLASH.PNG|JPG|BMP) can then cover
-     * the screen while USB starts; the messages wait in memory behind it */
+    /* the SD card first: /SCREEN.TXT picks the resolution, and a boot picture
+     * (/SPLASH.PNG|JPG|BMP) can cover the screen while USB starts; the messages
+     * wait in memory behind it */
     int sde = sd_init();
     int fs_ok = sde == SD_OK && fat_mount() == 0;
+    u32 sw = 1024, sh = 768;
+    if (fs_ok) screen_choice(&sw, &sh);
+    int fb_ok = fb_init(sw, sh);
     if (fs_ok) img_splash_start();
 
     banner();
@@ -84,6 +104,9 @@ void kernel_main(void)
     status(io);
     if (io) con_puts("Core 1: USB + network\n");
     else    con_puts("Core 1 did not start - core 0 does USB + network\n");
+    int wk = smp_start_workers();        /* cores 2 + 3: helpers (video) */
+    status(wk == 2);
+    kprintf("Cores 2-3: %d worker%s ready\n", wk, wk == 1 ? "" : "s");
     kprintf("  ARM memory: %u MB, booted in %u ms\n\n",
             (u32)(ram_end >> 20), (u32)(timer_us() / 1000));
     con_puts("  Type 'help' for a list of commands.\n\n");
@@ -111,11 +134,12 @@ void exc_handler(u64 type, u64 esr, u64 elr, u64 far)
 {
     u32 ec = (esr >> 26) & 0x3F;
     int core = smp_core();
-    if (core) {                    /* the I/O core: core 0 takes its work over */
+    if (core) {                    /* core 1: core 0 takes its work over; 2-3: workers given up */
         smp_crashed(core);
         con_color(COL_RED);
         kprintf("\n!!! EXCEPTION on core %d: %s (EC=0x%x) ELR=0x%lx FAR=0x%lx\n", core, ec_name(ec), ec, elr, far);
-        kprintf("    core %d stopped; core 0 now does USB and network itself\n", core);
+        if (core == 1) kprintf("    core 1 stopped; core 0 now does USB and network itself\n");
+        else           kprintf("    core %d stopped; its work is done on core 0 now\n", core);
         con_color(COL_DEFAULT);
         for (;;) __asm__ volatile("wfe");
     }
