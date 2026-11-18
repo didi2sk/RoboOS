@@ -2,7 +2,7 @@
 #include "usb.h"
 #include "sd.h"
 
-#define VERSION "0.27"
+#define VERSION "0.28"
 
 const char *os_version(void) { return VERSION; }
 
@@ -92,7 +92,11 @@ void kernel_main(void)
     }
     if (fs_ok) {
         status(1);
-        kprintf("SD card: %s, %u MB\n", fat_type(), (u32)(fat_volume_bytes() >> 20));
+        kprintf("SD card: %s, %u MB (%s)\n", fat_type(), (u32)(fat_volume_bytes() >> 20), sd_controller());
+        if (sd_sdhost_error()) {             /* the Arasan works, SDHOST did not (WiFi needs SDHOST for the card) */
+            status(0);
+            con_puts("SDHOST: "); sdhost_print_fail(sd_sdhost_error());
+        }
     } else {
         status(0);
         con_puts("SD card: ");

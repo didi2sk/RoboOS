@@ -15,6 +15,17 @@ u64  sd_sectors(void);
 int  sd_is_sdhc(void);
 int  sd_bus_width(void);
 const char *sd_error(int e);
+int  sd_init_on(int which);                      /* 0 auto, 1 SDHOST, 2 Arasan */
+const char *sd_controller(void);                 /* "SDHOST" / "Arasan (EMMC)" */
+int  sd_sdhost_error(void);                      /* why SDHOST was not used (0 = it is) */
+/* sdhost.c */
+int  sdhost_init(void);
+int  sdhost_read(u32 lba, void *buf, u32 count);
+int  sdhost_write(u32 lba, const void *buf, u32 count);
+u64  sdhost_sectors(void);
+int  sdhost_is_sdhc(void);
+int  sdhost_bus_width(void);
+void sdhost_print_fail(int e);
 void sd_print_fail(int e);                       /* error + failed init step + registers */
 
 /* fat.c - FAT16/FAT32 (read with long names, write 8.3) */

@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.27**
+Current version: **0.28**
 
 ## Supported boards
 
@@ -41,6 +41,10 @@ or GPIO47 (Pi 2 v1.2).
 The SD card is also RoboOS's disk (FAT32 or FAT16, read and write).
 RoboOS has its own SD driver (the firmware only loads `kernel8.img` and then steps aside).
 If the card is not found, `sd init` shows which step failed and the controller registers.
+Since 0.28 the card runs on the SDHOST controller (as in Linux), so that the second controller
+(Arasan) is free for WiFi later; if SDHOST does not work, RoboOS uses the Arasan as before and the
+boot screen shows a yellow `SDHOST:` line with the reason. `sd` shows which one is used,
+`sd init sdhost` / `sd init emmc` try one of them.
 
 - Everything in **`/RUN`** (`*.bin` and `*.bas`) starts automatically after boot,
   in alphabetical order. Press any key within 2 s to skip the autostart.
@@ -555,7 +559,7 @@ If you connect after boot, press Enter.
 | `sound [volume n\|out jack\|gpio\|i2s\|off]` | sound output and volume |
 | `sound test` | no sound? three tests in a row (a PWM tone, a sine written by the CPU, a sine by DMA) with the registers on the screen - tell which one you heard |
 | `playwav <file>` | play a WAV file (jack, GPIO18/19 or I2S DAC) |
-| `sd [init]` | SD card info / re-initialize after swapping the card |
+| `sd [init [sdhost\|emmc]]` | SD card info (and the controller) / re-initialize after swapping the card |
 | `screen [WxH\|auto]` | screen resolution (saved in `/SCREEN.TXT`) |
 | `clear` | clear the screen (also Ctrl+L) |
 | `reboot` | reboot via watchdog |
@@ -598,7 +602,8 @@ converted on core 0.
 | `src/webapi.c` | JSON API behind `http`: Bearer token, GPIO, status, reboot |
 | `lwip/` | lwIP 2.2.1 TCP/IP stack (unmodified, BSD license) |
 | `src/kbd.c` | HID keyboard: boot protocol, scan code translation, autorepeat |
-| `src/sd.c` | SD card driver (Arasan SDHCI, GPIO48-53 ALT3), read + write |
+| `src/sd.c` | SD card: chooses the controller; the Arasan SDHCI driver (GPIO48-53 ALT3), read + write |
+| `src/sdhost.c` | SD card on the SDHOST controller (GPIO48-53 ALT0), the default since 0.28 |
 | `src/fat.c` | FAT16/FAT32: long names, read, write (8.3 names), mkdir, delete, both FAT copies |
 | `src/app.c` | program loader, Arduino-style API, Ctrl+C, autostart from `/RUN` |
 | `src/basic.c` | BASIC interpreter |

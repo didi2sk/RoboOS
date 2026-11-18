@@ -575,14 +575,17 @@ static void cmd_basic(int argc, char **argv)
 static void cmd_sd(int argc, char **argv)
 {
     if (argc > 1 && !strcmp(argv[1], "init")) {
-        int e = sd_init();
+        int which = argc > 2 ? (!strcmp(argv[2], "sdhost") ? 1 : !strcmp(argv[2], "emmc") ? 2 : -1) : 0;
+        if (which < 0) { kprintf("usage: sd init [sdhost|emmc]\n"); return; }
+        int e = sd_init_on(which);
         if (e) { kprintf("SD init failed: "); sd_print_fail(e); return; }
         int m = fat_mount();
         if (m) kprintf("card OK, but no FAT16/FAT32 partition (%d)\n", m);
     }
     if (!sd_ready()) { kprintf("no SD card (try 'sd init')\n"); return; }
-    kprintf("card:  %s, %u MB, %u-bit bus\n", sd_is_sdhc() ? "SDHC/SDXC" : "SDSC",
-            (u32)(sd_sectors() >> 11), sd_bus_width());
+    kprintf("card:  %s, %u MB, %u-bit bus, controller %s\n", sd_is_sdhc() ? "SDHC/SDXC" : "SDSC",
+            (u32)(sd_sectors() >> 11), sd_bus_width(), sd_controller());
+    if (sd_sdhost_error()) { kprintf("SDHOST not used: "); sdhost_print_fail(sd_sdhost_error()); }
     if (fat_mounted())
         kprintf("fs:    %s, %u MB, cluster %u bytes\n", fat_type(),
                 (u32)(fat_volume_bytes() >> 20), fat_cluster_bytes());
@@ -625,7 +628,7 @@ static const struct cmd cmds[] = {
     { "play",   "<notes>",              "play music: play T120 C D E F G", cmd_play   },
     { "sound",  "[volume|out|off]",     "sound: volume, out, off, test",  cmd_sound },
     { "playwav", "<file>",              "play a WAV file",                 cmd_playwav },
-    { "sd",     "[init]",               "SD card info / re-initialize",    cmd_sd     },
+    { "sd",     "[init [sdhost|emmc]]", "SD card info / re-initialize",    cmd_sd     },
     { "screen", "[WxH|auto]",           "screen resolution (saved)",       cmd_screen },
     { "clear",  "",                     "clear the screen",                cmd_clear  },
     { "reboot", "",                     "reboot via watchdog",             cmd_reboot },
