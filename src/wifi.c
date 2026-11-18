@@ -761,7 +761,24 @@ static int wlcmd(int write, u32 op, const void *data, int dlen, void *res, int r
             if (dispatch(n, &id) == 0 && id == w.reqid) {
                 int doff = rx[7];
                 u32 st = le32(rx + doff + 12);
-                if (st) { werr = "firmware command error"; return -(int)st - 1; }
+                if (st) {                                 /* a BCME_ code: -1 error, -2 bad arg, -23 unsupported ... */
+                    static char eb[48];
+                    int code = (int)st, k = 0;
+                    const char *t = "firmware said error ";
+                    while (*t) eb[k++] = *t++;
+                    if (code < 0) { eb[k++] = '-'; code = -code; }
+                    char d[12]; int dn = 0;
+                    do { d[dn++] = (char)('0' + code % 10); code /= 10; } while (code);
+                    while (dn) eb[k++] = d[--dn];
+                    t = " to command ";
+                    while (*t) eb[k++] = *t++;
+                    u32 o = op; dn = 0;
+                    do { d[dn++] = (char)('0' + o % 10); o /= 10; } while (o);
+                    while (dn) eb[k++] = d[--dn];
+                    eb[k] = 0;
+                    werr = eb;
+                    return -1;
+                }
                 if (!write && rlen) memcpy(res, rx + doff + Cmdsz, (size_t)rlen);
                 return 0;
             }
@@ -860,27 +877,39 @@ static int wifi_start(void)
 
 static void scan(void)
 {
-    static const u8 params[4 + 2 + 2 + 4 + 32 + 6 + 1 + 1 + 4 * 4 + 2 + 2 + 14 * 2 + 32 + 4] = {
+    /* escan, version 1: like Linux brcmfmac for "all channels" - no channel list, the
+     * firmware scans every channel it may use (newer firmware rejects old chanspecs) */
+    static const u8 params[4 + 2 + 2 + 4 + 32 + 6 + 1 + 1 + 4 * 4 + 4] = {
         1, 0, 0, 0,                                       /* version */
         1, 0,                                             /* action: start */
         0x34, 0x12,                                       /* sync id */
-        0, 0, 0, 0,                                       /* ssid length */
+        0, 0, 0, 0,                                       /* ssid length: any network */
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0xff, 0xff, 0xff, 0xff, 0xff, 0xff,               /* any BSSID */
         2,                                                /* bss type: any */
         0,                                                /* active scan */
         0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,   /* nprobes, active, passive, home time: default */
         0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-        14, 0,                                            /* 14 channels */
-        1, 0,
+        0, 0, 0, 0,                                       /* 0 channels, 0 SSIDs = all */
+    };
+    /* the 9front list (old d11n chanspecs), tried if the firmware does not like the first */
+    static const u8 params_old[4 + 2 + 2 + 4 + 32 + 6 + 1 + 1 + 4 * 4 + 2 + 2 + 14 * 2 + 32 + 4] = {
+        1, 0, 0, 0, 1, 0, 0x34, 0x12, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 2, 0,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        14, 0, 1, 0,
         0x01, 0x2b, 0x02, 0x2b, 0x03, 0x2b, 0x04, 0x2b, 0x05, 0x2e, 0x06, 0x2e, 0x07, 0x2e,
         0x08, 0x2b, 0x09, 0x2b, 0x0a, 0x2b, 0x0b, 0x2b, 0x0c, 0x2b, 0x0d, 0x2b, 0x0e, 0x2b,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     };
     nbss = 0;
     scan_done = 0;
-    cmdint(49, 0);                                        /* active scan */
-    if (setvar("escan", params, sizeof(params))) { kprintf("scan: %s\n", werr); return; }
+    if (cmdint(49, 0)) kprintf("  (active scan: %s)\n", werr);   /* SET_PASSIVE_SCAN 0 */
+    if (setvar("escan", params, sizeof(params))) {
+        kprintf("  escan: %s - trying the old channel list\n", werr);
+        if (setvar("escan", params_old, sizeof(params_old))) { kprintf("scan: %s\n", werr); return; }
+    }
     kprintf("scanning...\n");
     u64 end = timer_us() + 8000000;
     while (!scan_done && timer_us() < end) {
