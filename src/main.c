@@ -2,7 +2,7 @@
 #include "usb.h"
 #include "sd.h"
 
-#define VERSION "0.33"
+#define VERSION "0.34"
 
 const char *os_version(void) { return VERSION; }
 
@@ -105,7 +105,10 @@ void kernel_main(void)
     wifi_boot();                         /* /WIFI.TXT: start the WiFi chip and join (core 0, before core 1) */
     net_name();                          /* /NAME.TXT and /IP.TXT are read here, on core 0 */
     clock_prepare();                     /* /TIME.TXT */
+    sensors_probe();                     /* I2C: BME280, ADS1115, DS3231 */
+    { u64 rt = rtc_read(); if (rt) clock_set_time(rt, 3); }   /* the time before NTP answers */
     ip_prepare();
+    mqtt_prepare();                      /* /MQTT.TXT */
     api_sound_scan();                    /* /SOUNDS for the JSON API, before core 1 starts */
     int io = smp_start_io();             /* core 1 takes over USB + network */
     status(io);

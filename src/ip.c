@@ -200,6 +200,7 @@ static void ntp_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_ad
             u64 t = (u64)sec - 2208988800u + (frac >= 0x80000000u);
             t += (timer_us() - ntp_asked) / 2000000;     /* half the round trip */
             clock_set_time(t, 1);
+            rtc_write(t);                                /* keep the battery clock right */
             ntp_next = timer_us() + 3600ULL * 1000000;   /* again in an hour */
             if (ntp_first) {
                 char s[32];
@@ -269,6 +270,7 @@ void ip_poll(int notify)
     sys_check_timeouts();
     api_poll();
     ntp_tick();
+    mqtt_poll(!ip4_addr_isany_val(*netif_ip4_addr(&nif)) && netif_is_link_up(&nif));
 
     if (!ip4_addr_cmp(netif_ip4_addr(&nif), &shown_ip)) {
         ip4_addr_copy(shown_ip, *netif_ip4_addr(&nif));

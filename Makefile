@@ -79,7 +79,7 @@ apps:
 
 # 64 MB SD image for QEMU (needs mtools, dosfstools, fdisk)
 sd.img: apps
-	tools/mksdimg.sh sd.img "" "hello blink button knight chat tcpserv udpecho music alarm"
+	tools/mksdimg.sh sd.img "" "hello blink button knight chat tcpserv udpecho music alarm iotnode"
 
 run: kernel8.img
 	qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial stdio -device usb-kbd

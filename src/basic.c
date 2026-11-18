@@ -289,6 +289,8 @@ static i64 primary(void)
         u64 l = (t + (u64)((long)clock_offset(t) * 60)) % 86400;
         return name[0] == 'H' ? (i64)(l / 3600) : name[0] == 'M' ? (i64)(l / 60 % 60) : (i64)(l % 60);
     }
+    if (!strcmp(name, "SENSOR")) { expect('('); i64 n = expr(); expect(')'); return sensor_value((int)n); }
+    if (!strcmp(name, "MQTTOK")) { opt_parens(); return mqtt_connected() ? -1 : 0; }
     if (!strcmp(name, "MICROS")) { opt_parens(); return (i64)timer_us(); }
     if (!strcmp(name, "TEMP"))   { opt_parens(); return temp_c(); }
     if (!strcmp(name, "INKEY"))  {
@@ -797,6 +799,16 @@ static void statement(void)
         return;
     }
     if (kw("UDPSEND"))   { st_udpsend(); return; }
+    if (kw("MQTTPUB"))   {                            /* MQTTPUB "topic", items (topic under roboos/<name>/) */
+        char t[96], b[512];
+        int n = 0;
+        str_lit(t, sizeof(t));
+        if (!at_end()) expect(',');
+        sock_items(b, &n, sizeof(b));
+        while (n && (b[n - 1] == '\n' || b[n - 1] == '\r')) n--;
+        net_ok = mqtt_publish(t, b, n, 0) ? 0 : -1;
+        return;
+    }
     if (kw("SOCKCLOSE")) { sock_close((int)expr()); return; }
     if (kw("RANDOMIZE")) { rng ^= timer_us() * 2654435761UL; if (!at_end()) rng ^= (u64)expr(); return; }
     if (is_alpha(*pc)) { st_let(); return; }
@@ -998,6 +1010,8 @@ static void help(void)
              "  TCP/UDP:  H = TCPCONNECT(\"host\", port)  TCPLISTEN(port)  TCPACCEPT(H)  UDPOPEN(port[,\"host\",port])\n"
              "            SOCKPRINT H, items   UDPSEND H, \"host\", port, items   SOCKCLOSE H\n"
              "            SOCKAVAIL(H)  SOCKGET(H) (byte)  SOCKNUM(H) (number)   errors are < 0\n"
+             "  IoT:      SENSOR(n) 0 CPU 1 temp 2 humidity (0.01 C / %) 3 Pa 4-7 ADC mV (-999999 = none)\n"
+             "            MQTTPUB \"topic\", items   MQTTOK (connected; broker set by 'mqtt' in the shell)\n"
              "  Operators: + - * / MOD  = <> < > <= >=  AND OR NOT   (integers only)\n"
              "  SAVE \"/RUN/NAME\" = start automatically after boot. Ctrl+C stops a program.\n");
 }

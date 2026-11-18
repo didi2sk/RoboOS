@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.33**
+Aktuálna verzia: **0.34**
 
 ## Podporované dosky
 
@@ -451,6 +451,87 @@ podáva webovú stránku a prijíma správy, aj keď program práve počíta.
 Funguje aj štandardný USB sieťový adaptér triedy CDC-ECM (takto sa sieť testuje v QEMU;
 na skutočných doskách to zatiaľ testované nie je).
 
+## IoT: senzory (I2C) a MQTT
+
+### Senzory na I2C
+
+Zbernica I2C je na pinoch 3 (GPIO2 = SDA) a 5 (GPIO3 = SCL), 3,3 V na pine 1 a GND na pine 6.
+Pri štarte RoboOS tieto moduly nájde sám (`sensors scan` hľadá znova):
+
+| Modul | Adresa | Hodnoty |
+|---|---|---|
+| BME280 (BMP280) | 0x76 / 0x77 | teplota, vlhkosť (len BME280), tlak |
+| ADS1115 | 0x48-0x4B | 4 analógové vstupy A0-A3, 0-4,096 V v mV (neprekročiť 3,3 V!) |
+| DS3231 (DS1307) | 0x68 | hodiny s batériou: čas je známy po štarte aj bez siete |
+
+```
+sensors                  hodnoty všetkého nájdeného (+ teplota CPU)
+i2c scan                 všetky zariadenia na zbernici, s odhadom čo to je
+i2c read 0x76 0xd0       čítanie registra (i2c read <adr> <reg> [počet])
+i2c write 0x76 0xf4 0x27 zápis registra
+```
+
+Hodiny sa nastavia vždy, keď odpovie NTP (alebo `time set`), a pri štarte sa čas zoberie z nich -
+`time` potom píše "from the battery clock (DS3231)".
+
+### MQTT
+
+MQTT je bežný spôsob, ako IoT zariadenia hovoria so serverom (Home Assistant, Node-RED,
+Mosquitto...). RoboOS sa pripojí k brokeru a posiela mu hodnoty; broker mu posiela príkazy.
+
+```
+mqtt broker 192.168.1.10      broker (meno alebo adresa, port 1883; uloží sa do /MQTT.TXT)
+mqtt user robo tajne          ak broker chce prihlásenie
+mqtt                          stav
+mqtt interval 30              hodnoty každých 30 s (0 = nikdy samo)
+mqtt pub ahoj svet            pošle roboos/<meno>/ahoj = svet
+mqtt off                      vypnúť
+```
+
+Témy (`<meno>` je meno dosky z `/NAME.TXT`, napr. `roboos/rpi3-3456/...`):
+
+| Téma | |
+|---|---|
+| `roboos/<meno>/status` | `online` / `offline` (retained; `offline` je "posledná vôľa", keď doska zmizne) |
+| `roboos/<meno>/state` | JSON: `{"cpu":48.31,"temp":21.53,"hum":40.12,"press":1013.25,"a0":1234,...,"uptime":..,"ip":"..","time":".."}` |
+| `roboos/<meno>/set/gpio/17` | pošli `1` / `0` / `on` / `off` / `toggle`: pin sa stane výstupom |
+| `roboos/<meno>/gpio/17` | doska odpovie novou úrovňou (retained) |
+| `roboos/<meno>/set/publish` | pošle stav hneď |
+| `roboos/<meno>/cmd/...` | voľné pre tvoje programy (čítajú ich BASIC / C) |
+
+Home Assistant nájde senzory sám (MQTT discovery, `mqtt discovery off` to vypne). Z PC:
+
+```
+mosquitto_sub -h 192.168.1.10 -t 'roboos/#' -v
+mosquitto_pub -h 192.168.1.10 -t roboos/rpi3-3456/set/gpio/17 -m toggle
+```
+
+`/MQTT.TXT` (dá sa napísať aj ručne):
+
+```
+broker 192.168.1.10
+port 1883
+user robo
+pass tajne
+topic roboos/zahrada
+interval 60
+discovery on
+```
+
+MQTT tu nie je šifrované (port 1883, QoS 0) - používaj ho vo vlastnej sieti.
+
+V programoch: BASIC `SENSOR(n)` (0 CPU, 1 teplota, 2 vlhkosť v 0,01 C / %, 3 tlak v Pa,
+4-7 ADC v mV, -999999 = senzor nie je), `MQTTPUB "téma", položky` (ako PRINT), `MQTTOK`;
+príklad `/APPS/mqtt.bas`. C (API 10): `sensorRead(n)`, `mqttPublish(téma, text, retain)`,
+`mqttReceive(téma, tmax, správa, pmax)` (správy na `cmd/...`), `mqttConnected()`;
+príklad `iotnode` (posiela JSON so senzormi, LED na GPIO23 cez `cmd/led` on / off / blink).
+
+### IoT shield (návrh dosky)
+
+`hardware/iot-shield/` obsahuje návrh dosky v KiCade, ktorá sa nasadí na 40-pinový konektor:
+napájanie 12-24 V, 4 izolované vstupy, 4 MOSFET výstupy, ADS1115, BME280, hodiny DS3231,
+1-Wire. Pozri jej README - **zatiaľ nevyrobená ani neotestovaná**.
+
 ## Zvuk
 
 Žiadne Raspberry Pi nemá zvukový čip: 3,5 mm jack poháňajú dva PWM kanály procesora cez
@@ -570,6 +651,8 @@ Systém komunikuje po anglicky.
 | `http token [<tajne>\|off]` | token pre JSON API (Bearer), pozri časť o JSON API |
 | `http tls on\|off\|new` | HTTPS na porte 443 (API potom len tam), nový certifikát |
 | `wifi [scan\|join <sieť> [heslo]\|leave\|forget]` | WiFi: siete, pripojenie (uloží sa), stav |
+| `sensors [scan]`, `i2c scan\|read\|write` | senzory na I2C (BME280, ADS1115, DS3231) |
+| `mqtt [broker\|user\|pub\|interval\|off]` | MQTT klient (IoT) |
 | `time [sync\|zone\|server\|set]` | dátum a čas z NTP, časové pásmo, ručné nastavenie |
 | `ls [cesta]` | obsah priečinka na SD karte (bez cesty: aktuálneho) |
 | `cd [priečinok]` | zmena priečinka (`..` = vyššie, `/` = navrch, bez argumentu = navrch) |

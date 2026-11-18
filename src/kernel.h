@@ -202,6 +202,45 @@ const char *link_name(void);
 int  link_send(const void *f, int len);
 int  link_recv(void *buf, int max);
 
+/* i2c.c - BSC1 on GPIO2 (SDA) / GPIO3 (SCL), 100 kHz; 0 = ok, -1 no answer, -2 timeout */
+void i2c_init(void);
+int  i2c_write(u8 addr, const void *buf, int n);
+int  i2c_read(u8 addr, void *buf, int n);
+int  i2c_read_reg(u8 addr, u8 reg, void *buf, int n);
+int  i2c_write_reg(u8 addr, u8 reg, const void *data, int n);
+int  i2c_probe(u8 addr);
+void i2c_cmd(int argc, char **argv);
+
+/* sensors.c - BME280/BMP280, ADS1115, DS3231 found on the I2C bus */
+#define SV_CPU   1
+#define SV_TEMP  2
+#define SV_HUM   4
+#define SV_PRESS 8
+#define SV_AIN   16
+struct sensor_values {
+    int have;                            /* SV_* bits */
+    int cpu_mc;                          /* CPU temperature, milli-degrees */
+    int temp_c100, hum_c100, press_pa;   /* 0.01 degC, 0.01 %, Pa */
+    int ain_mv[4];                       /* ADS1115 inputs, mV */
+};
+void sensors_probe(void);
+int  sensors_have(void);
+int  sensors_read(struct sensor_values *v);
+void sensors_cmd(int argc, char **argv);
+int  rtc_present(void);
+u64  rtc_read(void);                     /* Unix time from the DS3231, 0 = none */
+void rtc_write(u64 t);
+#define SENSOR_NONE (-999999)
+int  sensor_value(int n);             /* 0 CPU, 1 temp, 2 hum (0.01), 3 Pa, 4-7 mV */
+
+/* mqtt.c: MQTT 3.1.1 client (QoS 0), /MQTT.TXT */
+void mqtt_prepare(void);                 /* core 0, at boot */
+void mqtt_poll(int have_ip);             /* core 1, from ip_poll */
+int  mqtt_connected(void);
+int  mqtt_publish(const char *topic, const char *payload, int len, int retain);
+int  mqtt_receive(char *topic, int tmax, char *payload, int pmax);
+void mqtt_cmd(int argc, char **argv);
+
 /* rng.c */
 int  rng_bytes(void *out, int n);        /* 1 = from the hardware RNG */
 
@@ -214,7 +253,9 @@ void clock_prepare(void);                /* core 0: /TIME.TXT */
 const char *clock_server(void);
 int  clock_ntp_wanted(void);             /* core 1 asks: sync now? */
 void clock_ntp_again(void);
-int  clock_how(void);
+int  clock_how(void);                    /* 0 none, 1 NTP, 2 by hand, 3 battery clock */
+u64  clock_make(int y, int mo, int d, int h, int mi, int s);   /* UTC -> Unix */
+void clock_split(u64 t, int *y, int *mo, int *d, int *h, int *mi, int *s);
 void time_cmd(int argc, char **argv);
 
 /* tls.c - HTTPS (BearSSL) */

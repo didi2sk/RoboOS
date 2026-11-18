@@ -18,7 +18,7 @@ typedef unsigned long      size_t;
 
 #define APP_BASE    0x01000000UL
 #define APP_MAGIC   "ROBOAPP1"
-#define API_VERSION 9
+#define API_VERSION 10
 
 #define INPUT          0
 #define OUTPUT         1
@@ -100,7 +100,17 @@ struct robos_api {
      * "YYYY-MM-DD HH:MM:SS" into buf[20], returns 0 when the time is not known. */
     uint64_t (*unixTime)(void);
     int      (*timeText)(char *buf);
+    /* API version 10: IoT. sensorRead(n): 0 CPU temperature, 1 temperature (0.01 C, BME280),
+     * 2 humidity (0.01 %), 3 pressure (Pa), 4-7 ADS1115 A0-A3 (mV); SENSOR_NONE = no sensor.
+     * mqttPublish: topic under roboos/<name>/ (or "/full/topic"), 0 = sent, < 0 = not connected.
+     * mqttReceive: the next message sent to roboos/<name>/cmd/..., topic like "cmd/led";
+     * payload length, -1 = nothing waiting. The broker is set with 'mqtt broker <host>'. */
+    int      (*sensorRead)(int n);
+    int      (*mqttConnected)(void);
+    int      (*mqttPublish)(const char *topic, const char *text, int retain);
+    int      (*mqttReceive)(char *topic, int tmax, char *payload, int pmax);
 };
+#define SENSOR_NONE (-999999)
 
 extern const struct robos_api *api;
 
@@ -151,6 +161,10 @@ extern const struct robos_api *api;
 #define writeFile(path, data, len)      (api->writeFile)(path, data, len)
 #define unixTime()                      (api->unixTime)()
 #define timeText(buf)                   (api->timeText)(buf)
+#define sensorRead(n)                   (api->sensorRead)(n)
+#define mqttConnected()                 (api->mqttConnected)()
+#define mqttPublish(t, text, retain)    (api->mqttPublish)(t, text, retain)
+#define mqttReceive(t, tmax, p, pmax)   (api->mqttReceive)(t, tmax, p, pmax)
 
 void *memset(void *d, int c, size_t n);
 void *memcpy(void *d, const void *s, size_t n);
