@@ -56,7 +56,10 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
   buzz) - now a continuous 256-step sine (`audio_sine()`). Next: ask what "strange" means per step.
 - v0.22: ip.c strips 802.1Q tags before lwIP (lwIP drops them; the owner's LAN sends type 8100 frames) and
   `ip` prints frame counters (in: ARP/IPv4/other/VLAN, out/errors) - for photo debugging.
-- Not yet verified on hardware (v0.27): NTP time, HTTPS (handshake speed on the A53 unknown), hardware RNG.
+- v0.27 on the RPi 3B **works**: NTP time (`time`), HTTPS web page in a desktop browser after accepting the
+  self-signed certificate warning (the owner first thought it failed - remind about the warning / `thisisunsafe`),
+  so the on-board key + certificate generation and the hardware RNG work too. Chromium 153 also tested in QEMU
+  (Playwright, ignoreHTTPSErrors): first load ~420 ms with the handshake, resumed ~50 ms.
 - Not yet verified on hardware: RoboOS messages between two boards (v0.9, tested only with `net loop on`
   in QEMU), program loader, BASIC, line editor / full-screen editor,
   board detection, Zero 2 W (ACT LED GPIO29 active-low is an assumption).
