@@ -189,3 +189,12 @@ void con_size(int *cols, int *rows)
     if (fb_ready()) { *cols = fb_cols(); *rows = fb_rows(); }
     else            { *cols = 80; *rows = 24; }
 }
+
+/* change the resolution while running (core 1 may be printing: console lock) */
+int screen_set(u32 w, u32 h)
+{
+    con_lock();
+    int ok = fb_init(w, h);
+    con_unlock();
+    return ok;
+}

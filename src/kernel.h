@@ -64,6 +64,11 @@ void mbox_lock(void);
 void mbox_unlock(void);
 void smp_crashed(int core);
 u64  smp_io_loops(void);
+int  smp_start_workers(void);           /* cores 2 + 3; returns how many run */
+int  smp_run(int core, void (*fn)(void *), void *arg);   /* -1 = not there / busy */
+int  smp_wait(int core, u32 ms);        /* -1 = gave up */
+int  smp_workers(void);
+int  smp_worker_ok(int core);
 void kbd_poll(void);
 void usb_hotplug(void);
 
@@ -74,7 +79,14 @@ int  mmu_enabled(void);
 void dcache_clean_inval(void *addr, size_t len);
 
 /* fb.c */
-int  fb_init(u32 w, u32 h);
+int  fb_init(u32 w, u32 h);              /* 0, 0 = the monitor's own resolution */
+void fb_native(u32 *w, u32 *h);
+int  fb_pages(void);                    /* 2 = a hidden page for tear-free video */
+u32  fb_pitch(void);
+u32 *fb_page_row(int page, int y);
+void fb_show_page(int page);
+int  screen_set(u32 w, u32 h);          /* console.c: change the resolution now */
+void screen_choice(u32 *w, u32 *h);     /* main.c: /SCREEN.TXT (0 x 0 = auto) */
 int  fb_ready(void);
 u32  fb_width(void);
 u32  fb_height(void);
@@ -208,6 +220,11 @@ int  i2s_wav(const char *path, int (*idle)(void));   /* 0 ok, 1 stopped, < 0 err
 int  pwm_wav(const char *path, int (*idle)(void));   /* WAV on the PWM (pins set by sound.c) */
 const char *i2s_wav_error(int e);
 void i2s_status(void);
+int  audio_open(int hz, int on_i2s);     /* a sound stream (video); 0 = ok */
+void audio_write(const short *lr, int frames);   /* stereo 16-bit; waits while full */
+int  audio_queued_ms(void);
+void audio_close(int now);               /* now = drop what is queued */
+int  sound_stream_open(int hz);          /* sound.c: on the current output */
 u32  i2s_segments(void);                 /* audio DMA segments played so far */
 int  sound_wav(const char *path, int (*idle)(void)); /* sound.c: I2S DAC or PWM (jack / GPIO) */
 int  sound_output_mode(void);            /* 0 jack, 1 gpio, 2 i2s */
@@ -224,6 +241,11 @@ int  img_draw(const char *path, int x, int y, int w, int h, int center);   /* 0 
 const char *img_error(void);
 void img_splash_start(void);             /* /SPLASH.PNG|JPG|BMP at boot */
 void img_splash_end(void);
+
+/* video.c - MPEG-1 video + MP2 sound (.mpg) */
+int  video_play(const char *path, int info);   /* 0 end, 1 stopped by a key, < 0 error */
+const char *video_error(void);
+void video_cmd(int argc, char **argv);
 void view_cmd(int argc, char **argv);
 
 /* path.c - current directory, relative paths */

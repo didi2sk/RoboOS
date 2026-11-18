@@ -36,6 +36,10 @@ build/%.o: src/%.c $(wildcard src/*.h) src/lwip_port/lwipopts.h | build
 build/stbimg.o: src/stbimg.c third_party/stb_image.h | build
 	$(CC) $(filter-out -mgeneral-regs-only,$(COMMON)) $(INCS) -w -c $< -o $@
 
+# video player with pl_mpeg: floating point allowed, pl_mpeg's own warnings off
+build/video.o: src/video.c src/kernel.h src/sd.h third_party/pl_mpeg.h | build
+	$(CC) $(filter-out -mgeneral-regs-only,$(COMMON)) $(INCS) -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -c $< -o $@
+
 # third-party code: built with the same flags, minus the warnings it was not written for
 build/lwip/%.o: lwip/src/%.c src/lwip_port/lwipopts.h src/lwip_port/arch/cc.h
 	@mkdir -p $(dir $@)

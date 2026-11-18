@@ -6,8 +6,8 @@
 
 extern const unsigned char font8x16[95][16];
 
-#define MAX_COLS 240
-#define MAX_ROWS 68
+#define MAX_COLS 256                       /* text up to 2048 x 1280 pixels */
+#define MAX_ROWS 80
 
 static u8  *fb;
 static u32  width, height, pitch;
@@ -19,13 +19,21 @@ static u32  tcol[MAX_ROWS][MAX_COLS];
 static u8   shown[MAX_ROWS][MAX_COLS];     /* what is actually on screen */
 static u32  scol[MAX_ROWS][MAX_COLS];
 
-int fb_init(u32 w, u32 h)
+static u32 native_w, native_h;
+
+/* the monitor's own resolution: what the firmware set up before we asked for ours */
+void fb_native(u32 *w, u32 *h) { *w = native_w; *h = native_h; }
+
+static int pages, page_shown;
+
+/* ask the firmware for a w x h screen with `np` pages stacked vertically */
+static int fb_alloc(u32 w, u32 h, int np)
 {
     mbox_lock();
     mbox[0] = 35 * 4;
     mbox[1] = 0;
     mbox[2] = 0x48003; mbox[3] = 8; mbox[4] = 8;  mbox[5] = w;  mbox[6] = h;   /* physical size */
-    mbox[7] = 0x48004; mbox[8] = 8; mbox[9] = 8;  mbox[10] = w; mbox[11] = h;  /* virtual size */
+    mbox[7] = 0x48004; mbox[8] = 8; mbox[9] = 8;  mbox[10] = w; mbox[11] = h * np; /* virtual size */
     mbox[12] = 0x48009; mbox[13] = 8; mbox[14] = 8; mbox[15] = 0; mbox[16] = 0; /* offset */
     mbox[17] = 0x48005; mbox[18] = 4; mbox[19] = 4; mbox[20] = 32;             /* 32 bpp */
     mbox[21] = 0x48006; mbox[22] = 4; mbox[23] = 4; mbox[24] = 0;              /* BGR order */
@@ -33,18 +41,32 @@ int fb_init(u32 w, u32 h)
     mbox[30] = 0x40008; mbox[31] = 4; mbox[32] = 4; mbox[33] = 0;              /* pitch */
     mbox[34] = 0;
 
-    if (!mbox_call(MBOX_CH_PROP) || mbox[20] != 32 || mbox[28] == 0) {
+    if (!mbox_call(MBOX_CH_PROP) || mbox[20] != 32 || mbox[28] == 0 ||
+        (np > 1 && mbox[11] < mbox[6] * (u32)np)) {
         mbox_unlock();
         return 0;
     }
-
     width  = mbox[5];
     height = mbox[6];
     pitch  = mbox[33];
-    mbox_unlock();
     fb     = (u8 *)(uintptr_t)(mbox[28] & 0x3FFFFFFF);   /* bus -> ARM address */
+    mbox_unlock();
     if (pitch == 0) pitch = width * 4;
+    pages = np;
+    page_shown = 0;
+    return 1;
+}
 
+int fb_init(u32 w, u32 h)
+{
+    if (!native_w) {
+        u32 v[2] = { 0, 0 };
+        if (mbox_prop(0x00040003, v, 2) && v[0] && v[1]) { native_w = v[0]; native_h = v[1]; }
+        else { native_w = 1024; native_h = 768; }
+    }
+    if (!w || !h) { w = native_w; h = native_h; }
+    /* two pages (virtual height 2 x h) for tear-free video; one if the firmware says no */
+    if (!fb_alloc(w, h, 2) && !fb_alloc(w, h, 1)) return 0;
     cols = width / 8;  if (cols > MAX_COLS) cols = MAX_COLS;
     rows = height / 16; if (rows > MAX_ROWS) rows = MAX_ROWS;
     fb_clear();
@@ -205,4 +227,19 @@ void fb_text_px(int x, int y, const char *s, u32 fg, u32 back)
             for (int gx = 0; gx < 8; gx++) px[gx] = (glyph[gy] & (0x80 >> gx)) ? fg : back;
         }
     }
+}
+
+/* ---------------- pages (video) ---------------- */
+
+int fb_pages(void) { return pages; }
+u32 fb_pitch(void) { return pitch; }
+u32 *fb_page_row(int page, int y) { return (u32 *)(fb + ((u32)page * height + (u32)y) * pitch); }
+
+/* show page 0 or 1 (the console always draws on page 0) */
+void fb_show_page(int page)
+{
+    if (!fb || page >= pages || page == page_shown) return;
+    u32 v[2] = { 0, (u32)page * height };
+    mbox_prop(0x00048009, v, 2);
+    page_shown = page;
 }

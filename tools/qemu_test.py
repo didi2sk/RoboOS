@@ -32,6 +32,9 @@ def drain(t):
 
 drain(float(os.environ.get('BOOT_WAIT', '4')))
 for c in cmds:
+    if c.startswith("~"):            # ~seconds: just wait (and collect output)
+        drain(float(c[1:]))
+        continue
     if c.startswith("!"):            # QEMU monitor command (e.g. !sendkey a)
         for m in c[1:].split(";"):
             mon.send(m.strip().encode() + b"\n"); time.sleep(0.15)

@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.19**
+Current version: **0.20**
 
 ## Supported boards
 
@@ -73,6 +73,7 @@ robo@rpi3:~$ basic
   `FOR..TO..STEP`/`NEXT`, `DIM`, `END`, `REM`/`'`, `CLS`, `RANDOMIZE`; separate statements with `:`.
 - GPIO: `PINMODE pin, OUT|IN|PULLUP|PULLDOWN`, `GPIO pin, HIGH|LOW`, `GPIO(pin)`, `LED ON|OFF`, `WAIT ms`.
 - Pictures: `IMAGE "file", x, y [, w, h]` (see the pictures section).
+- Video: `VIDEO "file.mpg"` (see the video section).
 - Sound: `SOUND Hz, ms`, `PLAY "notes"`, `VOLUME 0-100`, `PLAYWAV "file.wav"` (see the sound section).
 - Network: `NETSEND`, `NETOK`, `NETAVAIL`, `NETRECV`; TCP/UDP: `TCPCONNECT`, `TCPLISTEN`,
   `TCPACCEPT`, `UDPOPEN`, `SOCKPRINT`, `UDPSEND`, `SOCKAVAIL`, `SOCKGET`, `SOCKNUM`, `SOCKCLOSE`
@@ -129,7 +130,8 @@ void loop(void)
 `netSend`, `netReceive`, `netName`, and TCP/UDP: `tcpConnect`, `tcpListen`, `tcpAccept`,
 `udpOpen`, `sockWrite`, `sockPrint`, `sockRead`, `sockAvailable`, `udpSendTo`,
 `udpReceiveFrom`, `sockClose`, `sockError`, `ipAddress`, and sound: `tone(hz, ms)`, `noTone`,
-`playNotes`, `soundVolume`, `playWav`, and pictures: `drawImage(path, x, y, w, h)`, `imageError`
+`playNotes`, `soundVolume`, `playWav`, pictures: `drawImage(path, x, y, w, h)`, `imageError`, and
+video: `playVideo(path)`, `videoError`
 (see `sdk/robos.h`). A program can use `setup()` + `loop()` or `main()`.
 Examples: `hello`, `blink`, `button`, `knight`, `chat`, `tcpserv` (TCP server), `udpecho` (UDP),
 `music` (a tune and a siren).
@@ -152,9 +154,43 @@ on the HDMI screen; a big picture is scaled down to fit, keeping its shape.
   RoboOS starts; the boot messages appear behind it and show up after at least 2.5 s
   (a key ends it sooner). The card comes with a RoboOS picture - put your own there
   (best 1024x768), or delete it to boot straight to the text.
-- BASIC: `IMAGE "photo.jpg", x, y` draws a picture at x, y (pixels, 1024x768);
+- BASIC: `IMAGE "photo.jpg", x, y` draws a picture at x, y (pixels; 1024x768 unless `screen` changed it);
   `IMAGE "photo.jpg", x, y, w, h` fits it into a w x h box. C: `drawImage(path, x, y, w, h)`.
 - Pictures are decoded in memory: a 12-megapixel phone photo takes a few seconds.
+
+## Screen resolution
+
+The text screen starts at 1024x768. `screen 1280x720` (any size from 320x200 to 2048x1280)
+switches right away and is saved in `/SCREEN.TXT`, so the next boot uses it too;
+`screen auto` uses the monitor's own resolution (what the firmware found on HDMI),
+`screen` alone shows the current size and the monitor's. If the picture stays black,
+delete `/SCREEN.TXT` on a PC (or put `1024x768` in it).
+
+RoboOS asks the graphics chip for **two screen pages**: the text is on the first one, a
+video is drawn on the hidden one and then shown in one step (page flip), so it does not tear.
+
+## Video
+
+`video <file.mpg>` plays a video full screen with sound (jack, GPIO18/19 or an I2S DAC -
+`sound out` chooses). **Q** or Enter stops it, **Space** pauses, **Left/Right** jump 10 s
+back / forward; the shell then prints how many frames were shown and the frame rate.
+
+The format is **MPEG-1 video with MP2 sound** (`.mpg`, as on a Video CD): free to use, the
+patents have expired long ago, and the decoder (pl_mpeg) is small enough to run directly on
+the board. MP4 (H.264 / AAC) is licensed and needs the GPU's hardware decoder, whose
+interface is closed, so RoboOS does not play it. Convert any video on a PC with ffmpeg:
+
+```
+ffmpeg -i film.mp4 -vf scale=640:-2 -c:v mpeg1video -q:v 4 -c:a mp2 -b:a 192k -f mpeg FILM.MPG
+```
+
+- 640x360 or 640x480 at 25/30 fps is a good size for a Pi 3; the picture is scaled to
+  fit the screen (at most 2x bigger), keeping its shape. `-q:v` 2 (best) .. 10 (smallest).
+- The work is split between the cores: core 0 reads the card and decodes, **cores 2 and 3**
+  convert the colours (YCbCr to RGB) and scale the previous frame at the same time, core 1
+  keeps USB and the network running. If the board cannot keep up, frames are skipped
+  (the sound never is).
+- BASIC: `VIDEO "film.mpg"`; C: `playVideo(path)` (API version 7, `videoError()`).
 
 ## Network: messages between RoboOS boards
 
@@ -380,6 +416,7 @@ If you connect after boot, press Enter.
 | `cd [dir]` | change directory (`..` = up, `/` = top, no argument = top) |
 | `pwd` | show the current directory |
 | `view [picture\|dir]` | show pictures full screen (JPEG, PNG, BMP, GIF) |
+| `video <file.mpg>` | play a video (MPEG-1 + MP2) with sound |
 | `mkdir <dir>` | make a directory |
 | `rm [-f] <file\|dir>` | delete a file or an empty directory (`-f` for boot files) |
 | `cat <file>` | print a text file (`"quotes"` for names with spaces) |
@@ -391,6 +428,7 @@ If you connect after boot, press Enter.
 | `sound [volume n\|out jack\|gpio\|i2s\|off]` | sound output and volume |
 | `playwav <file>` | play a WAV file (jack, GPIO18/19 or I2S DAC) |
 | `sd [init]` | SD card info / re-initialize after swapping the card |
+| `screen [WxH\|auto]` | screen resolution (saved in `/SCREEN.TXT`) |
 | `clear` | clear the screen (also Ctrl+L) |
 | `reboot` | reboot via watchdog |
 | `halt` | halt the system |
@@ -404,23 +442,26 @@ raises an exception; it is printed and the system returns to the shell.
 
 ## How it works
 
-The Raspberry Pi 3 has four processor cores. RoboOS uses two of them:
+The Raspberry Pi 3 has four processor cores. RoboOS uses all of them:
 
 - **core 0**: the shell, BASIC and programs, the SD card, the screen and the sound;
 - **core 1**: all of USB (keyboard, hot-plug, the Ethernet chip) and the network
-  (TCP/IP, RoboOS messages) - all the time, whatever core 0 is doing.
+  (TCP/IP, RoboOS messages) - all the time, whatever core 0 is doing;
+- **cores 2 and 3**: workers - core 0 hands them a piece of work (now: converting video
+  frames) and they sleep (`wfe`) when there is nothing to do.
 
-Cores 2 and 3 are not used yet. `info` shows how the cores are used. If core 1 does not
-start, core 0 does everything itself, as in older versions (the boot line says so).
+`info` shows how the cores are used. If core 1 does not start, core 0 does everything
+itself, as in older versions (the boot line says so); without workers the video is
+converted on core 0.
 
 | File | What it does |
 |------|--------------|
 | `src/boot.S` | EL2→EL1 switch, stacks, exception vectors, BSS; entry for cores 1-3 |
-| `src/smp.c` | wakes core 1 (USB + network), locks shared by the cores |
+| `src/smp.c` | wakes core 1 (USB + network) and the workers 2-3 (`smp_run` / `smp_wait`), locks shared by the cores |
 | `src/mmu.c` | identity mapping with 2 MB blocks, enables D/I caches |
 | `src/mbox.c` | mailbox to the GPU firmware (board info, clocks, temperature, framebuffer) |
 | `src/uart.c` | PL011 UART0 on GPIO14/15 |
-| `src/fb.c` | HDMI framebuffer 1024×768, text console with an 8×16 font |
+| `src/fb.c` | HDMI framebuffer (1024×768 or `screen`), two pages for page flips, text console with an 8×16 font |
 | `src/console.c` | output to UART + HDMI, `kprintf`, colors, input |
 | `src/usb.c` | DWC2 USB host driver: init, root port, DMA transfers, split transactions, enumeration, hubs, hot-plug |
 | `src/eth.c` | Ethernet: LAN9514 (3B) and LAN7515 (3B+) over USB bulk endpoints, raw frames |
@@ -441,6 +482,7 @@ start, core 0 does everything itself, as in older versions (the boot line says s
 | `src/sound.c` | tones from the PWM (audio jack or GPIO18/19), music strings |
 | `src/i2s.c` | sound by DMA: I2S DAC (PCM peripheral) or the PWM, sine tones, WAV files |
 | `src/image.c` | pictures: decoding (stb_image in `src/stbimg.c`), scaling, `view`, boot picture |
+| `src/video.c` | video player: pl_mpeg (`third_party/pl_mpeg.h`) reading from the card, colour conversion on cores 2-3, sound stream |
 | `src/heap.c` | memory for big temporary work (decoding pictures) |
 | `src/font.c` | font generated from DejaVu Sans Mono (`tools/mkfont.py`) |
 
@@ -506,6 +548,7 @@ qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial stdio -device usb-kbd
 - editor: search, go to line, save as
 - a telnet-like remote shell, IPv6
 - cores 2 and 3 for programs (run a function on another core)
+- video: a playlist / folder mode, a time bar
 
 ## Credits
 
@@ -516,4 +559,5 @@ qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial stdio -device usb-kbd
   (bztsrc/raspi3-tutorial); the periodic split scheduling follows Circle/USPi.
 - TCP/IP: lwIP by Adam Dunkels and the lwIP developers (BSD license, `lwip/COPYING`).
 - Pictures: stb_image by Sean Barrett (public domain / MIT, `third_party/stb_image.h`).
+- Video: pl_mpeg by Dominic Szablewski (MIT, `third_party/pl_mpeg.h`).
 - The LAN7515 (Pi 3B+) register layout follows the Linux `lan78xx` driver.

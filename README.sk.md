@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.19**
+Aktuálna verzia: **0.20**
 
 ## Podporované dosky
 
@@ -74,6 +74,7 @@ robo@rpi3:~$ basic
   `FOR..TO..STEP`/`NEXT`, `DIM`, `END`, `REM`/`'`, `CLS`, `RANDOMIZE`; viac príkazov oddeľ `:`.
 - GPIO: `PINMODE pin, OUT|IN|PULLUP|PULLDOWN`, `GPIO pin, HIGH|LOW`, `GPIO(pin)`, `LED ON|OFF`, `WAIT ms`.
 - Obrázky: `IMAGE "súbor", x, y [, w, h]` (pozri časť o obrázkoch).
+- Video: `VIDEO "súbor.mpg"` (pozri časť o videu).
 - Zvuk: `SOUND Hz, ms`, `PLAY "noty"`, `VOLUME 0-100`, `PLAYWAV "subor.wav"` (pozri časť o zvuku).
 - Sieť: `NETSEND`, `NETOK`, `NETAVAIL`, `NETRECV`; TCP/UDP: `TCPCONNECT`, `TCPLISTEN`,
   `TCPACCEPT`, `UDPOPEN`, `SOCKPRINT`, `UDPSEND`, `SOCKAVAIL`, `SOCKGET`, `SOCKNUM`, `SOCKCLOSE`
@@ -130,7 +131,8 @@ void loop(void)
 `netSend`, `netReceive`, `netName` a TCP/UDP: `tcpConnect`, `tcpListen`, `tcpAccept`,
 `udpOpen`, `sockWrite`, `sockPrint`, `sockRead`, `sockAvailable`, `udpSendTo`,
 `udpReceiveFrom`, `sockClose`, `sockError`, `ipAddress` a zvuk: `tone(hz, ms)`, `noTone`,
-`playNotes`, `soundVolume`, `playWav` a obrázky: `drawImage(path, x, y, w, h)`, `imageError`
+`playNotes`, `soundVolume`, `playWav`, obrázky: `drawImage(path, x, y, w, h)`, `imageError` a
+video: `playVideo(path)`, `videoError`
 (viď `sdk/robos.h`). Program môže mať `setup()` + `loop()` alebo `main()`.
 Ukážky: `hello`, `blink`, `button`, `knight`, `chat`, `tcpserv` (TCP server), `udpecho` (UDP),
 `music` (pesnička a siréna).
@@ -153,9 +155,43 @@ RoboOS zobrazí na HDMI obrazovke JPEG (aj progresívny), PNG (s priehľadnosťo
   kým RoboOS štartuje; hlásenia sa píšu za ním a objavia sa najskôr po 2,5 s (klávesa to
   skráti). Na karte je obrázok s logom RoboOS - nahraď ho vlastným (najlepšie 1024x768),
   alebo ho zmaž a doska naštartuje rovno do textu.
-- BASIC: `IMAGE "foto.jpg", x, y` nakreslí obrázok na x, y (pixely, 1024x768);
+- BASIC: `IMAGE "foto.jpg", x, y` nakreslí obrázok na x, y (pixely; 1024x768, ak ho `screen` nezmenil);
   `IMAGE "foto.jpg", x, y, w, h` ho vtesná do rámčeka w x h. C: `drawImage(path, x, y, w, h)`.
 - Obrázky sa dekódujú v pamäti: 12-megapixelová fotka z mobilu trvá pár sekúnd.
+
+## Rozlíšenie obrazovky
+
+Textová obrazovka štartuje v 1024x768. `screen 1280x720` (hocijaká veľkosť od 320x200 po
+2048x1280) prepne hneď a uloží sa do `/SCREEN.TXT`, takže ju použije aj ďalší štart;
+`screen auto` použije vlastné rozlíšenie monitora (to, ktoré firmvér našiel na HDMI),
+samotné `screen` ukáže aktuálnu veľkosť a veľkosť monitora. Ak ostane obraz čierny,
+zmaž `/SCREEN.TXT` na PC (alebo doň napíš `1024x768`).
+
+RoboOS si od grafického čipu pýta **dve stránky obrazovky**: text je na prvej, video sa
+kreslí do skrytej a potom sa ukáže naraz (page flip), takže sa obraz netrhá.
+
+## Video
+
+`video <súbor.mpg>` prehrá video na celú obrazovku so zvukom (jack, GPIO18/19 alebo I2S DAC -
+vyberá `sound out`). **Q** alebo Enter ho zastaví, **medzera** pozastaví, **šípky
+vľavo/vpravo** skočia o 10 s späť / dopredu; shell potom vypíše, koľko snímok sa ukázalo
+a koľko snímok za sekundu.
+
+Formát je **MPEG-1 video so zvukom MP2** (`.mpg`, ako na Video CD): voľný, patenty dávno
+vypršali a dekodér (pl_mpeg) je dosť malý, aby bežal priamo na doske. MP4 (H.264 / AAC) je
+licencovaný a potrebuje hardvérový dekodér v GPU, ktorého rozhranie je uzavreté, preto ho
+RoboOS neprehrá. Hocijaké video prekonvertuješ na PC cez ffmpeg:
+
+```
+ffmpeg -i film.mp4 -vf scale=640:-2 -c:v mpeg1video -q:v 4 -c:a mp2 -b:a 192k -f mpeg FILM.MPG
+```
+
+- Pre Pi 3 je dobrá veľkosť 640x360 alebo 640x480 pri 25/30 snímkach za sekundu; obraz sa
+  zväčší na obrazovku (najviac 2x) a zachová tvar. `-q:v` 2 (najlepšie) .. 10 (najmenšie).
+- Práca je rozdelená medzi jadrá: jadro 0 číta kartu a dekóduje, **jadrá 2 a 3** zároveň
+  prepočítavajú farby (YCbCr na RGB) a zväčšujú predchádzajúcu snímku, jadro 1 drží USB
+  a sieť. Ak to doska nestíha, snímky sa vynechajú (zvuk nikdy).
+- BASIC: `VIDEO "film.mpg"`; C: `playVideo(path)` (API verzia 7, `videoError()`).
 
 ## Sieť: správy medzi RoboOS doskami
 
@@ -382,6 +418,7 @@ Systém komunikuje po anglicky.
 | `cd [priečinok]` | zmena priečinka (`..` = vyššie, `/` = navrch, bez argumentu = navrch) |
 | `pwd` | ukáže aktuálny priečinok |
 | `view [obrázok\|priečinok]` | ukáže obrázky na celú obrazovku (JPEG, PNG, BMP, GIF) |
+| `video <súbor.mpg>` | prehrá video (MPEG-1 + MP2) so zvukom |
 | `mkdir <priečinok>` | vytvorí priečinok |
 | `rm [-f] <súbor\|priečinok>` | zmaže súbor alebo prázdny priečinok (`-f` pre bootovacie súbory) |
 | `cat <súbor>` | vypíše textový súbor (`"úvodzovky"` pre mená s medzerami) |
@@ -393,6 +430,7 @@ Systém komunikuje po anglicky.
 | `sound [volume n\|out jack\|gpio\|i2s\|off]` | výstup a hlasitosť zvuku |
 | `playwav <súbor>` | prehrá súbor WAV (jack, GPIO18/19 alebo I2S DAC) |
 | `sd [init]` | info o SD karte / znovu inicializovať po výmene karty |
+| `screen [ŠxV\|auto]` | rozlíšenie obrazovky (uloží sa do `/SCREEN.TXT`) |
 | `clear` | vymaže obrazovku (aj Ctrl+L) |
 | `reboot` | reštart cez watchdog |
 | `halt` | zastaví systém |
@@ -406,23 +444,25 @@ vyvolá výnimku; tá sa vypíše a systém sa vráti do shellu.
 
 ## Ako to funguje
 
-Raspberry Pi 3 má štyri jadrá procesora. RoboOS používa dve:
+Raspberry Pi 3 má štyri jadrá procesora. RoboOS používa všetky:
 
 - **jadro 0**: shell, BASIC a programy, SD karta, obrazovka a zvuk;
 - **jadro 1**: celé USB (klávesnica, hot-plug, ethernetový čip) a sieť (TCP/IP, správy
-  RoboOS) - stále, nech jadro 0 robí čokoľvek.
+  RoboOS) - stále, nech jadro 0 robí čokoľvek;
+- **jadrá 2 a 3**: pomocníci - jadro 0 im dá kus práce (zatiaľ prepočet snímok videa)
+  a keď nemajú čo robiť, spia (`wfe`).
 
-Jadrá 2 a 3 sa zatiaľ nepoužívajú. `info` ukáže, ako sa jadrá využívajú. Ak sa jadro 1
-nespustí, jadro 0 robí všetko samo ako v starších verziách (hlási to riadok pri štarte).
+`info` ukáže, ako sa jadrá využívajú. Ak sa jadro 1 nespustí, jadro 0 robí všetko samo ako
+v starších verziách (hlási to riadok pri štarte); bez pomocníkov prepočíta video jadro 0.
 
 | Súbor | Čo robí |
 |-------|---------|
 | `src/boot.S` | prechod EL2→EL1, zásobníky, vektory výnimiek, BSS; vstup pre jadrá 1-3 |
-| `src/smp.c` | prebudí jadro 1 (USB + sieť), zámky zdieľané jadrami |
+| `src/smp.c` | prebudí jadro 1 (USB + sieť) a pomocníkov 2-3 (`smp_run` / `smp_wait`), zámky zdieľané jadrami |
 | `src/mmu.c` | identické mapovanie 2 MB blokmi, zapnutie D/I cache |
 | `src/mbox.c` | mailbox ku GPU firmvéru (info o doske, takty, teplota, framebuffer) |
 | `src/uart.c` | PL011 UART0 na GPIO14/15 |
-| `src/fb.c` | HDMI framebuffer 1024×768, textová konzola s fontom 8×16 |
+| `src/fb.c` | HDMI framebuffer (1024×768 alebo `screen`), dve stránky na page flip, textová konzola s fontom 8×16 |
 | `src/console.c` | výstup na UART + HDMI, `kprintf`, farby, vstup |
 | `src/usb.c` | USB host ovládač DWC2: inicializácia, root port, DMA prenosy, split transakcie, enumerácia, huby, hot-plug |
 | `src/eth.c` | Ethernet: LAN9514 (3B) a LAN7515 (3B+) cez USB bulk endpointy, surové rámce |
@@ -443,6 +483,7 @@ nespustí, jadro 0 robí všetko samo ako v starších verziách (hlási to riad
 | `src/sound.c` | tóny z PWM (zvukový jack alebo GPIO18/19), noty |
 | `src/i2s.c` | zvuk cez DMA: I2S DAC (periféria PCM) alebo PWM, sínusové tóny, súbory WAV |
 | `src/image.c` | obrázky: dekódovanie (stb_image v `src/stbimg.c`), zmenšovanie, `view`, obrázok pri štarte |
+| `src/video.c` | prehrávač videa: pl_mpeg (`third_party/pl_mpeg.h`) číta z karty, prepočet farieb na jadrách 2-3, zvukový prúd |
 | `src/heap.c` | pamäť na veľkú dočasnú prácu (dekódovanie obrázkov) |
 | `src/font.c` | font vygenerovaný z DejaVu Sans Mono (`tools/mkfont.py`) |
 
@@ -509,6 +550,7 @@ qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial stdio -device usb-kbd
 - editor: hľadanie, skok na riadok, uložiť ako
 - vzdialený shell (ako telnet), IPv6
 - jadrá 2 a 3 pre programy (spustiť funkciu na inom jadre)
+- video: playlist / celý priečinok, časová lišta
 
 ## Poďakovanie
 
@@ -519,4 +561,5 @@ qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial stdio -device usb-kbd
   (bztsrc/raspi3-tutorial); časovanie periodických split transakcií podľa Circle/USPi.
 - TCP/IP: lwIP od Adama Dunkelsa a vývojárov lwIP (licencia BSD, `lwip/COPYING`).
 - Obrázky: stb_image od Seana Barretta (public domain / MIT, `third_party/stb_image.h`).
+- Video: pl_mpeg od Dominica Szablewského (MIT, `third_party/pl_mpeg.h`).
 - Registre LAN7515 (Pi 3B+) podľa linuxového ovládača `lan78xx`.

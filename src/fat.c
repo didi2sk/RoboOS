@@ -124,7 +124,7 @@ int fat_read(struct fat_file *f, void *buf, u32 len)
         if (file_sector(f, f->pos / 512, &lba)) break;
         u32 off = f->pos % 512, n = 512 - off;
         if (n > len - done) n = len - done;
-        if (off == 0 && n == 512) {                      /* whole sector straight to the buffer */
+        if (off == 0 && n == 512 && !((uintptr_t)(out + done) & 3)) {   /* whole sector straight to the buffer */
             if (sd_read(lba, out + done, 1)) return -1;
         } else {
             if (read_sec(lba, secbuf, &secbuf_lba)) return -1;
