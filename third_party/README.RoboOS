@@ -4,3 +4,8 @@ License: public domain or MIT (see the end of the file). Configured in src/stbim
 pl_mpeg.h from https://github.com/phoboslab/pl_mpeg (commit c871f2b), unmodified.
 License: MIT (see the top of the file). MPEG-1 video + MP2 audio in MPEG program
 streams (.mpg); the patents on both have expired. Configured in src/video.c.
+
+bearssl/ - BearSSL 0.6 by Thomas Pornin (https://bearssl.org), MIT license (bearssl/LICENSE.txt).
+src/ and inc/ unmodified, from bearssl_0.6+dfsg.1.orig.tar.xz in the Ubuntu archive
+(sha256 102a625bd8f6155260867a50c508df8d8c3f796985dd744df1a68e5cd1a79004, matches the .dsc).
+Built as build/libbearssl.a with the BR_* options in the Makefile; used by src/tls.c.

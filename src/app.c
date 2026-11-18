@@ -134,6 +134,15 @@ static int  a_writefile(const char *p, const void *d, int len)
     return fat_write_file(full, d, (u32)len) ? -2 : 0;
 }
 
+static u64  a_unixtime(void) { return clock_now(); }
+static int  a_timetext(char *b)
+{
+    u64 t = clock_now();
+    if (!t) { b[0] = 0; return 0; }
+    clock_format(b, t, 0);
+    return 1;
+}
+
 static int  a_video(const char *p)
 {
     char full[PATH_MAX_LEN];
@@ -194,6 +203,8 @@ static const struct robos_api api_table = {
     .videoError = video_error,
     .readFile = a_readfile,
     .writeFile = a_writefile,
+    .unixTime = a_unixtime,
+    .timeText = a_timetext,
 };
 
 /* called from the exception handler: a crash inside a program ends the program */

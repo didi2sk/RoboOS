@@ -31,6 +31,8 @@
 #include "lwip/tcp.h"
 #include "lwip/udp.h"
 #include "netif/ethernet.h"
+#include "bearssl.h"
+br_ssl_engine_context *tls_engine(struct tls_conn *c);   /* tls.c */
 
 static struct netif nif;
 static int lwip_ready, started, use_dhcp = 1, announce;
@@ -87,6 +89,8 @@ static err_t nif_init(struct netif *n)
 }
 
 static void load_http(void);
+static int  tls_want;
+static int  https_start(void);
 static int  http_want;                     /* /HTTP.TXT says "on": start with the network */
 static int  http_start(void);
 
@@ -143,6 +147,7 @@ static void start(void)
     }
     if (use_dhcp) dhcp_start(&nif);
     if (http_want) http_start();                         /* /HTTP.TXT: "on" */
+    if (http_want && tls_want) https_start();            /* ... "tls" */
     started = 1;
     ip4_addr_set_zero(&shown_ip);
 }
@@ -177,6 +182,71 @@ static void put_ip(const ip4_addr_t *a)
     kprintf("%s", ip4addr_ntoa_r(a, b, sizeof(b)));
 }
 
+/* ---------------- NTP: the time from a server (SNTP, one UDP packet) ---------------- */
+
+static struct udp_pcb *ntp_pcb;
+static u64 ntp_next, ntp_asked;
+static int ntp_first = 1;
+
+static void ntp_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr, u16_t port)
+{
+    u8 b[48];
+    (void)arg; (void)pcb; (void)addr; (void)port;
+    if (p->tot_len >= 48 && pbuf_copy_partial(p, b, 48, 0) == 48) {
+        int mode = b[0] & 7, stratum = b[1];
+        u32 sec = (u32)b[40] << 24 | (u32)b[41] << 16 | (u32)b[42] << 8 | b[43];
+        u32 frac = (u32)b[44] << 24;
+        if ((mode == 4 || mode == 5) && stratum > 0 && stratum < 16 && sec > 2208988800u + 1700000000u) {
+            u64 t = (u64)sec - 2208988800u + (frac >= 0x80000000u);
+            t += (timer_us() - ntp_asked) / 2000000;     /* half the round trip */
+            clock_set_time(t, 1);
+            ntp_next = timer_us() + 3600ULL * 1000000;   /* again in an hour */
+            if (ntp_first) {
+                char s[32];
+                clock_format(s, t, 0);
+                con_color(COL_CYAN); kprintf("\n[NET] time %s (NTP %s)\n", s, clock_server()); con_color(COL_DEFAULT);
+                ntp_first = 0;
+            }
+        }
+    }
+    pbuf_free(p);
+}
+
+static void ntp_send(const ip_addr_t *a)
+{
+    struct pbuf *p = pbuf_alloc(PBUF_TRANSPORT, 48, PBUF_RAM);
+    if (!p) return;
+    memset(p->payload, 0, 48);
+    ((u8 *)p->payload)[0] = 0x23;                        /* version 4, client */
+    ntp_asked = timer_us();
+    udp_sendto(ntp_pcb, p, a, 123);
+    pbuf_free(p);
+}
+
+static void ntp_dns(const char *name, const ip_addr_t *a, void *arg)
+{
+    (void)name; (void)arg;
+    if (a) ntp_send(a);
+}
+
+static void ntp_tick(void)
+{
+    if (ip4_addr_isany_val(*netif_ip4_addr(&nif)) || !netif_is_link_up(&nif)) return;
+    u64 now = timer_us();
+    int forced = clock_ntp_wanted();
+    if (!forced && now < ntp_next) return;
+    if (!clock_server()[0]) { ntp_next = now + 60ULL * 1000000; return; }
+    ntp_next = now + 30ULL * 1000000;                    /* no answer: try again in 30 s */
+    if (!ntp_pcb) {
+        ntp_pcb = udp_new();
+        if (!ntp_pcb) return;
+        udp_bind(ntp_pcb, IP_ADDR_ANY, 0);
+        udp_recv(ntp_pcb, ntp_recv, 0);
+    }
+    ip_addr_t a;
+    if (dns_gethostbyname(clock_server(), &a, ntp_dns, 0) == ERR_OK) ntp_send(&a);
+}
+
 /* called every 5 ms from net_poll(); notify = may print (shell prompt) */
 void ip_poll(int notify)
 {
@@ -189,6 +259,7 @@ void ip_poll(int notify)
     if (!up && netif_is_link_up(&nif)) netif_set_link_down(&nif);
     sys_check_timeouts();
     api_poll();
+    ntp_tick();
 
     if (!ip4_addr_cmp(netif_ip4_addr(&nif), &shown_ip)) {
         ip4_addr_copy(shown_ip, *netif_ip4_addr(&nif));
@@ -380,7 +451,7 @@ static void ping_cmd_l(int argc, char **argv)
 
 /* ---------------- command: http (a small page + the JSON API in webapi.c) ---------------- */
 
-static struct tcp_pcb *http_pcb;
+static struct tcp_pcb *http_pcb, *https_pcb;
 static u32 http_hits;
 static char page[4096];
 static int plen;
@@ -416,24 +487,50 @@ static void build_page(void)
     if (tc >= 0) { add("<tr><td>CPU</td><td>"); add_u((u64)tc / 1000); add("."); add_u((u64)tc % 1000 / 100); add(" C</td></tr>"); }
     add("<tr><td>visits</td><td>"); add_u(http_hits); add("</td></tr>");
     add("<tr><td>JSON API</td><td>"); add(api_token()[0] ? "on (/api/..., Bearer token)" : "off"); add("</td></tr>");
+    add("<tr><td>HTTPS</td><td>"); add(https_pcb ? "on" : "off"); add("</td></tr>");
+    {
+        char tb[32];
+        u64 now = clock_now();
+        if (now) { clock_format(tb, now, 0); add("<tr><td>time</td><td>"); add(tb); add("</td></tr>"); }
+    }
     add("</table></body></html>\n");
 }
 
-/* one connection: the request is collected until the headers and Content-Length bytes are in */
+/* one connection: the request is collected until the headers and Content-Length bytes are in.
+ * With TLS (port 443) the bytes go through BearSSL first (tls.c), the answer back the same way. */
 #define HTTP_CONNS 8
 #define HTTP_REQ   2048
-struct http_conn { int used, len, done; u8 idle; u64 since; struct tcp_pcb *pcb; char req[HTTP_REQ + 1]; };
+struct http_conn {
+    int used, len, done, closing;
+    u8 idle;
+    u64 since;
+    struct tcp_pcb *pcb;
+    struct tls_conn *tls;          /* 0 = plain HTTP */
+    struct pbuf *pin;              /* TLS: received bytes not yet given to BearSSL */
+    u16 pin_off;
+    char req[HTTP_REQ + 1];
+};
 static struct http_conn hconn[HTTP_CONNS];
+static int tls_want;               /* /HTTP.TXT says "tls" */
+static u32 https_hits;
 
-static void conn_free(struct http_conn *c) { if (c) c->used = 0; }
+static void conn_free(struct http_conn *c)
+{
+    if (!c) return;
+    if (c->tls) { tls_close(c->tls); c->tls = 0; }
+    if (c->pin) { pbuf_free(c->pin); c->pin = 0; }
+    c->used = 0;
+}
 
 static void http_err(void *arg, err_t err) { (void)err; conn_free(arg); }   /* the pcb is gone already */
 
-static void http_finish(struct tcp_pcb *pcb, struct http_conn *c)
+/* ERR_ABRT if the pcb had to be aborted (a callback must then return ERR_ABRT) */
+static err_t http_finish(struct tcp_pcb *pcb, struct http_conn *c)
 {
-    tcp_arg(pcb, 0); tcp_recv(pcb, 0); tcp_err(pcb, 0); tcp_poll(pcb, 0, 0);
+    tcp_arg(pcb, 0); tcp_recv(pcb, 0); tcp_err(pcb, 0); tcp_poll(pcb, 0, 0); tcp_sent(pcb, 0);
     conn_free(c);
-    if (tcp_close(pcb) != ERR_OK) tcp_abort(pcb);        /* FIN after the queued data */
+    if (tcp_close(pcb) != ERR_OK) { tcp_abort(pcb); return ERR_ABRT; }   /* FIN after the queued data */
+    return ERR_OK;
 }
 
 static void send_text(struct tcp_pcb *pcb, const char *t, int n)
@@ -457,29 +554,24 @@ static char *header(char *h, const char *name)
     return 0;
 }
 
-/* 1 = answered */
+/* 1 = the answer is in page[0..plen) */
 static int http_try(struct tcp_pcb *pcb, struct http_conn *c)
 {
     char *end = strstr(c->req, "\r\n\r\n");
     if (!end) {
-        static const char big[] = "HTTP/1.0 431 Too Large\r\nConnection: close\r\n\r\n";
-        if (c->len >= HTTP_REQ) { send_text(pcb, big, (int)sizeof(big) - 1); return 1; }
+        if (c->len >= HTTP_REQ) { plen = 0; add("HTTP/1.0 431 Too Large\r\nConnection: close\r\n\r\n"); return 1; }
         return 0;
     }
     char *body = end + 4;
     int have = c->len - (int)(body - c->req), need = 0;
     char *cl = header(c->req, "Content-Length");
     if (cl) while (*cl >= '0' && *cl <= '9') need = need * 10 + (*cl++ - '0');
-    if (need > HTTP_REQ - (int)(body - c->req)) {
-        static const char big[] = "HTTP/1.0 413 Too Large\r\nConnection: close\r\n\r\n";
-        send_text(pcb, big, (int)sizeof(big) - 1);
-        return 1;
-    }
+    if (need > HTTP_REQ - (int)(body - c->req)) { plen = 0; add("HTTP/1.0 413 Too Large\r\nConnection: close\r\n\r\n"); return 1; }
     if (have < need) return 0;
 
     /* "METHOD /path HTTP/1.x" */
     char *m = c->req, *path = strchr(m, ' ');
-    if (!path) return 1;
+    if (!path) { plen = 0; return 1; }
     *path++ = 0;
     char *sp = strchr(path, ' ');
     if (sp) *sp = 0;
@@ -488,9 +580,15 @@ static int http_try(struct tcp_pcb *pcb, struct http_conn *c)
     char from[16];
     ip4addr_ntoa_r(ip_2_ip4(&pcb->remote_ip), from, sizeof(from));
 
-    http_hits++;
+    if (c->tls) https_hits++; else http_hits++;
     if (!strncmp(path, "/api", 4) && (path[4] == 0 || path[4] == '/')) {
-        if (!strcmp(m, "OPTIONS")) {                     /* a browser asks before a POST from a web page */
+        if (!c->tls && https_pcb) {                      /* with HTTPS on, the token must not go in clear text */
+            plen = 0;
+            add("HTTP/1.0 403 Forbidden\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n"
+                "{\"ok\":false,\"error\":\"HTTPS is on: use https://");
+            add(ip_address_str());
+            add("/api/...\"}\n");
+        } else if (!strcmp(m, "OPTIONS")) {              /* a browser asks before a POST from a web page */
             plen = 0;
             add("HTTP/1.0 204 No Content\r\nAccess-Control-Allow-Origin: *\r\n"
                 "Access-Control-Allow-Methods: GET, POST, PUT, OPTIONS\r\n"
@@ -504,7 +602,6 @@ static int http_try(struct tcp_pcb *pcb, struct http_conn *c)
     } else {
         build_page();
     }
-    send_text(pcb, page, plen);
     return 1;
 }
 
@@ -512,7 +609,7 @@ static err_t http_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err
 {
     struct http_conn *c = arg;
     (void)err;
-    if (!p) { http_finish(pcb, c); return ERR_OK; }
+    if (!p) return http_finish(pcb, c);
     tcp_recved(pcb, p->tot_len);
     if (c && !c->done) {
         int n = p->tot_len;
@@ -521,42 +618,152 @@ static err_t http_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err
         c->len += n;
         c->req[c->len] = 0;
         c->idle = 0;
-        if (http_try(pcb, c)) { c->done = 1; pbuf_free(p); http_finish(pcb, c); return ERR_OK; }
+        if (http_try(pcb, c)) {
+            c->done = 1;
+            send_text(pcb, page, plen);
+            pbuf_free(p);
+            return http_finish(pcb, c);
+        }
     }
     pbuf_free(p);
+    return ERR_OK;
+}
+
+/* ---- TLS: move bytes between TCP, BearSSL and the request / answer ---- */
+
+static err_t tls_pump(struct tcp_pcb *pcb, struct http_conn *c)
+{
+    br_ssl_engine_context *e = tls_engine(c->tls);
+    for (int guard = 0; guard < 64; guard++) {
+        unsigned st = br_ssl_engine_current_state(e);
+        int progress = 0;
+        if (st & BR_SSL_CLOSED) return http_finish(pcb, c);
+        if (st & BR_SSL_SENDREC) {                       /* records to send */
+            size_t len;
+            u8 *b = br_ssl_engine_sendrec_buf(e, &len);
+            u32 room = tcp_sndbuf(pcb);
+            if (len > room) len = room;
+            if (len > 0xFFFF) len = 0xFFFF;
+            if (len && tcp_write(pcb, b, (u16_t)len, TCP_WRITE_FLAG_COPY) == ERR_OK) { br_ssl_engine_sendrec_ack(e, len); progress = 1; }
+        } else if (c->closing) {                         /* close_notify is out */
+            tcp_output(pcb);
+            return http_finish(pcb, c);
+        }
+        if (st & BR_SSL_RECVAPP) {                       /* decrypted request bytes */
+            size_t len;
+            u8 *b = br_ssl_engine_recvapp_buf(e, &len);
+            int n = (int)len;
+            if (n > HTTP_REQ - c->len) n = HTTP_REQ - c->len;
+            memcpy(c->req + c->len, b, (size_t)n);
+            c->len += n;
+            c->req[c->len] = 0;
+            br_ssl_engine_recvapp_ack(e, len);
+            progress = 1;
+            if (!c->done && http_try(pcb, c)) c->done = 1, c->closing = 2;   /* 2 = answer waiting */
+        }
+        if ((st & BR_SSL_SENDAPP) && c->closing == 2) {  /* the answer, then close_notify */
+            size_t len;
+            u8 *b = br_ssl_engine_sendapp_buf(e, &len);
+            if ((int)len >= plen) {
+                memcpy(b, page, (size_t)plen);
+                br_ssl_engine_sendapp_ack(e, (size_t)plen);
+                br_ssl_engine_flush(e, 0);
+                br_ssl_engine_close(e);
+                c->closing = 1;
+                progress = 1;
+            }
+        }
+        if ((st & BR_SSL_RECVREC) && c->pin) {           /* feed received records */
+            size_t len;
+            u8 *b = br_ssl_engine_recvrec_buf(e, &len);
+            int left = c->pin->tot_len - c->pin_off;
+            int n = left < (int)len ? left : (int)len;
+            pbuf_copy_partial(c->pin, b, (u16_t)n, c->pin_off);
+            br_ssl_engine_recvrec_ack(e, (size_t)n);
+            tcp_recved(pcb, (u16_t)n);
+            c->pin_off += (u16)n;
+            if (c->pin_off >= c->pin->tot_len) { pbuf_free(c->pin); c->pin = 0; c->pin_off = 0; }
+            progress = 1;
+        }
+        if (!progress) break;
+    }
+    tcp_output(pcb);
+    return ERR_OK;
+}
+
+static err_t https_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err)
+{
+    struct http_conn *c = arg;
+    (void)err;
+    if (!p) return http_finish(pcb, c);
+    if (!c || !c->tls) { tcp_recved(pcb, p->tot_len); pbuf_free(p); return ERR_OK; }
+    if (c->pin) return ERR_MEM;                          /* still busy with the last one: lwIP keeps it */
+    c->pin = p; c->pin_off = 0; c->idle = 0;
+    return tls_pump(pcb, c);
+}
+
+static err_t https_sent(void *arg, struct tcp_pcb *pcb, u16_t len)
+{
+    struct http_conn *c = arg;
+    (void)len;
+    if (c && c->tls) return tls_pump(pcb, c);
     return ERR_OK;
 }
 
 static err_t http_poll(void *arg, struct tcp_pcb *pcb)
 {
     struct http_conn *c = arg;
-    if (c && ++c->idle >= 10) http_finish(pcb, c);      /* 5 s without the whole request */
+    if (c && ++c->idle >= 10) return http_finish(pcb, c);   /* 5 s quiet */
+    if (c && c->tls) return tls_pump(pcb, c);
     return ERR_OK;
+}
+
+static struct http_conn *conn_new(struct tcp_pcb *pcb)
+{
+    struct http_conn *c = 0;
+    for (int i = 0; i < HTTP_CONNS; i++) if (!hconn[i].used) { c = &hconn[i]; break; }
+    if (!c) {                                            /* all taken: drop the oldest silent one */
+        struct http_conn *old = 0;                       /* (browsers open spare connections and wait) */
+        for (int i = 0; i < HTTP_CONNS; i++)
+            if (hconn[i].len == 0 && !hconn[i].tls && (!old || hconn[i].since < old->since)) old = &hconn[i];
+        if (!old) return 0;                              /* all busy with real requests */
+        struct tcp_pcb *op = old->pcb;
+        tcp_arg(op, 0); tcp_recv(op, 0); tcp_err(op, 0); tcp_poll(op, 0, 0); tcp_sent(op, 0);
+        tcp_abort(op);
+        conn_free(old);
+        c = old;
+    }
+    c->used = 1; c->len = 0; c->done = 0; c->closing = 0; c->idle = 0; c->req[0] = 0;
+    c->since = timer_us(); c->pcb = pcb; c->tls = 0; c->pin = 0; c->pin_off = 0;
+    return c;
 }
 
 static err_t http_accept(void *arg, struct tcp_pcb *pcb, err_t err)
 {
     (void)arg;
     if (err != ERR_OK || !pcb) return ERR_VAL;
-    struct http_conn *c = 0;
-    for (int i = 0; i < HTTP_CONNS; i++) if (!hconn[i].used) { c = &hconn[i]; break; }
-    if (!c) {                                            /* all taken: drop the oldest silent one */
-        struct http_conn *old = 0;                       /* (browsers open spare connections and wait) */
-        for (int i = 0; i < HTTP_CONNS; i++)
-            if (hconn[i].len == 0 && (!old || hconn[i].since < old->since)) old = &hconn[i];
-        if (!old) { tcp_abort(pcb); return ERR_ABRT; }  /* all busy with real requests */
-        struct tcp_pcb *op = old->pcb;
-        tcp_arg(op, 0); tcp_recv(op, 0); tcp_err(op, 0); tcp_poll(op, 0, 0);
-        tcp_abort(op);
-        old->used = 0;
-        c = old;
-    }
-    c->used = 1; c->len = 0; c->done = 0; c->idle = 0; c->req[0] = 0;
-    c->since = timer_us(); c->pcb = pcb;
+    struct http_conn *c = conn_new(pcb);
+    if (!c) { tcp_abort(pcb); return ERR_ABRT; }
     tcp_arg(pcb, c);
     tcp_recv(pcb, http_recv);
     tcp_err(pcb, http_err);
     tcp_poll(pcb, http_poll, 1);                         /* every 0.5 s */
+    return ERR_OK;
+}
+
+static err_t https_accept(void *arg, struct tcp_pcb *pcb, err_t err)
+{
+    (void)arg;
+    if (err != ERR_OK || !pcb) return ERR_VAL;
+    struct http_conn *c = conn_new(pcb);
+    struct tls_conn *t = c ? tls_open() : 0;
+    if (!t) { if (c) conn_free(c); tcp_abort(pcb); return ERR_ABRT; }   /* 4 TLS connections at most */
+    c->tls = t;
+    tcp_arg(pcb, c);
+    tcp_recv(pcb, https_recv);
+    tcp_sent(pcb, https_sent);
+    tcp_err(pcb, http_err);
+    tcp_poll(pcb, http_poll, 1);
     return ERR_OK;
 }
 
@@ -570,33 +777,62 @@ static int http_start(void)
     return 1;
 }
 
-/* /HTTP.TXT: "on|off [token]" - read on core 0 in ip_prepare() */
+static int https_start(void)
+{
+    if (https_pcb) return 1;
+    if (!tls_ready()) return 0;
+    struct tcp_pcb *p = tcp_new();
+    if (!p || tcp_bind(p, IP_ADDR_ANY, 443) != ERR_OK) { if (p) tcp_close(p); return 0; }
+    https_pcb = tcp_listen(p);
+    tcp_accept(https_pcb, https_accept);
+    return 1;
+}
+
+static void https_stop(void)
+{
+    if (https_pcb) { tcp_close(https_pcb); https_pcb = 0; }
+    for (int i = 0; i < HTTP_CONNS; i++)                 /* open TLS connections end */
+        if (hconn[i].used && hconn[i].tls) {
+            struct tcp_pcb *op = hconn[i].pcb;
+            tcp_arg(op, 0); tcp_recv(op, 0); tcp_err(op, 0); tcp_poll(op, 0, 0); tcp_sent(op, 0);
+            tcp_abort(op);
+            conn_free(&hconn[i]);
+        }
+}
+
+/* /HTTP.TXT: "on|off [token] [tls]" - read on core 0 in ip_prepare() */
 static void load_http(void)
 {
     struct fat_file f;
-    char b[96];
+    char b[120];
     int n;
     if (!fat_mounted() || fat_open("/HTTP.TXT", &f) || f.is_dir) return;
     if ((n = fat_read(&f, b, sizeof(b) - 1)) <= 0) return;
     b[n] = 0;
-    char *p = b;
-    while (*p == ' ') p++;
-    http_want = !strncmp(p, "on", 2);
-    while (*p && *p != ' ' && *p != '\r' && *p != '\n') p++;
-    while (*p == ' ') p++;
-    char *t = p;
-    while (*p && *p != ' ' && *p != '\r' && *p != '\n') p++;
-    *p = 0;
-    api_set_token(t);
+    char *p = b, *w[4];
+    int k = 0;
+    while (*p && k < 4) {
+        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') *p++ = 0;
+        if (!*p) break;
+        w[k++] = p;
+        while (*p && *p != ' ' && *p != '\t' && *p != '\r' && *p != '\n') p++;
+    }
+    if (k) http_want = !strcmp(w[0], "on");
+    for (int i = 1; i < k; i++) {
+        if (!strcmp(w[i], "tls")) tls_want = 1;
+        else api_set_token(w[i]);                        /* tokens have 8+ characters */
+    }
+    if (tls_want && !tls_prepare(0, "")) kprintf("HTTPS: %s\n", tls_error());
 }
 
 static void save_http(void)
 {
-    char b[96];
+    char b[110];
     int n = 0;
     const char *on = http_pcb ? "on" : "off", *t = api_token();
     while (*on) b[n++] = *on++;
     if (*t) { b[n++] = ' '; while (*t && n < 92) b[n++] = *t++; }
+    if (tls_want) { b[n++] = ' '; b[n++] = 't'; b[n++] = 'l'; b[n++] = 's'; }
     b[n++] = '\r'; b[n++] = '\n'; b[n] = 0;
     if (!fat_mounted() || fat_write_file("/HTTP.TXT", b, (u32)n))
         kprintf("(not saved: no SD card or write error)\n");
@@ -618,19 +854,40 @@ static void http_cmd_l(int argc, char **argv)
         return;
     }
     if (!need_net()) return;
-    if (argc > 1 && !strcmp(argv[1], "on")) {
+    if (argc > 2 && !strcmp(argv[1], "tls")) {
+        if (!strcmp(argv[2], "on") || !strcmp(argv[2], "new")) {
+            int renew = !strcmp(argv[2], "new");
+            if (renew) https_stop();
+            if (!tls_prepare(renew, ip_address_str())) { kprintf("HTTPS: %s\n", tls_error()); return; }
+            if (!http_pcb) http_start();
+            if (!https_start()) { kprintf("cannot open port 443\n"); return; }
+            tls_want = 1;
+        } else if (!strcmp(argv[2], "off")) {
+            https_stop();
+            tls_want = 0;
+        } else { kprintf("usage: http tls on|off|new\n"); return; }
+        save_http();
+    } else if (argc > 1 && !strcmp(argv[1], "on")) {
         if (!http_start()) { kprintf("cannot open port 80\n"); return; }
+        if (tls_want) https_start();
         save_http();
     } else if (argc > 1 && !strcmp(argv[1], "off")) {
         if (http_pcb) { tcp_close(http_pcb); http_pcb = 0; }
+        https_stop();
         save_http();
     } else if (argc > 1) {
-        kprintf("usage: http [on|off]   http token [<secret>|off]\n");
+        kprintf("usage: http [on|off]   http token [<secret>|off]   http tls on|off|new\n");
         return;
     }
-    if (http_pcb) kprintf("web page on: http://%s/  (%u requests)\n", ip_address_str(), http_hits);
+    const char *a = ip_address_str();
+    if (http_pcb) kprintf("web page on: http://%s/  (%u requests)\n", a, http_hits);
     else          kprintf("web page off ('http on' starts it, also after reboot)\n");
-    if (api_token()[0]) kprintf("JSON API on: http://%s/api/status  (Authorization: Bearer <token>, 'http token' shows it)\n", ip_address_str());
+    if (https_pcb) {
+        kprintf("HTTPS on:    https://%s/  (%u requests; the API only here)\n", a, https_hits);
+        kprintf("certificate SHA-256 %s\n", tls_fingerprint());
+    } else kprintf("HTTPS off ('http tls on')\n");
+    if (api_token()[0]) kprintf("JSON API on: %s://%s/api/status  (Authorization: Bearer <token>, 'http token' shows it)\n",
+                                https_pcb ? "https" : "http", a);
     else                kprintf("JSON API off ('http token <secret>' turns it on)\n");
 }
 

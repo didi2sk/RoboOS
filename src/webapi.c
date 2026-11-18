@@ -432,6 +432,13 @@ int api_handle(const char *method, const char *path, const char *auth, const cha
         put(",\"version\":"); put_str(os_version());
         put(",\"address\":"); put_str(ip_address_str());
         put(",\"uptime_s\":"); put_i((long)(timer_us() / 1000000));
+        u64 now = clock_now();
+        if (now) {
+            char tb[32];
+            clock_format(tb, now, 1);
+            put(",\"time\":"); put_str(tb);
+            put(",\"unix\":"); put_i((long)now);
+        }
         if (tc >= 0) { put(",\"cpu_temp_mc\":"); put_i(tc); }
         put("}\n");
         return olen;

@@ -19,7 +19,7 @@ if os.path.exists(ser_path): os.unlink(ser_path)
 q = subprocess.Popen(["qemu-system-aarch64", "-M", "raspi3b", "-kernel", kernel, "-display", "none",
                       "-drive", "file=%s,if=sd,format=raw" % sdimg,
                       "-device", "usb-kbd", "-device", "usb-net,netdev=n0",
-                      "-netdev", "user,id=n0,hostfwd=tcp:127.0.0.1:18080-:80,hostfwd=tcp:127.0.0.1:18023-:23,hostfwd=udp:127.0.0.1:15000-:5000",
+                      "-netdev", "user,id=n0,hostfwd=tcp:127.0.0.1:18080-:80,hostfwd=tcp:127.0.0.1:18023-:23,hostfwd=tcp:127.0.0.1:18443-:443,hostfwd=udp:127.0.0.1:15000-:5000",
                       "-serial", f"unix:{ser_path},server=on,wait=off", "-monitor", "none"],
                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 import threading

@@ -88,9 +88,13 @@ static int code_ok(const char *c)
 static void event(const char *text, const char *detail)
 {
     uint64_t s = now_s();
+    char when[24];
     textColor(state == ALARM ? 4 : state == DISARMED ? 1 : 3);
-    printf("[ALARM %02u:%02u:%02u] %s%s%s\n", (unsigned)(s / 3600), (unsigned)(s / 60 % 60), (unsigned)(s % 60),
-           text, detail && *detail ? " " : "", detail ? detail : "");
+    if (api->version >= 9 && timeText(when))           /* the real time (NTP), else the time since start */
+        printf("[ALARM %s] %s%s%s\n", when, text, detail && *detail ? " " : "", detail ? detail : "");
+    else
+        printf("[ALARM %02u:%02u:%02u] %s%s%s\n", (unsigned)(s / 3600), (unsigned)(s / 60 % 60), (unsigned)(s % 60),
+               text, detail && *detail ? " " : "", detail ? detail : "");
     textColor(0);
 }
 

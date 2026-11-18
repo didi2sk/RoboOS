@@ -11,8 +11,13 @@ SRCS = $(wildcard src/*.c)
 ASMS = $(wildcard src/*.S)
 # lwIP TCP/IP stack (lwip/, BSD license) - IPv4 core + Ethernet
 LWIP_SRCS = $(wildcard lwip/src/core/*.c lwip/src/core/ipv4/*.c) lwip/src/netif/ethernet.c
+# BearSSL (third_party/bearssl, MIT) - TLS for the web server; an archive, so only what is used is linked
+BSSL_SRCS = $(wildcard third_party/bearssl/src/*.c third_party/bearssl/src/*/*.c)
+BSSL_OBJS = $(BSSL_SRCS:third_party/bearssl/src/%.c=build/bearssl/%.o)
+BSSL_DEFS = -DBR_USE_URANDOM=0 -DBR_USE_UNIX_TIME=0 -DBR_USE_WIN32_RAND=0 -DBR_USE_WIN32_TIME=0 \
+            -DBR_RDRAND=0 -DBR_LE_UNALIGNED=0 -DBR_BE_UNALIGNED=0 -DBR_AES_X86NI=0 -DBR_SSE2=0 -DBR_POWER8=0
 OBJS = $(SRCS:src/%.c=build/%.o) $(ASMS:src/%.S=build/%.o) $(LWIP_SRCS:lwip/src/%.c=build/lwip/%.o)
-INCS = -Ilwip/src/include -Isrc/lwip_port
+INCS = -Ilwip/src/include -Isrc/lwip_port -Ithird_party/bearssl/inc
 
 COMMON = -Wall -Wextra -O2 -ffreestanding -fno-stack-protector -nostdlib \
          -mgeneral-regs-only -mstrict-align -mcpu=cortex-a53
@@ -40,6 +45,14 @@ build/stbimg.o: src/stbimg.c third_party/stb_image.h | build
 build/video.o: src/video.c src/kernel.h src/sd.h third_party/pl_mpeg.h | build
 	$(CC) $(filter-out -mgeneral-regs-only,$(COMMON)) $(INCS) -Wno-unused-parameter -Wno-sign-compare -Wno-unused-function -c $< -o $@
 
+build/bearssl/%.o: third_party/bearssl/src/%.c
+	@mkdir -p $(dir $@)
+	@$(CC) $(COMMON) $(INCS) $(BSSL_DEFS) -Ithird_party/bearssl/src -w -c $< -o $@
+
+build/libbearssl.a: $(BSSL_OBJS)
+	@rm -f $@
+	llvm-ar rcs $@ $(BSSL_OBJS)
+
 # third-party code: built with the same flags, minus the warnings it was not written for
 build/lwip/%.o: lwip/src/%.c src/lwip_port/lwipopts.h src/lwip_port/arch/cc.h
 	@mkdir -p $(dir $@)
@@ -51,8 +64,8 @@ build/%.o: src/%.S | build
 build:
 	mkdir -p build
 
-kernel8.elf: $(OBJS) src/linker.ld
-	$(LD) -nostdlib -T src/linker.ld $(OBJS) -o $@
+kernel8.elf: $(OBJS) build/libbearssl.a src/linker.ld
+	$(LD) -nostdlib -T src/linker.ld $(OBJS) build/libbearssl.a -o $@
 
 kernel8.img: kernel8.elf
 	$(OBJCOPY) -O binary $< $@

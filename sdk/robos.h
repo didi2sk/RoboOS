@@ -18,7 +18,7 @@ typedef unsigned long      size_t;
 
 #define APP_BASE    0x01000000UL
 #define APP_MAGIC   "ROBOAPP1"
-#define API_VERSION 8
+#define API_VERSION 9
 
 #define INPUT          0
 #define OUTPUT         1
@@ -95,6 +95,11 @@ struct robos_api {
      * writeFile: creates or replaces the file (8.3 name, the directory must exist), 0 = ok */
     int      (*readFile)(const char *path, void *buf, int max);
     int      (*writeFile)(const char *path, const void *data, int len);
+    /* API version 9: the date and time (NTP or 'time set'; zone from /TIME.TXT).
+     * unixTime: seconds since 1970 UTC, 0 = not known yet. timeText: local
+     * "YYYY-MM-DD HH:MM:SS" into buf[20], returns 0 when the time is not known. */
+    uint64_t (*unixTime)(void);
+    int      (*timeText)(char *buf);
 };
 
 extern const struct robos_api *api;
@@ -144,6 +149,8 @@ extern const struct robos_api *api;
 #define videoError()                    (api->videoError)()
 #define readFile(path, buf, max)        (api->readFile)(path, buf, max)
 #define writeFile(path, data, len)      (api->writeFile)(path, data, len)
+#define unixTime()                      (api->unixTime)()
+#define timeText(buf)                   (api->timeText)(buf)
 
 void *memset(void *d, int c, size_t n);
 void *memcpy(void *d, const void *s, size_t n);

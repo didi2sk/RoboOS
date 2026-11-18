@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.26**
+Aktuálna verzia: **0.27**
 
 ## Podporované dosky
 
@@ -305,6 +305,44 @@ reply from 192.168.1.1: seq=1 ttl=64 time=0.9 ms
   `/HTTP.TXT`, takže stránka (aj API nižšie) sa po reštarte spustí sama.
 - Len IPv4.
 
+### Dátum a čas (NTP)
+
+Keď sieť beží, doska sa spýta NTP servera na čas (hneď a potom každú hodinu) a vypíše
+`[NET] time 2026-11-18 21:05:07 (NTP pool.ntp.org)`. Nastavenia sú v `/TIME.TXT`:
+
+```
+time                     dátum, čas, pásmo a kedy sa synchronizoval
+time zone +1 eu          posun od UTC (ide aj +5:30); eu = letný čas EÚ, bez neho žiadny
+time server pool.ntp.org NTP server ('off' = žiadny)
+time sync                spýtaj sa hneď
+time set 2026-11-18 21:05   nastav ručne (miestny čas), napr. bez siete
+```
+
+Čas je v `GET /api/status` (`"time":"2026-11-18T21:05:07+01:00"`, `"unix"`), na webovej stránke,
+v BASICu (`PRINT DATE$; " "; TIME$`, `HOUR`, `MINUTE`, `SECOND`, `UNIXTIME`), v C (`unixTime()`,
+`timeText(buf)`, API verzia 9) a v hláseniach ukážky alarm. Pi nemá hodiny s batériou: po výpadku
+prúdu sa čas vráti so sieťou (alebo cez `time set`).
+
+### HTTPS (TLS)
+
+`http tls on` zapne HTTPS na porte 443 (uloží sa do `/HTTP.TXT`, po reštarte sa zapne samo).
+Potom JSON API odpovedá **len cez HTTPS** - na porte 80 povie, nech sa použije `https://` - takže
+token nikdy nejde sieťou otvorene. `http tls off` ho vypne, `http tls new` vyrobí nový certifikát.
+
+- Prvé `http tls on` vyrobí ECDSA P-256 kľúč a **samopodpísaný certifikát** pre meno a adresu
+  dosky (platný 20 rokov): `/TLS/KEY.PEM` a `/TLS/CERT.PEM`. `http` ukáže jeho SHA-256 odtlačok.
+  Prehliadač raz varuje („nie je zabezpečené“ - nevie, kto ho vydal); curl potrebuje `-k`, alebo
+  lepšie: skopíruj `CERT.PEM` na PC a dôveruj presne tomuto certifikátu:
+
+  ```
+  curl --cacert CERT.PEM -H "Authorization: Bearer tajne123" https://192.168.1.50/api/status
+  ```
+- Vlastný certifikát (napr. z vlastnej CA, alebo `openssl req -x509 -newkey ec -pkeyopt
+  ec_paramgen_curve:P-256 -nodes -keyout KEY.PEM -out CERT.PEM -days 3650 -subj /CN=robo`):
+  daj `CERT.PEM` (PEM alebo DER, aj s reťazcom) a `KEY.PEM` (EC alebo RSA) do `/TLS`.
+- TLS 1.2 s ECDHE a AES-GCM / ChaCha20 cez [BearSSL](https://bearssl.org) 0.6 (MIT); spojenie
+  trvá v QEMU asi 40 ms. Naraz najviac 4 HTTPS spojenia; relácie sa obnovujú.
+
 ### JSON API: piny a reštart cez sieť
 
 Keď je nastavený token (`http token <tajne>`, 8-63 znakov, uloží sa do `/HTTP.TXT`),
@@ -500,6 +538,8 @@ Systém komunikuje po anglicky.
 | `ping <adresa\|meno> [n]` | ping na iný počítač |
 | `http on\|off` | malá webová stránka s údajmi o doske (uloží sa) |
 | `http token [<tajne>\|off]` | token pre JSON API (Bearer), pozri časť o JSON API |
+| `http tls on\|off\|new` | HTTPS na porte 443 (API potom len tam), nový certifikát |
+| `time [sync\|zone\|server\|set]` | dátum a čas z NTP, časové pásmo, ručné nastavenie |
 | `ls [cesta]` | obsah priečinka na SD karte (bez cesty: aktuálneho) |
 | `cd [priečinok]` | zmena priečinka (`..` = vyššie, `/` = navrch, bez argumentu = navrch) |
 | `pwd` | ukáže aktuálny priečinok |
@@ -649,5 +689,6 @@ qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial stdio -device usb-kbd
   (bztsrc/raspi3-tutorial); časovanie periodických split transakcií podľa Circle/USPi.
 - TCP/IP: lwIP od Adama Dunkelsa a vývojárov lwIP (licencia BSD, `lwip/COPYING`).
 - Obrázky: stb_image od Seana Barretta (public domain / MIT, `third_party/stb_image.h`).
+- TLS: BearSSL od Thomasa Pornina (MIT, `third_party/bearssl`).
 - Video: pl_mpeg od Dominica Szablewského (MIT, `third_party/pl_mpeg.h`).
 - Registre LAN7515 (Pi 3B+) podľa linuxového ovládača `lan78xx`.
