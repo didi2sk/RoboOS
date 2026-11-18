@@ -530,7 +530,7 @@ example `iotnode` (sends sensor JSON, LED on GPIO23 by `cmd/led` on / off / blin
 
 `hardware/iot-shield/` has a KiCad design of a board that sits on the 40-pin header:
 power from 12-24 V, 4 isolated inputs, 4 MOSFET outputs, ADS1115, BME280, DS3231 clock,
-1-Wire. See its README - **not manufactured or tested yet**.
+1-Wire. See its README - **placed but not routed yet, never manufactured or tested**.
 
 ## Sound
 
