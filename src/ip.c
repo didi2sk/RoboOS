@@ -420,9 +420,9 @@ static void build_page(void)
 }
 
 /* one connection: the request is collected until the headers and Content-Length bytes are in */
-#define HTTP_CONNS 4
+#define HTTP_CONNS 8
 #define HTTP_REQ   2048
-struct http_conn { int used, len, done; u8 idle; char req[HTTP_REQ + 1]; };
+struct http_conn { int used, len, done; u8 idle; u64 since; struct tcp_pcb *pcb; char req[HTTP_REQ + 1]; };
 static struct http_conn hconn[HTTP_CONNS];
 
 static void conn_free(struct http_conn *c) { if (c) c->used = 0; }
@@ -540,8 +540,19 @@ static err_t http_accept(void *arg, struct tcp_pcb *pcb, err_t err)
     if (err != ERR_OK || !pcb) return ERR_VAL;
     struct http_conn *c = 0;
     for (int i = 0; i < HTTP_CONNS; i++) if (!hconn[i].used) { c = &hconn[i]; break; }
-    if (!c) { tcp_abort(pcb); return ERR_ABRT; }        /* busy */
+    if (!c) {                                            /* all taken: drop the oldest silent one */
+        struct http_conn *old = 0;                       /* (browsers open spare connections and wait) */
+        for (int i = 0; i < HTTP_CONNS; i++)
+            if (hconn[i].len == 0 && (!old || hconn[i].since < old->since)) old = &hconn[i];
+        if (!old) { tcp_abort(pcb); return ERR_ABRT; }  /* all busy with real requests */
+        struct tcp_pcb *op = old->pcb;
+        tcp_arg(op, 0); tcp_recv(op, 0); tcp_err(op, 0); tcp_poll(op, 0, 0);
+        tcp_abort(op);
+        old->used = 0;
+        c = old;
+    }
     c->used = 1; c->len = 0; c->done = 0; c->idle = 0; c->req[0] = 0;
+    c->since = timer_us(); c->pcb = pcb;
     tcp_arg(pcb, c);
     tcp_recv(pcb, http_recv);
     tcp_err(pcb, http_err);
