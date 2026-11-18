@@ -61,6 +61,11 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
   self-signed certificate warning (the owner first thought it failed - remind about the warning / `thisisunsafe`),
   so the on-board key + certificate generation and the hardware RNG work too. Chromium 153 also tested in QEMU
   (Playwright, ignoreHTTPSErrors): first load ~420 ms with the handshake, resumed ~50 ms.
+- v0.29 WiFi on the RPi 3B **comes up**: SD on SDHOST, `wifi init` -> chip 43430 rev 1 (Cortex-M3), RAM 512 KB,
+  firmware 399344 B + NVRAM 680 B, firmware "wl0: Jul 19 2021 ... version 7.45.98 (TOB)", MAC b8:27:eb:..
+  (so SDIO, CMD52/53, backplane, upload, HT clock, Fn2, SDPCM commands all work). `wifi scan`: the "escan"
+  setvar got a firmware error status. v0.30: no channel list (all channels, like Linux) + the 9front list as a
+  fallback, and the BCME error code + command number are printed.
 - Not yet verified on hardware: RoboOS messages between two boards (v0.9, tested only with `net loop on`
   in QEMU), program loader, BASIC, line editor / full-screen editor,
   board detection, Zero 2 W (ACT LED GPIO29 active-low is an assumption).
