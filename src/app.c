@@ -118,6 +118,22 @@ static int  a_image(const char *p, int x, int y, int w, int h)
     return img_draw(full, x, y, w, h, 0);
 }
 
+static int  a_readfile(const char *p, void *buf, int max)
+{
+    char full[PATH_MAX_LEN];
+    struct fat_file f;
+    if (max < 0 || path_abs(p, full, sizeof(full))) return -1;
+    if (!fat_mounted() || fat_open(full, &f) || f.is_dir) return -1;
+    return fat_read(&f, buf, (u32)max);
+}
+
+static int  a_writefile(const char *p, const void *d, int len)
+{
+    char full[PATH_MAX_LEN];
+    if (len < 0 || path_abs(p, full, sizeof(full)) || !fat_mounted()) return -1;
+    return fat_write_file(full, d, (u32)len) ? -2 : 0;
+}
+
 static int  a_video(const char *p)
 {
     char full[PATH_MAX_LEN];
@@ -176,6 +192,8 @@ static const struct robos_api api_table = {
     .imageError = img_error,
     .playVideo = a_video,
     .videoError = video_error,
+    .readFile = a_readfile,
+    .writeFile = a_writefile,
 };
 
 /* called from the exception handler: a crash inside a program ends the program */

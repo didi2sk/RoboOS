@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.22**
+Current version: **0.23**
 
 ## Supported boards
 
@@ -131,10 +131,53 @@ void loop(void)
 `udpOpen`, `sockWrite`, `sockPrint`, `sockRead`, `sockAvailable`, `udpSendTo`,
 `udpReceiveFrom`, `sockClose`, `sockError`, `ipAddress`, and sound: `tone(hz, ms)`, `noTone`,
 `playNotes`, `soundVolume`, `playWav`, pictures: `drawImage(path, x, y, w, h)`, `imageError`, and
-video: `playVideo(path)`, `videoError`
+video: `playVideo(path)`, `videoError`, files: `readFile`, `writeFile`
 (see `sdk/robos.h`). A program can use `setup()` + `loop()` or `main()`.
 Examples: `hello`, `blink`, `button`, `knight`, `chat`, `tcpserv` (TCP server), `udpecho` (UDP),
-`music` (a tune and a siren).
+`music` (a tune and a siren), `alarm` (see below).
+
+### Demo: alarm (`alarm`)
+
+`run alarm` starts a small burglar alarm (`sdk/examples/alarm.c`); copy it to `/RUN` to start it
+at boot. Its settings are in `/ALARM.TXT` (made with defaults on the first start):
+
+```
+code 1234                    # the PIN that arms and disarms
+exit 20                      # seconds to leave after arming
+entry 15                     # seconds to disarm after a "delay" zone opens
+siren 180                    # seconds of siren (0 = until disarmed)
+siren_pin 24                 # output: siren / relay (HIGH = on)
+armed_pin 23                 # output: LED - on = armed, blinks = exit / entry time, fast = alarm
+sound on                     # countdown beeps, siren tone, voice on the audio jack
+volume 80
+voice /ALARM                 # folder with voice WAV files ("none" = tones only)
+port 8080                    # TCP port for JSON (0 = off)
+zone 17 delay nc Front door  # zone <gpio> <instant|delay|24h> <nc|no> <name>
+zone 27 instant nc Window
+zone 22 instant no PIR hall
+zone 5 24h nc Tamper
+```
+
+- **Inputs** use the internal pull-up: wire each contact between the GPIO and GND. `nc` = normally
+  closed (door contact: open = alarm), `no` = normally open (PIR relay, panic button: closed = alarm).
+  `instant` = alarm at once while armed, `delay` = starts the entry time (the way in, ignored
+  during the exit time), `24h` = alarm at any time, also disarmed (tamper, panic). It refuses to
+  arm while an instant / 24h zone is open.
+- **Serial port / keyboard**: `arm 1234`, `disarm 1234`, `status` (the code is shown as `*`).
+  Every event is printed as `[ALARM hh:mm:ss] ...` on the serial port and the screen.
+- **JSON** on the TCP port: one line with `nc <board> 8080`, or HTTP
+  (`curl -d "{\"cmd\":\"disarm\",\"code\":\"1234\"}" http://<board>:8080/`; GET = status):
+  `{"cmd":"arm","code":"1234"}`, `{"cmd":"disarm","code":"1234"}`, `{"cmd":"status"}`.
+  The answer has the state, the siren, the seconds left, the cause and every zone.
+- **Sound**: a beep every second of the exit / entry time, the last 10 seconds spoken, the
+  siren as a rising and falling tone, and spoken events. The card has Slovak voice files in
+  `/ALARM` (`ARMING`, `ARMED`, `ENTRY`, `ALARM`, `DISARMED`, `WRONG`, `NOARM`, `1`-`10` `.WAV`),
+  made by `tools/mkvoice.sh sk` with espeak-ng (`tools/mkvoice.sh en` for English) - replace
+  them with your own recordings. A voice file plays to its end before the alarm goes on.
+- Five wrong codes block the code for 60 s. It is a demo: Ctrl+C on the board ends it.
+
+Programs can read and write files since API version 8: `readFile(path, buf, max)`,
+`writeFile(path, data, len)`.
 
 Programs are loaded at 0x01000000 (max 16 MB). A crash inside a program prints the
 exception and returns to the shell.

@@ -18,7 +18,7 @@ typedef unsigned long      size_t;
 
 #define APP_BASE    0x01000000UL
 #define APP_MAGIC   "ROBOAPP1"
-#define API_VERSION 7
+#define API_VERSION 8
 
 #define INPUT          0
 #define OUTPUT         1
@@ -90,6 +90,11 @@ struct robos_api {
      * until the end or a key (q / Enter / Ctrl+C): 0 = end, 1 = stopped, < 0 = error (videoError()) */
     int      (*playVideo)(const char *path);
     const char *(*videoError)(void);
+    /* API version 8: files on the SD card (paths like the shell: relative to the current
+     * directory, or "/ALARM.TXT"). readFile: bytes read (at most max), < 0 = not found / error.
+     * writeFile: creates or replaces the file (8.3 name, the directory must exist), 0 = ok */
+    int      (*readFile)(const char *path, void *buf, int max);
+    int      (*writeFile)(const char *path, const void *data, int len);
 };
 
 extern const struct robos_api *api;
@@ -137,6 +142,8 @@ extern const struct robos_api *api;
 #define imageError()                    (api->imageError)()
 #define playVideo(path)                 (api->playVideo)(path)
 #define videoError()                    (api->videoError)()
+#define readFile(path, buf, max)        (api->readFile)(path, buf, max)
+#define writeFile(path, data, len)      (api->writeFile)(path, data, len)
 
 void *memset(void *d, int c, size_t n);
 void *memcpy(void *d, const void *s, size_t n);
