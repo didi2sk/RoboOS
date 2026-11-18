@@ -170,6 +170,126 @@ int sound_stream_open(int hz)
     return audio_open(hz, 0);
 }
 
+/* ---------------- 'sound test': find out where the sound gets lost ---------------- */
+
+#define PWM_STA     (PWM_BASE + 0x04)
+#define PWM_FIF1    (PWM_BASE + 0x18)
+
+static void show_regs(void)
+{
+    u32 sel4 = mmio_read(GPFSEL0 + 16);                  /* GPIO40-49 */
+    u32 sel1 = mmio_read(GPFSEL0 + 4);                   /* GPIO10-19 */
+    kprintf("  PWM CTL=%x STA=%x RNG1=%u DAT1=%u RNG2=%u DAT2=%u\n", mmio_read(PWM_CTL), mmio_read(PWM_STA),
+            mmio_read(PWM_RNG1), mmio_read(PWM_DAT1), mmio_read(PWM_RNG2), mmio_read(PWM_DAT2));
+    kprintf("  CM_PWMCTL=%x CM_PWMDIV=%x  GPIO40 fn %u, 41 fn %u, 45 fn %u, 18 fn %u, 19 fn %u (4 = ALT0, 2 = ALT5)\n",
+            mmio_read(CM_PWMCTL), mmio_read(CM_PWMDIV), (sel4 >> 0) & 7, (sel4 >> 3) & 7, (sel4 >> 15) & 7,
+            (sel1 >> 24) & 7, (sel1 >> 27) & 7);
+}
+
+static int test_wait(u32 ms)                             /* 1 = Ctrl+C / q */
+{
+    u64 end = timer_us() + (u64)ms * 1000;
+    while (timer_us() < end) {
+        int c = con_trygetc();
+        if (c == 3 || c == 'q') return 1;
+    }
+    return 0;
+}
+
+void sound_test(void)
+{
+    int t = board_type();
+    read_config();
+    int was = out_gpio;
+    if (out_gpio == OUT_I2S) { kprintf("output is i2s - testing the jack / GPIO PWM anyway\n"); out_gpio = OUT_JACK; }
+    pick_pins();
+    sound_exclusive(1);                                  /* no JSON API sound in between */
+    kprintf("sound test: board type %x, pins GPIO%d + GPIO%d (fn %d), volume %d %%. Listen; q stops.\n",
+            t, pin_a, pin_b, pin_fn, volume);
+    if (!volume) kprintf("  volume is 0! ('sound volume 80')\n");
+
+    /* 1: the plain tone path (PWM mark-space, 19.2 MHz crystal clock) */
+    kprintf("1/3  tone 440 Hz, 2 s (PWM makes the square wave itself, no DMA)\n");
+    clock_on = 0;
+    sound_tone(440, 0);
+    show_regs();
+    if (test_wait(2000)) goto out;
+    sound_stop();
+    test_wait(500);
+
+    /* 2: the CPU writes a sine into the PWM FIFO (clock PLLD/2 = 250 MHz, like WAV) - no DMA */
+    kprintf("2/3  sine 440 Hz, 2 s, written by the CPU into the PWM FIFO (no DMA)\n");
+    mmio_write(PWM_CTL, 0);
+    mmio_write(PWM_BASE + 0x08, 0);                      /* DMAC off */
+    mmio_write(CM_PWMCTL, CM_PASSWD | (mmio_read(CM_PWMCTL) & 0xFFFF & ~CM_ENAB));
+    wait_busy(0);
+    mmio_write(CM_PWMDIV, CM_PASSWD | (2 << 12));
+    mmio_write(CM_PWMCTL, CM_PASSWD | 6);                /* PLLD 500 MHz */
+    mmio_write(CM_PWMCTL, CM_PASSWD | 6 | CM_ENAB);
+    wait_busy(1);
+    clock_on = 0;                                        /* the tone code sets its clock again */
+    u32 range = 250000000 / 44100;
+    mmio_write(PWM_RNG1, range);
+    mmio_write(PWM_RNG2, range);
+    mmio_write(PWM_CTL, 1 << 6);                         /* clear the FIFO */
+    delay_us(10);
+    mmio_write(PWM_STA, 0xFFFFFFFF);                     /* clear the error bits */
+    mmio_write(PWM_CTL, (1 << 0) | (1 << 5) | (1 << 8) | (1 << 13));   /* PWEN + USEF, both channels */
+    gpio_func(pin_a, pin_fn);
+    gpio_func(pin_b, pin_fn);
+    /* a 440 Hz sine from a 16-step table, interpolated: 44100 / 440 = ~100 samples per wave */
+    static const short tab[16] = { 0, 12539, 23170, 30273, 32767, 30273, 23170, 12539,
+                                   0, -12539, -23170, -30273, -32767, -30273, -23170, -12539 };
+    u32 phase = 0, step = (u32)(((u64)440 << 32) / 44100);
+    u64 end = timer_us() + 2000000;
+    int stopped = 0;
+    while (timer_us() < end) {
+        if (mmio_read(PWM_STA) & 1) {                    /* FIFO full */
+            int c = con_trygetc();
+            if (c == 3 || c == 'q') { stopped = 1; break; }
+            continue;
+        }
+        int i = (int)(phase >> 28);
+        int s = tab[i] * volume / 100;
+        u32 v = (u32)(((s + 32768) * (int)range) >> 16);
+        mmio_write(PWM_FIF1, v);                         /* left */
+        mmio_write(PWM_FIF1, v);                         /* right */
+        phase += step;
+    }
+    kprintf("  after: STA=%x (bit2 WERR, bit3 RERR, bit4/5 gap, bit8 bus error)\n", mmio_read(PWM_STA));
+    show_regs();
+    mmio_write(PWM_CTL, 0);
+    if (stopped) goto out;
+    test_wait(500);
+
+    /* 3: the same through the DMA ring (the path of WAV files and video sound) */
+    kprintf("3/3  sine 440 Hz, 2 s, through DMA (the WAV path)\n");
+    pick_pins();
+    gpio_func(pin_a, pin_fn);
+    gpio_func(pin_b, pin_fn);
+    if (audio_open(44100, 0) == 0) {
+        static short buf[441 * 2];
+        for (int k = 0; k < 441; k++) {                  /* 10 ms = 4.4 waves */
+            int s = tab[(k * 16 * 440 / 44100) & 15] * volume / 100;
+            buf[k * 2] = buf[k * 2 + 1] = (short)s;
+        }
+        for (int n = 0; n < 200 && !stopped; n++) {      /* 2 s */
+            audio_write(buf, 441);
+            int c = con_trygetc();
+            if (c == 3 || c == 'q') stopped = 1;
+            if (n == 100) audio_diag();
+        }
+        audio_close(stopped);
+        audio_diag();
+    } else kprintf("  audio_open failed\n");
+out:
+    sound_stop();
+    clock_on = 0;
+    out_gpio = was;
+    sound_exclusive(0);
+    kprintf("Which of 1, 2, 3 did you hear? (a photo of this screen helps)\n");
+}
+
 /* > 0 while a WAV or a video owns the sound (the JSON API waits) */
 static int exclusive;
 void sound_exclusive(int on) { exclusive += on ? 1 : -1; if (exclusive < 0) exclusive = 0; }

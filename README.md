@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.24**
+Current version: **0.25**
 
 ## Supported boards
 
@@ -512,6 +512,7 @@ If you connect after boot, press Enter.
 | `beep [Hz] [ms]` | a tone on the audio jack |
 | `play <notes>` | play music, e.g. `play T120 L4 C D E F G2` |
 | `sound [volume n\|out jack\|gpio\|i2s\|off]` | sound output and volume |
+| `sound test` | no sound? three tests in a row (a PWM tone, a sine written by the CPU, a sine by DMA) with the registers on the screen - tell which one you heard |
 | `playwav <file>` | play a WAV file (jack, GPIO18/19 or I2S DAC) |
 | `sd [init]` | SD card info / re-initialize after swapping the card |
 | `screen [WxH\|auto]` | screen resolution (saved in `/SCREEN.TXT`) |

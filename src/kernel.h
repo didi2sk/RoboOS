@@ -224,6 +224,8 @@ void sound_output(int gpio);             /* 0 = jack, 1 = GPIO18/19 */
 void sound_use(int mode);                /* like sound_output, not saved */
 void sound_exclusive(int on);            /* a WAV / video owns the sound: the JSON API waits */
 int  sound_is_exclusive(void);
+void sound_test(void);                   /* 'sound test': three ways to the jack, registers on screen */
+void audio_diag(void);                   /* i2s.c: DMA + PWM registers */
 const char *sound_pins(void);
 
 /* i2s.c - I2S DAC module on GPIO18/19/21 */
