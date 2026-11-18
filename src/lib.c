@@ -121,6 +121,11 @@ void gpio_func(int pin, int fn)
     mmio_write(reg, v);
 }
 
+int gpio_mode(int pin)
+{
+    return (int)((mmio_read(GPFSEL0 + (pin / 10) * 4) >> ((pin % 10) * 3)) & 7);
+}
+
 void gpio_set(int pin, int on)
 {
     mmio_write((on ? GPSET0 : GPCLR0) + (pin / 32) * 4, 1u << (pin % 32));
@@ -140,4 +145,28 @@ void gpio_pull(int pin, int mode)
     delay_cycles(150);
     mmio_write(GPPUD, 0);
     mmio_write(clk, 0);
+}
+
+char *strchr(const char *s, int c)
+{
+    for (; *s; s++) if (*s == (char)c) return (char *)s;
+    return c ? 0 : (char *)s;
+}
+
+char *strstr(const char *h, const char *n)
+{
+    size_t l = strlen(n);
+    for (; *h; h++) if (!strncmp(h, n, l)) return (char *)h;
+    return l ? 0 : (char *)h;
+}
+
+#define PM_RSTC     (MMIO_BASE + 0x10001C)
+#define PM_WDOG     (MMIO_BASE + 0x100024)
+#define PM_PASSWORD 0x5A000000
+
+void sys_reboot(void)
+{
+    mmio_write(PM_WDOG, PM_PASSWORD | 10);
+    mmio_write(PM_RSTC, PM_PASSWORD | (mmio_read(PM_RSTC) & ~0x30u) | 0x20);
+    for (;;) __asm__ volatile("wfe");
 }

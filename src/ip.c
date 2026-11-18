@@ -8,7 +8,7 @@
  *  - address: DHCP by default (the board's name is sent as the host name, so the
  *    router lists it), or a static address saved in /IP.TXT
  *
- * Commands: ip, ping, http (a small web page served by the board).
+ * Commands: ip, ping, http (a small web page + the JSON API of webapi.c).
  * Sockets for programs (C API, BASIC): numbered TCP / UDP connections with a
  * receive buffer each; see the "sockets" section below.
  *
@@ -81,6 +81,10 @@ static err_t nif_init(struct netif *n)
     return ERR_OK;
 }
 
+static void load_http(void);
+static int  http_want;                     /* /HTTP.TXT says "on": start with the network */
+static int  http_start(void);
+
 /* /IP.TXT: "dhcp", or "address [mask [gateway [dns]]]" */
 static void load_config(ip4_addr_t *a, ip4_addr_t *m, ip4_addr_t *g, ip4_addr_t *d)
 {
@@ -114,6 +118,7 @@ void ip_prepare(void)
     if (cfg_loaded || !fat_mounted() || smp_core() != 0) return;
     ip4_addr_set_zero(&cfg_a); ip4_addr_set_zero(&cfg_m); ip4_addr_set_zero(&cfg_g); ip4_addr_set_zero(&cfg_d);
     load_config(&cfg_a, &cfg_m, &cfg_g, &cfg_d);
+    load_http();
     cfg_loaded = 1;
 }
 
@@ -132,6 +137,7 @@ static void start(void)
         dns_setserver(0, &dd);
     }
     if (use_dhcp) dhcp_start(&nif);
+    if (http_want) http_start();                         /* /HTTP.TXT: "on" */
     started = 1;
     ip4_addr_set_zero(&shown_ip);
 }
@@ -165,6 +171,7 @@ void ip_poll(int notify)
     if (up && !netif_is_link_up(&nif)) netif_set_link_up(&nif);
     if (!up && netif_is_link_up(&nif)) netif_set_link_down(&nif);
     sys_check_timeouts();
+    api_poll();
 
     if (!ip4_addr_cmp(netif_ip4_addr(&nif), &shown_ip)) {
         ip4_addr_copy(shown_ip, *netif_ip4_addr(&nif));
@@ -352,11 +359,11 @@ static void ping_cmd_l(int argc, char **argv)
     kprintf("%u sent, %u received\n", sent, got);
 }
 
-/* ---------------- command: http (one small page) ---------------- */
+/* ---------------- command: http (a small page + the JSON API in webapi.c) ---------------- */
 
 static struct tcp_pcb *http_pcb;
 static u32 http_hits;
-static char page[2048];
+static char page[4096];
 static int plen;
 
 static void add(const char *s) { while (*s && plen < (int)sizeof(page) - 1) page[plen++] = *s++; page[plen] = 0; }
@@ -368,9 +375,11 @@ static void add_u(u64 v)
     page[plen] = 0;
 }
 
+static char addr_s[16];
+const char *ip_address_str(void) { return ip4addr_ntoa_r(netif_ip4_addr(&nif), addr_s, sizeof(addr_s)); }
+
 static void build_page(void)
 {
-    char b[16];
     u32 t[2] = { 0, 0 };
     u64 s = timer_us() / 1000000;
     int tc = mbox_prop(0x00030006, t, 2) ? (int)t[1] : -1;
@@ -383,26 +392,126 @@ static void build_page(void)
     add("<tr><td>name</td><td>"); add(net_name()); add("</td></tr>");
     add("<tr><td>board</td><td>"); add(board_name()); add("</td></tr>");
     add("<tr><td>version</td><td>"); add(os_version()); add("</td></tr>");
-    add("<tr><td>address</td><td>"); add(ip4addr_ntoa_r(netif_ip4_addr(&nif), b, sizeof(b))); add("</td></tr>");
+    add("<tr><td>address</td><td>"); add(ip_address_str()); add("</td></tr>");
     add("<tr><td>uptime</td><td>"); add_u(s / 3600); add(" h "); add_u(s / 60 % 60); add(" min "); add_u(s % 60); add(" s</td></tr>");
     if (tc >= 0) { add("<tr><td>CPU</td><td>"); add_u((u64)tc / 1000); add("."); add_u((u64)tc % 1000 / 100); add(" C</td></tr>"); }
-    add("<tr><td>visits</td><td>"); add_u(http_hits); add("</td></tr></table></body></html>\n");
+    add("<tr><td>visits</td><td>"); add_u(http_hits); add("</td></tr>");
+    add("<tr><td>JSON API</td><td>"); add(api_token()[0] ? "on (/api/..., Bearer token)" : "off"); add("</td></tr>");
+    add("</table></body></html>\n");
+}
+
+/* one connection: the request is collected until the headers and Content-Length bytes are in */
+#define HTTP_CONNS 4
+#define HTTP_REQ   2048
+struct http_conn { int used, len, done; u8 idle; char req[HTTP_REQ + 1]; };
+static struct http_conn hconn[HTTP_CONNS];
+
+static void conn_free(struct http_conn *c) { if (c) c->used = 0; }
+
+static void http_err(void *arg, err_t err) { (void)err; conn_free(arg); }   /* the pcb is gone already */
+
+static void http_finish(struct tcp_pcb *pcb, struct http_conn *c)
+{
+    tcp_arg(pcb, 0); tcp_recv(pcb, 0); tcp_err(pcb, 0); tcp_poll(pcb, 0, 0);
+    conn_free(c);
+    if (tcp_close(pcb) != ERR_OK) tcp_abort(pcb);        /* FIN after the queued data */
+}
+
+static void send_text(struct tcp_pcb *pcb, const char *t, int n)
+{
+    if (n > (int)tcp_sndbuf(pcb)) n = (int)tcp_sndbuf(pcb);
+    tcp_write(pcb, t, (u16_t)n, TCP_WRITE_FLAG_COPY);
+    tcp_output(pcb);
+}
+
+/* the value of a header (case-insensitive name), cut at the end of its line; 0 = none */
+static char *header(char *h, const char *name)
+{
+    int nl = (int)strlen(name);
+    for (char *p = strstr(h, "\r\n"); p; p = strstr(p + 2, "\r\n")) {
+        char *l = p + 2;
+        if (l[0] == '\r') break;                         /* end of the headers */
+        int k = 0;
+        while (k < nl && l[k] && ((l[k] | 32) == (name[k] | 32))) k++;
+        if (k == nl && l[k] == ':') { l += k + 1; while (*l == ' ') l++; return l; }
+    }
+    return 0;
+}
+
+/* 1 = answered */
+static int http_try(struct tcp_pcb *pcb, struct http_conn *c)
+{
+    char *end = strstr(c->req, "\r\n\r\n");
+    if (!end) {
+        static const char big[] = "HTTP/1.0 431 Too Large\r\nConnection: close\r\n\r\n";
+        if (c->len >= HTTP_REQ) { send_text(pcb, big, (int)sizeof(big) - 1); return 1; }
+        return 0;
+    }
+    char *body = end + 4;
+    int have = c->len - (int)(body - c->req), need = 0;
+    char *cl = header(c->req, "Content-Length");
+    if (cl) while (*cl >= '0' && *cl <= '9') need = need * 10 + (*cl++ - '0');
+    if (need > HTTP_REQ - (int)(body - c->req)) {
+        static const char big[] = "HTTP/1.0 413 Too Large\r\nConnection: close\r\n\r\n";
+        send_text(pcb, big, (int)sizeof(big) - 1);
+        return 1;
+    }
+    if (have < need) return 0;
+
+    /* "METHOD /path HTTP/1.x" */
+    char *m = c->req, *path = strchr(m, ' ');
+    if (!path) return 1;
+    *path++ = 0;
+    char *sp = strchr(path, ' ');
+    if (sp) *sp = 0;
+    char *q = strchr(path, '?');
+    if (q) *q = 0;
+    char from[16];
+    ip4addr_ntoa_r(ip_2_ip4(&pcb->remote_ip), from, sizeof(from));
+
+    http_hits++;
+    if (!strncmp(path, "/api", 4) && (path[4] == 0 || path[4] == '/')) {
+        if (!strcmp(m, "OPTIONS")) {                     /* a browser asks before a POST from a web page */
+            plen = 0;
+            add("HTTP/1.0 204 No Content\r\nAccess-Control-Allow-Origin: *\r\n"
+                "Access-Control-Allow-Methods: GET, POST, PUT, OPTIONS\r\n"
+                "Access-Control-Allow-Headers: Authorization, Content-Type\r\nConnection: close\r\n\r\n");
+        } else {
+            char *auth = header(c->req + (sp ? (sp - c->req) + 1 : 0), "Authorization");
+            if (auth) { char *e = strstr(auth, "\r\n"); if (e) *e = 0; }
+            body[need] = 0;
+            plen = api_handle(m, path, auth, body, need, from, page, sizeof(page));
+        }
+    } else {
+        build_page();
+    }
+    send_text(pcb, page, plen);
+    return 1;
 }
 
 static err_t http_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err)
 {
+    struct http_conn *c = arg;
     (void)err;
-    if (!p) { tcp_close(pcb); return ERR_OK; }
+    if (!p) { http_finish(pcb, c); return ERR_OK; }
     tcp_recved(pcb, p->tot_len);
+    if (c && !c->done) {
+        int n = p->tot_len;
+        if (n > HTTP_REQ - c->len) n = HTTP_REQ - c->len;
+        pbuf_copy_partial(p, c->req + c->len, (u16_t)n, 0);
+        c->len += n;
+        c->req[c->len] = 0;
+        c->idle = 0;
+        if (http_try(pcb, c)) { c->done = 1; pbuf_free(p); http_finish(pcb, c); return ERR_OK; }
+    }
     pbuf_free(p);
-    if (arg) return ERR_OK;                              /* already answered */
-    tcp_arg(pcb, (void *)1);
-    http_hits++;
-    build_page();
-    tcp_write(pcb, page, (u16_t)plen, TCP_WRITE_FLAG_COPY);
-    tcp_output(pcb);
-    tcp_recv(pcb, 0);
-    tcp_close(pcb);                                      /* FIN after the queued data */
+    return ERR_OK;
+}
+
+static err_t http_poll(void *arg, struct tcp_pcb *pcb)
+{
+    struct http_conn *c = arg;
+    if (c && ++c->idle >= 10) http_finish(pcb, c);      /* 5 s without the whole request */
     return ERR_OK;
 }
 
@@ -410,29 +519,89 @@ static err_t http_accept(void *arg, struct tcp_pcb *pcb, err_t err)
 {
     (void)arg;
     if (err != ERR_OK || !pcb) return ERR_VAL;
-    tcp_arg(pcb, 0);
+    struct http_conn *c = 0;
+    for (int i = 0; i < HTTP_CONNS; i++) if (!hconn[i].used) { c = &hconn[i]; break; }
+    if (!c) { tcp_abort(pcb); return ERR_ABRT; }        /* busy */
+    c->used = 1; c->len = 0; c->done = 0; c->idle = 0; c->req[0] = 0;
+    tcp_arg(pcb, c);
     tcp_recv(pcb, http_recv);
+    tcp_err(pcb, http_err);
+    tcp_poll(pcb, http_poll, 1);                         /* every 0.5 s */
     return ERR_OK;
+}
+
+static int http_start(void)
+{
+    if (http_pcb) return 1;
+    struct tcp_pcb *p = tcp_new();
+    if (!p || tcp_bind(p, IP_ADDR_ANY, 80) != ERR_OK) { if (p) tcp_close(p); return 0; }
+    http_pcb = tcp_listen(p);
+    tcp_accept(http_pcb, http_accept);
+    return 1;
+}
+
+/* /HTTP.TXT: "on|off [token]" - read on core 0 in ip_prepare() */
+static void load_http(void)
+{
+    struct fat_file f;
+    char b[96];
+    int n;
+    if (!fat_mounted() || fat_open("/HTTP.TXT", &f) || f.is_dir) return;
+    if ((n = fat_read(&f, b, sizeof(b) - 1)) <= 0) return;
+    b[n] = 0;
+    char *p = b;
+    while (*p == ' ') p++;
+    http_want = !strncmp(p, "on", 2);
+    while (*p && *p != ' ' && *p != '\r' && *p != '\n') p++;
+    while (*p == ' ') p++;
+    char *t = p;
+    while (*p && *p != ' ' && *p != '\r' && *p != '\n') p++;
+    *p = 0;
+    api_set_token(t);
+}
+
+static void save_http(void)
+{
+    char b[96];
+    int n = 0;
+    const char *on = http_pcb ? "on" : "off", *t = api_token();
+    while (*on) b[n++] = *on++;
+    if (*t) { b[n++] = ' '; while (*t && n < 92) b[n++] = *t++; }
+    b[n++] = '\r'; b[n++] = '\n'; b[n] = 0;
+    if (!fat_mounted() || fat_write_file("/HTTP.TXT", b, (u32)n))
+        kprintf("(not saved: no SD card or write error)\n");
 }
 
 static void http_cmd_l(int argc, char **argv)
 {
-    char b[16];
-    if (!need_net()) return;
-    if (argc > 1 && !strcmp(argv[1], "on") && !http_pcb) {
-        struct tcp_pcb *p = tcp_new();
-        if (!p || tcp_bind(p, IP_ADDR_ANY, 80) != ERR_OK) { kprintf("cannot open port 80\n"); if (p) tcp_close(p); return; }
-        http_pcb = tcp_listen(p);
-        tcp_accept(http_pcb, http_accept);
-    } else if (argc > 1 && !strcmp(argv[1], "off") && http_pcb) {
-        tcp_close(http_pcb);
-        http_pcb = 0;
-    } else if (argc > 1 && strcmp(argv[1], "on") && strcmp(argv[1], "off")) {
-        kprintf("usage: http [on|off]\n");
+    if (argc > 1 && !strcmp(argv[1], "token")) {
+        if (argc > 2 && !strcmp(argv[2], "off")) api_set_token("");
+        else if (argc > 2) {
+            int l = (int)strlen(argv[2]), ok = l >= 8 && l <= 63;
+            for (int i = 0; i < l; i++) if ((u8)argv[2][i] <= ' ' || (u8)argv[2][i] > '~' || argv[2][i] == '"') ok = 0;
+            if (!ok) { kprintf("token: 8-63 characters, no spaces or quotes\n"); return; }
+            api_set_token(argv[2]);
+        }
+        if (argc > 2) save_http();
+        if (api_token()[0]) kprintf("API token: %s\n", api_token());
+        else                kprintf("API off (no token; 'http token <secret>' turns it on)\n");
         return;
     }
-    if (http_pcb) kprintf("web page on: http://%s/  (%u visits)\n", ip4addr_ntoa_r(netif_ip4_addr(&nif), b, sizeof(b)), http_hits);
-    else          kprintf("web page off ('http on' starts it)\n");
+    if (!need_net()) return;
+    if (argc > 1 && !strcmp(argv[1], "on")) {
+        if (!http_start()) { kprintf("cannot open port 80\n"); return; }
+        save_http();
+    } else if (argc > 1 && !strcmp(argv[1], "off")) {
+        if (http_pcb) { tcp_close(http_pcb); http_pcb = 0; }
+        save_http();
+    } else if (argc > 1) {
+        kprintf("usage: http [on|off]   http token [<secret>|off]\n");
+        return;
+    }
+    if (http_pcb) kprintf("web page on: http://%s/  (%u requests)\n", ip_address_str(), http_hits);
+    else          kprintf("web page off ('http on' starts it, also after reboot)\n");
+    if (api_token()[0]) kprintf("JSON API on: http://%s/api/status  (Authorization: Bearer <token>, 'http token' shows it)\n", ip_address_str());
+    else                kprintf("JSON API off ('http token <secret>' turns it on)\n");
 }
 
 /* ======================= sockets for programs ======================= */

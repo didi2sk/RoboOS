@@ -30,6 +30,9 @@ int    strncmp(const char *a, const char *b, size_t n);
 size_t strlen(const char *s);
 int    parse_num(const char *s, u64 *out);   /* decimal or 0x hex */
 int    memcmp_n(const void *a, const void *b, size_t n);
+char  *strchr(const char *s, int c);
+char  *strstr(const char *h, const char *n);
+void   sys_reboot(void);                 /* watchdog reset, does not return */
 
 /* timer.c */
 u64  timer_us(void);
@@ -136,6 +139,7 @@ int  line_edit(char *line, int max, struct le_hist *h,
 void gpio_func(int pin, int fn);     /* 0=in 1=out 4=alt0 ... */
 void gpio_set(int pin, int on);
 int  gpio_get(int pin);
+int  gpio_mode(int pin);                 /* function bits: 0 in, 1 out, 4 alt0 ... */
 void gpio_pull(int pin, int mode);   /* 0 = off, 1 = down, 2 = up */
 void board_led(int on);              /* green ACT LED */
 
@@ -177,6 +181,14 @@ int  ip_started(void);
 void ip_cmd(int argc, char **argv);
 void ping_cmd(int argc, char **argv);
 void http_cmd(int argc, char **argv);
+const char *ip_address_str(void);
+
+/* webapi.c - JSON API behind 'http on' (Bearer token) */
+void api_set_token(const char *t);
+const char *api_token(void);
+void api_poll(void);
+int  api_handle(const char *method, const char *path, const char *auth, const char *body, int blen,
+                const char *from, char *out, int max);
 const char *os_version(void);
 /* sockets for programs: handles 1..8, errors < 0 (sock_error); idle() polls the network */
 int  sock_tcp_connect(const char *host, int port, int (*idle)(void));
