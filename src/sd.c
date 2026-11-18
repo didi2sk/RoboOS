@@ -183,7 +183,8 @@ static void pins_alt3(void)
     for (int p = 34; p <= 39; p++) gpio_func(p, 0);
     /* GPIO47 = card detect (input), GPIO48-53 = CLK, CMD, DAT0-3 -> ALT3 */
     if (board_type() != 0x04) gpio_func(47, 0);          /* Pi 2: GPIO47 is the ACT LED */
-    for (int p = 48; p <= 53; p++) gpio_func(p, 7);
+    for (int p = 48; p <= 53; p++) gpio_func(p, 0);      /* input first: QEMU moves the card back from */
+    for (int p = 48; p <= 53; p++) gpio_func(p, 7);      /* SDHOST only on that; harmless on hardware */
     mmio_write(GPPUD, 2);                    /* pull-up */
     delay_cycles(150);
     mmio_write(GPPUDCLK1, (1 << 15) | (1 << 16) | (1 << 17) | (1 << 18) |
@@ -193,7 +194,7 @@ static void pins_alt3(void)
     mmio_write(GPPUDCLK1, 0);
 }
 
-int sd_init(void)
+static int emmc_init(void)
 {
     int e;
     u32 r;
@@ -293,7 +294,7 @@ int sd_init(void)
     return SD_OK;
 }
 
-int sd_read(u32 lba, void *buf, u32 count)
+static int emmc_read(u32 lba, void *buf, u32 count)
 {
     u32 *p = buf;
     int e;
@@ -309,7 +310,7 @@ int sd_read(u32 lba, void *buf, u32 count)
     return SD_OK;
 }
 
-int sd_write(u32 lba, const void *buf, u32 count)
+static int emmc_write(u32 lba, const void *buf, u32 count)
 {
     const u32 *p = buf;
     int e;
@@ -326,15 +327,45 @@ int sd_write(u32 lba, const void *buf, u32 count)
     return SD_OK;
 }
 
-int  sd_ready(void)      { return ready; }
-u64  sd_sectors(void)    { return sectors; }
-int  sd_is_sdhc(void)    { return ccs; }
-int  sd_bus_width(void)  { return bus4 ? 4 : 1; }
+/* ---------------- which controller: SDHOST first, the Arasan as the fallback ---------------- */
+/*
+ * The card is tried on SDHOST (sdhost.c, GPIO48-53 ALT0) so the Arasan stays free
+ * for the WiFi chip; if that fails, on the Arasan (this file, ALT3) as before.
+ * 'sd init sdhost|emmc' forces one of them.
+ */
+static int on_sdhost, host_err, emmc_err;
 
-/* one line for the screen after a failed sd_init() */
+int sd_init_on(int which)                     /* 0 = auto, 1 = SDHOST only, 2 = Arasan only */
+{
+    on_sdhost = 0;
+    host_err = emmc_err = SD_OK;
+    if (which != 2) {
+        host_err = sdhost_init();
+        if (host_err == SD_OK) { on_sdhost = 1; ready = 0; return SD_OK; }
+        if (which == 1) return host_err;
+    }
+    emmc_err = emmc_init();
+    return emmc_err;
+}
+
+int sd_init(void) { return sd_init_on(0); }
+
+int sd_read(u32 lba, void *buf, u32 count)        { return on_sdhost ? sdhost_read(lba, buf, count) : emmc_read(lba, buf, count); }
+int sd_write(u32 lba, const void *buf, u32 count) { return on_sdhost ? sdhost_write(lba, buf, count) : emmc_write(lba, buf, count); }
+int  sd_ready(void)      { return on_sdhost || ready; }
+u64  sd_sectors(void)    { return on_sdhost ? sdhost_sectors() : sectors; }
+int  sd_is_sdhc(void)    { return on_sdhost ? sdhost_is_sdhc() : ccs; }
+int  sd_bus_width(void)  { return on_sdhost ? sdhost_bus_width() : (bus4 ? 4 : 1); }
+const char *sd_controller(void) { return on_sdhost ? "SDHOST" : ready ? "Arasan (EMMC)" : "none"; }
+int  sd_sdhost_error(void) { return host_err; }
+
+/* one line for the screen after a failed sd_init() (and why SDHOST was not used) */
 void sd_print_fail(int e)
 {
-    kprintf("%s at %s (INT=%x STATUS=%x RESP=%x)\n", sd_error(e), stage, dbg_int, dbg_status, dbg_resp);
+    if (host_err) { kprintf("SDHOST: "); sdhost_print_fail(host_err); }
+    if (emmc_err || !host_err) {
+        kprintf("Arasan: %s at %s (INT=%x STATUS=%x RESP=%x)\n", sd_error(e), stage, dbg_int, dbg_status, dbg_resp);
+    }
 }
 
 const char *sd_error(int e)

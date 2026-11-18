@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.27**
+Aktuálna verzia: **0.29**
 
 ## Podporované dosky
 
@@ -42,6 +42,10 @@ alebo na GPIO47 (Pi 2 v1.2).
 SD karta je zároveň disk RoboOS (FAT32 alebo FAT16, čítanie aj zápis).
 RoboOS má vlastný ovládač SD (firmvér len načíta `kernel8.img` a potom ustúpi).
 Ak sa karta nenájde, `sd init` ukáže, ktorý krok zlyhal, a registre radiča.
+Od verzie 0.28 beží karta na radiči SDHOST (ako v Linuxe), aby druhý radič (Arasan) ostal
+neskôr voľný pre WiFi; ak SDHOST nefunguje, RoboOS použije Arasan ako predtým a pri štarte
+ukáže žltý riadok `SDHOST:` s dôvodom. `sd` ukáže, ktorý sa používa, `sd init sdhost` /
+`sd init emmc` skúsi jeden z nich.
 
 - Všetko v **`/RUN`** (`*.bin` a `*.bas`) sa po štarte spustí samo, v abecednom poradí.
   Stlačením ľubovoľnej klávesy do 2 s sa autostart preskočí.
@@ -305,6 +309,23 @@ reply from 192.168.1.1: seq=1 ttl=64 time=0.9 ms
   `/HTTP.TXT`, takže stránka (aj API nižšie) sa po reštarte spustí sama.
 - Len IPv4.
 
+### WiFi (vo výstavbe)
+
+WiFi čip (CYW43438 na Pi 3B, CYW43436 na Zero 2 W, CYW43455 na Pi 3B+) visí na SDIO. Zatiaľ ho
+RoboOS vie spustiť a hľadať siete:
+
+```
+wifi scan        nahrá firmvér do čipu a vypíše siete okolo
+wifi init        len spustí čip
+wifi             čip, verzia firmvéru, MAC adresa
+```
+
+Čip potrebuje svoj firmvér na karte v `/FIRMWARE` (súbory z Raspberry Pi OS `/lib/firmware/brcm`,
+alebo ich stiahne `tools/getwifi.sh`): `brcmfmac43430-sdio.bin` + `.txt` (Pi 3B),
+`brcmfmac43436-sdio.bin` + `.txt` + `.clm_blob` (Zero 2 W), `brcmfmac43455-sdio.bin` + `.txt` +
+`.clm_blob` (Pi 3B+). V tomto repozitári nie sú (licencie Cypress / Synaptics). WiFi potrebuje
+SD kartu na SDHOST (pozri časť o SD karte). Pripojenie k sieti príde ďalej.
+
 ### Dátum a čas (NTP)
 
 Keď sieť beží, doska sa spýta NTP servera na čas (hneď a potom každú hodinu) a vypíše
@@ -539,6 +560,7 @@ Systém komunikuje po anglicky.
 | `http on\|off` | malá webová stránka s údajmi o doske (uloží sa) |
 | `http token [<tajne>\|off]` | token pre JSON API (Bearer), pozri časť o JSON API |
 | `http tls on\|off\|new` | HTTPS na porte 443 (API potom len tam), nový certifikát |
+| `wifi [init\|scan]` | WiFi čip: nahrá firmvér, vypíše siete |
 | `time [sync\|zone\|server\|set]` | dátum a čas z NTP, časové pásmo, ručné nastavenie |
 | `ls [cesta]` | obsah priečinka na SD karte (bez cesty: aktuálneho) |
 | `cd [priečinok]` | zmena priečinka (`..` = vyššie, `/` = navrch, bez argumentu = navrch) |
@@ -556,7 +578,7 @@ Systém komunikuje po anglicky.
 | `sound [volume n\|out jack\|gpio\|i2s\|off]` | výstup a hlasitosť zvuku |
 | `sound test` | nič nepočuť? tri testy za sebou (tón z PWM, sínus zapisovaný procesorom, sínus cez DMA) s registrami na obrazovke - povedz, ktorý bolo počuť |
 | `playwav <súbor>` | prehrá súbor WAV (jack, GPIO18/19 alebo I2S DAC) |
-| `sd [init]` | info o SD karte / znovu inicializovať po výmene karty |
+| `sd [init [sdhost\|emmc]]` | info o SD karte (aj radič) / znovu inicializovať po výmene karty |
 | `screen [ŠxV\|auto]` | rozlíšenie obrazovky (uloží sa do `/SCREEN.TXT`) |
 | `clear` | vymaže obrazovku (aj Ctrl+L) |
 | `reboot` | reštart cez watchdog |
@@ -598,7 +620,9 @@ v starších verziách (hlási to riadok pri štarte); bez pomocníkov prepočí
 | `src/webapi.c` | JSON API za `http`: Bearer token, GPIO, stav, reštart |
 | `lwip/` | TCP/IP stack lwIP 2.2.1 (bez úprav, licencia BSD) |
 | `src/kbd.c` | HID klávesnica: boot protocol, preklad scan kódov, autorepeat |
-| `src/sd.c` | ovládač SD karty (Arasan SDHCI, GPIO48-53 ALT3), čítanie aj zápis |
+| `src/sd.c` | SD karta: výber radiča; ovládač Arasan SDHCI (GPIO48-53 ALT3), čítanie aj zápis |
+| `src/wifi.c` | WiFi čip cez SDIO (Arasan, GPIO34-39): firmvér, príkazy, scan (port 9front ether4330.c, MIT) |
+| `src/sdhost.c` | SD karta na radiči SDHOST (GPIO48-53 ALT0), predvolený od 0.28 |
 | `src/fat.c` | FAT16/FAT32: dlhé mená, čítanie, zápis (mená 8.3), mkdir, mazanie, obe kópie FAT |
 | `src/app.c` | nahrávanie programov, API v štýle Arduina, Ctrl+C, autostart z `/RUN` |
 | `src/basic.c` | interpreter BASICu |
@@ -690,5 +714,6 @@ qemu-system-aarch64 -M raspi3b -kernel kernel8.img -serial stdio -device usb-kbd
 - TCP/IP: lwIP od Adama Dunkelsa a vývojárov lwIP (licencia BSD, `lwip/COPYING`).
 - Obrázky: stb_image od Seana Barretta (public domain / MIT, `third_party/stb_image.h`).
 - TLS: BearSSL od Thomasa Pornina (MIT, `third_party/bearssl`).
+- WiFi: podľa ovládača `ether4330.c` z Plan 9 / 9front od Richarda Millera (MIT).
 - Video: pl_mpeg od Dominica Szablewského (MIT, `third_party/pl_mpeg.h`).
 - Registre LAN7515 (Pi 3B+) podľa linuxového ovládača `lan78xx`.
