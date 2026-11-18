@@ -43,8 +43,10 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
   `net speed 100` is the fallback. Traffic through the LAN7515 (frames, DHCP) not yet confirmed either.
 - Not yet verified on hardware (v0.20): `screen` resolutions + `/SCREEN.TXT`, the two framebuffer pages
   (virtual height 2h, offset tag 0x48009), worker cores 2-3, `video` (decode speed, sound stream).
-- v0.21 web page **works on hardware** (owner: "web funguje", board at 192.168.1.30); curl to /api/status
-  timed out while the browser page worked - reproduced in QEMU with idle connections, fixed in v0.22 (see lessons).
+- v0.21/0.22 web page + JSON API **work on hardware** (RPi 3B, board at 10.0.1.30): POST /api/gpio with
+  curl in Windows cmd works (JSON quoted as "{\"pin\":17,\"value\":1}"; PowerShell `curl` is Invoke-WebRequest).
+  The first curl timeout was a wrong address (192.168.1.30). Idle browser connections exhausting slots/pcbs
+  was reproduced in QEMU and fixed in v0.22 anyway (see lessons).
 - v0.22: ip.c strips 802.1Q tags before lwIP (lwIP drops them; the owner's LAN sends type 8100 frames) and
   `ip` prints frame counters (in: ARP/IPv4/other/VLAN, out/errors) - for photo debugging.
 - Not yet verified on hardware: RoboOS messages between two boards (v0.9, tested only with `net loop on`
