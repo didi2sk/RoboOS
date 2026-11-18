@@ -3,6 +3,7 @@
 usage: tools/qemu_net_test.py kernel8.img sd.img "cmd1" "cmd2" "@get3" ...
   - each argument is typed over UART (2 s each); "@getN" fetches the board's web page N times
     from the host (port 80 of the board is forwarded to 127.0.0.1:18080; run "http on" first)
+  - "~N" waits N seconds
   - "@sh:command" runs a command on the host (curl http://127.0.0.1:18080/... reaches the board's port 80)
   - "@tcp:PORT:text" connects from the host to the board's TCP PORT (23 and 80 are forwarded),
     sends text ("|" = new line), prints what comes back within 1.5 s
@@ -65,6 +66,9 @@ def cmd(c, wait=2.0):
     drain(wait)
 drain(7)
 for c in sys.argv[3:]:
+    if c.startswith("~"):             # ~seconds: just wait (and collect output)
+        drain(float(c[1:]))
+        continue
     if c.startswith("@sh:"):          # a host command, e.g. curl to 127.0.0.1:18080 (= board port 80)
         r = subprocess.run(c[4:], shell=True, capture_output=True, text=True, timeout=30)
         print("=== %s\n%s%s" % (c[4:], r.stdout, r.stderr))

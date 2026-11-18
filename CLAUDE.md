@@ -22,7 +22,7 @@ Automated QEMU testing (no display): `tools/qemu_test.py kernel8.img "cmd1" "cmd
 - verify FAT writes: `dd if=sd.img of=p.img bs=512 skip=2048; fsck.fat -n p.img`
   ("Free cluster summary uninitialized" is expected - we invalidate FSInfo on purpose)
 
-Network in QEMU: `tools/qemu_net_test.py kernel8.img sd.img "http on" "@get5" "ping 10.0.2.2"` (`"@sh:curl -s http://127.0.0.1:18080/api/status -H 'Authorization: Bearer x'"` runs a host command) - QEMU
+Network in QEMU: `tools/qemu_net_test.py kernel8.img sd.img "http on" "@get5" "ping 10.0.2.2"` (`~N` waits, `"@sh:curl -s http://127.0.0.1:18080/api/status -H 'Authorization: Bearer x'"` runs a host command) - QEMU
 `usb-net` (its 2nd configuration is CDC-ECM, which `eth.c` drives) on user networking: DHCP 10.0.2.15,
 gateway 10.0.2.2, board port 80 forwarded to host 127.0.0.1:18080. This sandbox has no DNS: to test names,
 run a tiny DNS responder on host 127.0.0.1:53 and use `ip set 10.0.2.20 255.255.255.0 10.0.2.2`.
@@ -43,8 +43,10 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
   `net speed 100` is the fallback. Traffic through the LAN7515 (frames, DHCP) not yet confirmed either.
 - Not yet verified on hardware (v0.20): `screen` resolutions + `/SCREEN.TXT`, the two framebuffer pages
   (virtual height 2h, offset tag 0x48009), worker cores 2-3, `video` (decode speed, sound stream).
-- v0.21 web page **works on hardware** (owner: "web funguje", board at 192.168.1.30); curl to /api/status
-  timed out while the browser page worked - reproduced in QEMU with idle connections, fixed in v0.22 (see lessons).
+- v0.21/0.22 web page + JSON API **work on hardware** (RPi 3B, board at 10.0.1.30): POST /api/gpio with
+  curl in Windows cmd works (JSON quoted as "{\"pin\":17,\"value\":1}"; PowerShell `curl` is Invoke-WebRequest).
+  The first curl timeout was a wrong address (192.168.1.30). Idle browser connections exhausting slots/pcbs
+  was reproduced in QEMU and fixed in v0.22 anyway (see lessons).
 - v0.22: ip.c strips 802.1Q tags before lwIP (lwIP drops them; the owner's LAN sends type 8100 frames) and
   `ip` prints frame counters (in: ARP/IPv4/other/VLAN, out/errors) - for photo debugging.
 - Not yet verified on hardware: RoboOS messages between two boards (v0.9, tested only with `net loop on`
@@ -82,7 +84,8 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
 | `src/heap.c` | bump allocator 0x04000000-0x10000000 (192 MB) with size headers for realloc; `heap_reset()` before each decode |
 | `src/path.c` | current directory (`cwd_get`/`cwd_set`, spelling taken from the card) and `path_abs()` (relative, `.`, `..` -> absolute); used by shell commands, `app_resolve` (cwd first, then /RUN, /APPS for bare names), BASIC LOAD/SAVE/DIR, edit |
 | `src/shell.c` | commands; Tab completes command names, then file/dir names (quotes names with spaces, rewrites the typed prefix in the card's spelling using `\b`) |
-| `sdk/` | program SDK (API version 6: messages, TCP/UDP, sound, WAV, pictures): `start.S` header (`ROBOAPP1` magic at +8, image end at +16), `crt0.c`, `app.ld`, examples |
+| `sdk/examples/alarm.c` | v0.23 demo burglar alarm: /ALARM.TXT (code, exit/entry/siren s, siren_pin 24, armed_pin 23, sound/volume/voice, port, `zone <gpio> instant|delay|24h nc|no name`), INPUT_PULLUP + 50 ms debounce, states disarmed/exit/armed/entry/alarm, 24h zones fire on the OPENING edge (else re-alarm right after disarm), lockout after 5 wrong codes; commands on UART/keyboard, JSON lines or HTTP on a TCP port; voice WAVs in /ALARM (sd/ALARM, made by `tools/mkvoice.sh sk|en` with espeak-ng), siren = tone() sweep 600-1200 Hz. QEMU test trick: drive a zone pin HIGH through the kernel JSON API (/api/gpio, core 1) while the app runs on core 0 |
+| `sdk/` | program SDK (API version 8: messages, TCP/UDP, sound, WAV, pictures, video, readFile/writeFile): `start.S` header (`ROBOAPP1` magic at +8, image end at +16), `crt0.c`, `app.ld`, examples |
 
 Memory: kernel at 0x80000, BSS ends ~0x120000, DMA block at 0x200000 (2 MB, uncached),
 programs at 0x01000000-0x02000000, heap (pictures) 0x04000000-0x10000000, USB DMA: channel 0 buffer at the DMA block start, channel 1 (async bulk IN) +1 MB, I2S DMA control blocks + audio segments +0x180000 (~65 KB), editor text at 0x02000000 (1 MB) + save scratch up to 0x02300000.

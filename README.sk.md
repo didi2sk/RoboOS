@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.22**
+Aktuálna verzia: **0.23**
 
 ## Podporované dosky
 
@@ -132,10 +132,53 @@ void loop(void)
 `udpOpen`, `sockWrite`, `sockPrint`, `sockRead`, `sockAvailable`, `udpSendTo`,
 `udpReceiveFrom`, `sockClose`, `sockError`, `ipAddress` a zvuk: `tone(hz, ms)`, `noTone`,
 `playNotes`, `soundVolume`, `playWav`, obrázky: `drawImage(path, x, y, w, h)`, `imageError` a
-video: `playVideo(path)`, `videoError`
+video: `playVideo(path)`, `videoError`, súbory: `readFile`, `writeFile`
 (viď `sdk/robos.h`). Program môže mať `setup()` + `loop()` alebo `main()`.
 Ukážky: `hello`, `blink`, `button`, `knight`, `chat`, `tcpserv` (TCP server), `udpecho` (UDP),
-`music` (pesnička a siréna).
+`music` (pesnička a siréna), `alarm` (pozri nižšie).
+
+### Ukážka: alarm (`alarm`)
+
+`run alarm` spustí malý zabezpečovací systém (`sdk/examples/alarm.c`); skopíruj ho do `/RUN`, aby
+štartoval sám. Nastavenia sú v `/ALARM.TXT` (pri prvom štarte sa vytvorí s predvolenými):
+
+```
+code 1234                    # PIN na zapnutie a vypnutie
+exit 20                      # sekundy na odchod po zapnutí
+entry 15                     # sekundy na vypnutie po otvorení zóny "delay"
+siren 180                    # sekundy sirény (0 = kým sa nevypne)
+siren_pin 24                 # výstup: siréna / relé (HIGH = zapnutá)
+armed_pin 23                 # výstup: LED - svieti = zapnutý, bliká = odchod / príchod, rýchlo = poplach
+sound on                     # pípanie, tón sirény a hlas na audio jacku
+volume 80
+voice /ALARM                 # priečinok s hlasovými WAV ("none" = len tóny)
+port 8080                    # TCP port pre JSON (0 = vypnuté)
+zone 17 delay nc Front door  # zone <gpio> <instant|delay|24h> <nc|no> <meno>
+zone 27 instant nc Window
+zone 22 instant no PIR hall
+zone 5 24h nc Tamper
+```
+
+- **Vstupy** majú zapnutý vnútorný pull-up: kontakt zapoj medzi GPIO a GND. `nc` = rozpínací
+  (dverový kontakt: otvorené = poplach), `no` = spínací (relé PIR, panické tlačidlo: zopnuté =
+  poplach). `instant` = poplach hneď, keď je zapnutý, `delay` = spustí príchodový čas (cesta dnu,
+  počas odchodového času sa nevšíma), `24h` = poplach vždy, aj vypnutý (sabotáž, panika).
+  Kým je otvorená zóna instant / 24h, zapnúť sa nedá.
+- **Sériový port / klávesnica**: `arm 1234`, `disarm 1234`, `status` (kód sa ukazuje ako `*`).
+  Každá udalosť sa vypíše ako `[ALARM hh:mm:ss] ...` na sériový port aj na obrazovku.
+- **JSON** na TCP porte: jeden riadok cez `nc <doska> 8080`, alebo HTTP
+  (`curl -d "{\"cmd\":\"disarm\",\"code\":\"1234\"}" http://<doska>:8080/`; GET = stav):
+  `{"cmd":"arm","code":"1234"}`, `{"cmd":"disarm","code":"1234"}`, `{"cmd":"status"}`.
+  Odpoveď obsahuje stav, sirénu, zostávajúce sekundy, príčinu a všetky zóny.
+- **Zvuk**: pípnutie každú sekundu odchodového / príchodového času, posledných 10 sekúnd
+  hlasom, siréna ako stúpajúci a klesajúci tón a hlásenia udalostí. Na karte sú slovenské
+  hlasové súbory v `/ALARM` (`ARMING`, `ARMED`, `ENTRY`, `ALARM`, `DISARMED`, `WRONG`, `NOARM`,
+  `1`-`10` `.WAV`) vyrobené cez `tools/mkvoice.sh sk` s espeak-ng (`tools/mkvoice.sh en` po
+  anglicky) - nahraď ich vlastnými nahrávkami. Hlasový súbor sa dohrá, až potom alarm pokračuje.
+- Päť zlých kódov zablokuje kód na 60 s. Je to ukážka: Ctrl+C na doske ju ukončí.
+
+Programy vedia od API verzie 8 čítať a zapisovať súbory: `readFile(path, buf, max)`,
+`writeFile(path, data, len)`.
 
 Programy sa nahrávajú na adresu 0x01000000 (max. 16 MB). Ak program spadne, vypíše sa
 výnimka a systém sa vráti do shellu.
