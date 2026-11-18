@@ -115,7 +115,7 @@ void net_loop(int on)   { io_lock(); loop = on; lqh = lqt = 0; io_unlock(); }
 int  net_looping(void)  { return loop; }
 int  net_avail(void)    { io_lock(); int n = in_count; io_unlock(); return n; }
 
-static int usable(void) { return loop || (eth_present() && !eth_error(0, 0)); }
+static int usable(void) { return loop || link_present(); }
 
 static void tx(const u8 *f, int len)
 {
@@ -126,7 +126,7 @@ static void tx(const u8 *f, int len)
         lq_len[lqh] = len;
         lqh = n;
     } else {
-        eth_send(f, len);
+        link_send(f, len);
     }
 }
 
@@ -136,7 +136,7 @@ static int build(u8 *f, const u8 *dst, u8 kind, u16 id, const char *to, const ch
     if (len > NET_TEXT_MAX) len = NET_TEXT_MAX;
     memset(f, 0, HDR + 4);
     memcpy(f, dst, 6);
-    memcpy(f + 6, mymac, 6);
+    memcpy(f + 6, link_mac(), 6);
     f[12] = 0x88; f[13] = 0xB5;
     memcpy(f + 14, "ROBO", 4);
     f[18] = 1; f[19] = kind;
@@ -190,7 +190,7 @@ static void input(const u8 *f, int n)
         f = t; n -= 4;
     }
     if (n < HDR || f[12] != 0x88 || f[13] != 0xB5 || memcmp_n(f + 14, "ROBO", 4) || f[18] != 1) return;
-    if (!loop && !memcmp_n(f + 6, mymac, 6)) return;     /* our own broadcast */
+    if (!loop && !memcmp_n(f + 6, link_mac(), 6)) return;     /* our own broadcast */
 
     memcpy(from, f + 22, NET_NAME_MAX); from[NET_NAME_MAX - 1] = 0;
     memcpy(to, f + 38, NET_NAME_MAX);   to[NET_NAME_MAX - 1] = 0;
@@ -239,9 +239,9 @@ static void pump(void)
         }
         return;
     }
-    if (!eth_present() || eth_error(0, 0)) return;
+    if (!link_present()) return;
     for (int i = 0; i < 8; i++) {
-        int n = eth_recv(f, sizeof(f));
+        int n = link_recv(f, sizeof(f));
         if (n <= 0) break;
         int robo = n >= 14 && ((f[12] == 0x88 && f[13] == 0xB5) ||
                    (n >= 18 && f[12] == 0x81 && f[13] == 0x00 && f[16] == 0x88 && f[17] == 0xB5));

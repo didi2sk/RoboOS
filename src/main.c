@@ -2,7 +2,7 @@
 #include "usb.h"
 #include "sd.h"
 
-#define VERSION "0.32"
+#define VERSION "0.33"
 
 const char *os_version(void) { return VERSION; }
 
@@ -102,6 +102,7 @@ void kernel_main(void)
         con_puts("SD card: ");
         if (sde) sd_print_fail(sde); else con_puts("no FAT16/FAT32 partition\n");
     }
+    wifi_boot();                         /* /WIFI.TXT: start the WiFi chip and join (core 0, before core 1) */
     net_name();                          /* /NAME.TXT and /IP.TXT are read here, on core 0 */
     clock_prepare();                     /* /TIME.TXT */
     ip_prepare();

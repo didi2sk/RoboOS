@@ -186,6 +186,21 @@ const char *ip_address_str(void);
 /* wifi.c - CYW43438/43436/43455 over SDIO (Arasan, GPIO34-39) */
 void wifi_cmd(int argc, char **argv);
 int  wifi_up(void);
+int  wifi_joined(void);
+const u8 *wifi_mac(void);
+const char *wifi_ssid(void);
+int  wifi_recv(void *buf, int max, int want_data);   /* core 1, io lock */
+int  wifi_send(const void *f, int len);
+void wifi_boot(void);                    /* core 0: /WIFI.TXT -> start + join */
+
+/* netdev.c - Ethernet or WiFi under the IP stack */
+int  link_wifi(void);
+int  link_present(void);
+int  link_up(void);
+const u8 *link_mac(void);
+const char *link_name(void);
+int  link_send(const void *f, int len);
+int  link_recv(void *buf, int max);
 
 /* rng.c */
 int  rng_bytes(void *out, int n);        /* 1 = from the hardware RNG */

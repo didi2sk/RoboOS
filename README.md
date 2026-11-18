@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.32**
+Current version: **0.33**
 
 ## Supported boards
 
@@ -311,20 +311,27 @@ reply from 192.168.1.1: seq=1 ttl=64 time=0.9 ms
 ### WiFi (being built)
 
 The WiFi chip (CYW43438 on the Pi 3B, CYW43436 on the Zero 2 W, CYW43455 on the Pi 3B+) hangs on
-SDIO. So far RoboOS can start it and look for networks:
+SDIO. RoboOS starts it, looks for networks and joins one (WPA2-PSK, or open):
 
 ```
-wifi scan        load the firmware into the chip and list the networks around
-wifi init        only start the chip
-wifi             chip, firmware version, MAC address
+wifi scan                     load the firmware into the chip and list the networks around
+wifi join MyNet password      join (saved in /WIFI.TXT: the board joins by itself after a reboot)
+wifi join "My Net" password   a name with spaces
+wifi                          chip, firmware, MAC address, network, signal
+wifi leave                    disconnect;  wifi forget  also deletes /WIFI.TXT
 ```
+
+The chip's own firmware does the WPA2 handshake. One IP interface carries everything (DHCP,
+web, API, HTTPS, NTP, programs): **Ethernet when its cable is in, otherwise WiFi** - pulling the
+cable switches to WiFi (`[NET] now on WiFi`, a new address by DHCP). `ip` shows which one is used.
+The Zero 2 W has no Ethernet, so WiFi is its network.
 
 The chip needs its firmware on the card in `/FIRMWARE` (files from Raspberry Pi OS
 `/lib/firmware/brcm`, or `tools/getwifi.sh` downloads them): `brcmfmac43430-sdio.bin` + `.txt` +
 `.clm_blob` (Pi 3B; the newer firmware does not switch the radio on without the `.clm_blob`), `brcmfmac43436-sdio.bin` + `.txt` + `.clm_blob` (Zero 2 W), `brcmfmac43455-sdio.bin` +
 `.txt` + `.clm_blob` (Pi 3B+). They are not in this repository (Cypress / Synaptics licenses).
 WiFi needs the SD card on SDHOST (see the SD card section). The scan works on the Pi 3B;
-joining a network comes next.
+joining is new in 0.33 and not tested on a board yet.
 
 ### Date and time (NTP)
 
@@ -560,7 +567,7 @@ If you connect after boot, press Enter.
 | `http on\|off` | small web page with board info (saved) |
 | `http token [<secret>\|off]` | JSON API token (Bearer), see the JSON API section |
 | `http tls on\|off\|new` | HTTPS on port 443 (the API then only there), new certificate |
-| `wifi [init\|scan]` | WiFi chip: load the firmware, list the networks |
+| `wifi [scan\|join <net> [pw]\|leave\|forget]` | WiFi: networks, join (saved), status |
 | `time [sync\|zone\|server\|set]` | date and time from NTP, time zone, set by hand |
 | `ls [path]` | list a directory on the SD card (default: the current one) |
 | `cd [dir]` | change directory (`..` = up, `/` = top, no argument = top) |
@@ -622,6 +629,7 @@ converted on core 0.
 | `lwip/` | lwIP 2.2.1 TCP/IP stack (unmodified, BSD license) |
 | `src/kbd.c` | HID keyboard: boot protocol, scan code translation, autorepeat |
 | `src/sd.c` | SD card: chooses the controller; the Arasan SDHCI driver (GPIO48-53 ALT3), read + write |
+| `src/netdev.c` | Ethernet or WiFi under the IP stack (Ethernet when its cable is in) |
 | `src/wifi.c` | WiFi chip over SDIO (Arasan, GPIO34-39): firmware, commands, scan (port of 9front ether4330.c, MIT) |
 | `src/sdhost.c` | SD card on the SDHOST controller (GPIO48-53 ALT0), the default since 0.28 |
 | `src/fat.c` | FAT16/FAT32: long names, read, write (8.3 names), mkdir, delete, both FAT copies |
