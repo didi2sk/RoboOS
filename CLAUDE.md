@@ -104,11 +104,14 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
   is reused when ssid + password are the same (pmk_ok). Owner (3B, v0.39): `wifi band 5` -> join printed "band: error -13" (BCME_BADBAND, 43430 is 2.4 GHz only) and "join: ..."
   but then connected by itself (DHCP 192.168.1.97, NTP) - so the retry works. v0.40: WLC_SET_BAND only on chipid 0x4345, not
   fatal, `wifi band 5` refused on 2.4 GHz chips. v0.41 photo (3B): WiFi joined by itself at boot (/WIFI.TXT) - re-join confirmed.
+- **Zero 2 W works** (owner, on v0.40/0.41 - "everything so far, also the keyboard and WiFi"): boot, USB keyboard on the root
+  port (OTG), WiFi CYW43436 (so WL_ON = GPIO41, the Synaptics firmware + CLM and the 43436 path are right). The ACT LED
+  (GPIO29 active-low) and BT (BT_ON GPIO42 assumed, BCM43430B0.hcd) not confirmed yet.
 - v0.34 (I2C sensors BME280/ADS1115/DS3231, MQTT, `hardware/iot-shield` KiCad design): nothing verified on hardware yet;
   MQTT only in QEMU against mosquitto. The shield is a first draft - never manufactured.
 - Not yet verified on hardware: RoboOS messages between two boards (v0.9, tested only with `net loop on`
   in QEMU), program loader, BASIC, line editor / full-screen editor,
-  board detection, Zero 2 W (ACT LED GPIO29 active-low is an assumption).
+  board detection.
 - Owner's boards: more than one Pi 3 (so two-board network tests are possible), a Zero 2 W, and a
   Pi 2 that is the 32-bit v1.1 (cannot run RoboOS without an AArch32 port). No Pi 4 / Pi 5.
 - Debugging on hardware happens via photos of the HDMI screen - keep diagnostics printable on

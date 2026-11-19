@@ -342,7 +342,7 @@ access point, `tools/test_wpa.py`) - `wifi join` then says "RoboOS does the WPA2
 If the join fails (at boot, a lost link, a rebooted router), the board tries again by itself: after 20 s,
 then every minute (`[NET] WiFi: joining <net> again`), until `wifi leave`. This **works on the Pi 3B+** (joined, DHCP and ping over WiFi with the cable out). WPA3-only networks (SAE) are not
 supported (WPA2/WPA3 mixed are fine).
-The Zero 2 W is not tested yet.
+**The Zero 2 W works too** (boot, USB keyboard through OTG, WiFi).
 
 ### Bluetooth (BLE: sensors, phone)
 
