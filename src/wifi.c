@@ -715,7 +715,10 @@ static int cfg_band;                                      /* 0 auto, 1 = 5 GHz o
 
 /* our own WPA2 supplicant, for firmware without one (Pi 3B+): see wpa.c */
 static struct wpa sup;
-static int host_sup, sup_ie_wanted, sup_keys, sup_gtk_only, sup_fails;
+static int host_sup, sup_ie_wanted, sup_keys, sup_gtk_only, sup_fails, sup_started;
+/* diagnostics for photos: key frames in / handled, frames out, where our RSN element came from, why the link went */
+static int d_eapol, d_m1, d_m3, d_grp, d_sent, d_sendfail, d_ie_fw, d_ie_len, d_keys, d_wpaie;
+static volatile int d_lost_type, d_lost_reason;
 static u64 sup_key_at;
 static const char *sup_err;
 static u8 sup_pmk[32];
@@ -730,22 +733,23 @@ static void event(const u8 *p, int len)
 {
     if (len < 14 + 10 + 48) return;
     p += 14 + 10; len -= 14 + 10;
-    u32 type = be32(p + 4), status = be32(p + 8);
+    u32 type = be32(p + 4), status = be32(p + 8), reason = be32(p + 12);
     u32 flags = (u32)p[2] << 8 | p[3];
     switch (type) {
     case 0:                                               /* E_SET_SSID: the join finished */
         if (status == 0) j_ssid_ok = 1; else j_fail = 1 + (int)status;   /* 1 fail, 2 timeout, 3 no network */
         return;
     case 16:                                              /* E_LINK */
-        if (flags & 1) { if (!j_link && host_sup) { wpa_start(&sup, sup_pmk, w.mac, 0, 0); sup_ie_wanted = 1; } j_link = 1; }
-        else { j_link = 0; j_keyed = 0; }
+        if (flags & 1) { if (!j_link && host_sup && !sup_started) { wpa_start(&sup, sup_pmk, w.mac, 0, 0); sup_ie_wanted = 1; sup_started = 1; } j_link = 1; }
+        else { if (j_link) { d_lost_type = 16; d_lost_reason = (int)reason; } j_link = 0; j_keyed = 0; sup_started = 0; }
         return;
     case 46:                                              /* E_PSK_SUP: the firmware's WPA supplicant */
         if (status == 6) j_keyed = 1;                     /* keyed */
         else if (status == 7 || status == 0) { if (j_need_key && !j_keyed) j_fail = 100 + (int)status; }   /* timeout = wrong password? */
         return;
-    case 5: case 6: case 12:                              /* deauth / disassoc */
-        j_link = 0; j_keyed = 0;
+    case 5: case 6: case 11: case 12:                     /* deauth / disassoc (reason = 802.11 reason code) */
+        d_lost_type = (int)type; d_lost_reason = (int)reason;
+        j_link = 0; j_keyed = 0; sup_started = 0;
         return;
     }
     if (type == 69) {                                     /* E_ESCAN_RESULT */
@@ -1019,7 +1023,11 @@ static void sup_fetch_ie(void)
     if (!req || req > sizeof(b)) return;
     if (getvar("assoc_req_ies", b, (int)req)) return;
     for (u32 i = 0; i + 2 <= req && i + 2 + b[i + 1] <= req; i += 2 + b[i + 1])
-        if (b[i] == 0x30) { wpa_start(&sup, sup_pmk, w.mac, b + i, 2 + b[i + 1]); return; }
+        if (b[i] == 0x30 && b[i + 1] >= 18 && i + 3 < req && b[i + 2] == 1 && b[i + 3] == 0) {   /* RSN version 1 */
+            wpa_start(&sup, sup_pmk, w.mac, b + i, 2 + b[i + 1]);
+            d_ie_fw = 1; d_ie_len = 2 + b[i + 1];
+            return;
+        }
 }
 
 /* a key into the firmware ("wsec_key", struct brcmf_wsec_key_le, 164 bytes) */
@@ -1045,14 +1053,17 @@ static int sup_key(int idx, const u8 *key, int len, const u8 *ea, const u8 *rsc)
 static void sup_eapol(const u8 *f, int len)
 {
     static u8 c[1600];
-    if (!host_sup || !j_link || len > (int)sizeof(c)) return;
+    if (!host_sup || len > (int)sizeof(c)) return;
+    d_eapol++;
     memcpy(c, f, (size_t)len);                            /* rx is reused by the commands below */
+    if (!sup_started) { wpa_start(&sup, sup_pmk, w.mac, 0, 0); sup_ie_wanted = 1; sup_started = 1; }   /* came before E_LINK */
     if (sup_ie_wanted) sup_fetch_ie();
     if (!wpa_rx(&sup, c, len)) {
         sup_err = sup.err;
         if (sup.err && sup.err[0] == 'M' && ++sup_fails >= 2 && j_need_key && !j_keyed) j_fail = 100;   /* MIC wrong twice = password */
         return;
     }
+    if (sup.last == 1) d_m1++; else if (sup.last == 3) d_m3++; else if (sup.last == 5) d_grp++;
     if (sup.outlen) { memcpy(sup_out, sup.out, (size_t)sup.outlen); sup_outlen = sup.outlen; }
     if (sup.set_ptk || sup.set_gtk) {                     /* after message 4 has left */
         sup_keys = 1;
@@ -1064,7 +1075,10 @@ static void sup_eapol(const u8 *f, int len)
 
 static void sup_work(void)
 {
-    if (sup_outlen && send_frame(sup_out, sup_outlen) != -2) sup_outlen = 0;
+    if (sup_outlen) {
+        int r = send_frame(sup_out, sup_outlen);
+        if (r != -2) { if (r > 0) d_sent++; else d_sendfail++; sup_outlen = 0; }
+    }
     if (sup_keys && !sup_outlen && timer_us() >= sup_key_at) {
         sup_keys = 0;
         int r = 0;
@@ -1072,6 +1086,7 @@ static void sup_work(void)
         r |= sup_key(sup.gtk_idx, sup.gtk, sup.gtk_len, 0, sup.gtk_rsc);
         if (r) { sup_err = werr; return; }
         sup_err = 0;
+        d_keys++;
         j_keyed = 1;
     }
 }
@@ -1161,7 +1176,11 @@ static int join_send(const char *ssid, const char *pass)
         wpa_pmk(pass, ssid, sl, sup_pmk);                 /* ~0.1 s: 8192 x HMAC-SHA1 */
         io_lock();
         host_sup = 1;
+        sup_started = 0;
+        d_eapol = d_m1 = d_m3 = d_grp = d_sent = d_sendfail = d_ie_fw = d_ie_len = d_keys = 0;
+        d_lost_type = d_lost_reason = 0;
         if (grp != 2) r |= chk("wsec", setint("wsec", 4));   /* AES only, unless the group key is TKIP */
+        if (grp != 2) d_wpaie = setvar("wpaie", wpa_rsn_default, 22) == 0;   /* our RSN element in the association, as Linux */
     }
     if (!pl) chk("sup_wpa", setint("sup_wpa", 0));
     if (pl && !host_sup) {
@@ -1251,6 +1270,21 @@ void wifi_boot(void)
     else kprintf("WiFi: joining %s (in the background)\n", cfg_ssid);
 }
 
+static void wpa_diag(void)
+{
+    if (!host_sup) return;
+    static const char *const lost[] = { "", "unspecified", "auth no longer valid", "left", "inactivity", "AP busy", "class 2", "class 3",
+        "disassociated", "not authenticated", "power", "channels", "", "invalid element", "MIC failure", "4-way handshake timeout",
+        "group key timeout", "element in 4-way differs", "group cipher", "pairwise cipher", "AKMP", "RSN version", "RSN caps", "802.1X failed", "cipher rejected" };
+    kprintf("  WPA: key frames in %d (msg1 %d, msg3 %d, group %d), out %d (failed %d), keys set %d\n",
+            d_eapol, d_m1, d_m3, d_grp, d_sent, d_sendfail, d_keys);
+    kprintf("  RSN element %s (%d B), wpaie %s%s%s\n", d_ie_fw ? "from the firmware" : "built in", d_ie_fw ? d_ie_len : 22,
+            d_wpaie ? "set" : "refused", sup_err ? ", last problem: " : "", sup_err ? sup_err : "");
+    if (d_lost_type)
+        kprintf("  link lost: %s, reason %d%s%s\n", d_lost_type == 16 ? "link down" : d_lost_type <= 6 ? "deauth" : "disassoc",
+                d_lost_reason, d_lost_reason > 0 && d_lost_reason < 25 ? " = " : "", d_lost_reason > 0 && d_lost_reason < 25 ? lost[d_lost_reason] : "");
+}
+
 static void wait_join(void)
 {
     u64 end = timer_us() + 20000000;
@@ -1261,6 +1295,7 @@ static void wait_join(void)
         delay_us(20000);
     }
     if (wifi_joined()) { j_told = 1; kprintf("connected to %s - the address comes by DHCP ('ip')\n", j_ssid); return; }
+    wpa_diag();
     if (j_fail == 4) kprintf("join failed: network %s not found\n", j_ssid);
     else if (j_fail >= 100) kprintf("join failed: the WPA handshake did not finish (wrong password?)%s%s\n", sup_err ? " - " : "", sup_err ? sup_err : "");
     else if (j_fail) kprintf("join failed (status %d)\n", j_fail - 1);
@@ -1328,7 +1363,7 @@ void wifi_cmd(int argc, char **argv)
         kprintf("  connected to %s, channel %d (%s GHz), signal %d dBm%s%s\n", j_ssid, c, c > 14 ? "5" : "2.4",
                 (int)(r[0] | r[1] << 8 | r[2] << 16 | (u32)r[3] << 24),
                 host_sup ? ", WPA2 by RoboOS" : "", link_wifi() ? ", carries the network now" : " (Ethernet carries the network)");
-    } else if (j_ssid[0]) kprintf("  not connected (%s)\n", j_ssid);
+    } else if (j_ssid[0]) { kprintf("  not connected (%s)\n", j_ssid); wpa_diag(); }
     else kprintf("  not connected ('wifi join <network> <password>')\n");
     if (cfg_band) kprintf("  band: %s GHz only ('wifi band auto' allows both)\n", cfg_band == 1 ? "5" : "2.4");
 }

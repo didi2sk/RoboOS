@@ -93,7 +93,7 @@ int wpa_unwrap(const unsigned char kek[16], const unsigned char *in, int len, un
 }
 
 /* the usual RSN element of a WPA2-PSK station: CCMP group + pairwise, PSK, no capabilities */
-static const unsigned char rsn_default[] = {
+const unsigned char wpa_rsn_default[22] = {
     0x30, 0x14, 0x01, 0x00, 0x00, 0x0F, 0xAC, 0x04, 0x01, 0x00, 0x00, 0x0F, 0xAC, 0x04,
     0x01, 0x00, 0x00, 0x0F, 0xAC, 0x02, 0x00, 0x00 };
 
@@ -103,7 +103,7 @@ void wpa_start(struct wpa *s, const unsigned char pmk[32], const unsigned char o
     zero((unsigned char *)s, (int)sizeof(*s));
     cpy(s->pmk, pmk, 32);
     cpy(s->spa, own_mac, 6);
-    if (!ie || ielen < 2 || ielen > (int)sizeof(s->ie)) { ie = rsn_default; ielen = (int)sizeof(rsn_default); }
+    if (!ie || ielen < 2 || ielen > (int)sizeof(s->ie)) { ie = wpa_rsn_default; ielen = (int)sizeof(wpa_rsn_default); }
     cpy(s->ie, ie, ielen);
     s->ielen = ielen;
 }
@@ -199,6 +199,7 @@ int wpa_rx(struct wpa *s, const unsigned char *f, int len)
         cpy(s->replay, k + K_REPLAY, 8);                   /* msg1 has no MIC: remember it, not trusted */
         s->have_replay = 1;
         reply(s, e[0], 2 | KI_PAIR | KI_MIC, k + K_REPLAY, s->snonce, s->ie, s->ielen);
+        s->last = 1;
         return 1;
     }
     if (!s->have_ptk) { s->err = "key message before message 1"; return 0; }
@@ -227,6 +228,7 @@ int wpa_rx(struct wpa *s, const unsigned char *f, int len)
         s->set_ptk = 1;
         s->set_gtk = 1;
         s->done = 1;
+        s->last = 3;
         return 1;
     }
     /* group key message 1 of 2 (rekeying) */
@@ -236,5 +238,6 @@ int wpa_rx(struct wpa *s, const unsigned char *f, int len)
     cpy(s->gtk_rsc, k + K_RSC, 8);
     reply(s, e[0], 2 | KI_MIC | KI_SECURE, k + K_REPLAY, 0, 0, 0);
     s->set_gtk = 1;
+    s->last = 5;
     return 1;
 }

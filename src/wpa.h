@@ -20,6 +20,7 @@ struct wpa {
     int set_gtk, gtk_idx, gtk_len;
     unsigned char gtk[32], gtk_rsc[8];
     const char *err;                                 /* why the last frame was dropped */
+    int last;                                        /* the last message handled: 1, 3, or 5 = group rekey */
 };
 
 /* PMK = PBKDF2-HMAC-SHA1(passphrase, ssid, 4096, 32) */
@@ -29,6 +30,9 @@ void wpa_start(struct wpa *s, const unsigned char pmk[32], const unsigned char o
                const unsigned char *ie, int ielen);
 /* one received EAPOL frame (whole Ethernet frame, type 0x888E); returns 1 when it was used */
 int wpa_rx(struct wpa *s, const unsigned char *frame, int len);
+
+/* 30 14 01 00 | 00-0F-AC-04 group | 1 x 00-0F-AC-04 pairwise | 1 x 00-0F-AC-02 PSK | caps 0 */
+extern const unsigned char wpa_rsn_default[22];
 
 /* building blocks, exported for the tests */
 void wpa_hmac_sha1(const unsigned char *key, int klen, const unsigned char *d, int dlen, unsigned char out[20]);
