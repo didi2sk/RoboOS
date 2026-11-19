@@ -622,6 +622,7 @@ static const struct cmd cmds[] = {
     { "http",   "[on|off|token|tls]",   "web page, JSON API, HTTPS",       http_cmd   },
     { "wifi",   "[init|scan]",          "WiFi chip: firmware, scan",       wifi_cmd   },
     { "i2c",    "scan|read|write",      "I2C bus on GPIO2/3",              i2c_cmd    },
+    { "bt",     "[on|scan [s]|off]",    "Bluetooth LE: scan for devices",  bt_cmd     },
     { "users",  "[add|passwd|del|console]", "logins: web page, API, shell", users_cmd },
     { "logout", "",                     "end the shell login",           logout_cmd },
     { "mqtt",   "[broker|pub|off|..]", "MQTT client (IoT broker)",       mqtt_cmd   },

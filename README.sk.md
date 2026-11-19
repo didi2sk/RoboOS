@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.40**
+Aktuálna verzia: **0.41**
 
 ## Podporované dosky
 
@@ -343,6 +343,23 @@ testovacím vektorom IEEE 802.11 a prístupovému bodu v Pythone, `tools/test_wp
 napíše "RoboOS does the WPA2 handshake" (len informácia). Ak sa pripojenie nepodarí (pri štarte, po strate signálu, po reštarte routera), doska to skúša znova sama:
 po 20 s, potom raz za minútu (`[NET] WiFi: joining <sieť> again`), kým nedáš `wifi leave`. Na Pi 3B+ to **funguje** (pripojenie, DHCP aj ping cez
 WiFi s vytiahnutým káblom). Siete len s WPA3 (SAE) nie sú podporované (zmiešané WPA2/WPA3 áno). Zero 2 W ešte nie je vyskúšaná.
+
+### Bluetooth (BLE scan)
+
+WiFi čip je zároveň Bluetooth čip. Zapne sa, až keď ho zavoláš:
+
+```
+bt scan          hľadá Bluetooth LE zariadenia 5 s (bt scan 20 = 20 s)
+bt               stav
+bt off           vypnúť
+```
+
+Zoznam ukáže adresu, signál, meno a výrobcu (Apple, Samsung, Xiaomi ...). Teplomery Xiaomi
+LYWSD03MMC s voľným firmvérom ATC / pvvx ukážu aj teplotu, vlhkosť a batériu. Čip potrebuje
+firmvér z `/FIRMWARE/*.hcd` (v `sd/FIRMWARE`). Kým je Bluetooth zapnutý, UART konzola beží na
+mini UARTe - rovnaké piny 8/10, rovnakých 115200, na kábli netreba nič meniť; `bt off` ju vráti.
+Vyskúšané len v QEMU s falošným Bluetooth radičom (`tools/qemu_bt_test.py`); pin BT_ON na Zero 2 W
+(GPIO42) je odhad. Ďalej: BLE zariadenie, na ktoré sa pripojí mobil (čítať senzory, prepínať piny).
 
 ### Dátum a čas (NTP)
 
@@ -689,6 +706,7 @@ Systém komunikuje po anglicky.
 | `http token [<tajne>\|off]` | token pre JSON API (Bearer), pozri časť o JSON API |
 | `http tls on\|off\|new` | HTTPS na porte 443 (API potom len tam), nový certifikát |
 | `wifi [scan\|join <sieť> [heslo]\|band 2\|5\|auto\|leave\|forget]` | WiFi: siete, pripojenie (uloží sa), stav |
+| `bt [on\|scan [s]\|off]` | Bluetooth LE: zariadenia okolo (zapne sa len na požiadanie) |
 | `sensors [scan]`, `i2c scan\|read\|write` | senzory na I2C (BME280, ADS1115, DS3231) |
 | `mqtt [broker\|user\|pub\|interval\|off]` | MQTT klient (IoT) |
 | `users [add\|passwd\|del\|console on\|off]`, `logout` | prihlásenie na web a API (voliteľné) |

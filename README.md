@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.40**
+Current version: **0.41**
 
 ## Supported boards
 
@@ -343,6 +343,24 @@ If the join fails (at boot, a lost link, a rebooted router), the board tries aga
 then every minute (`[NET] WiFi: joining <net> again`), until `wifi leave`. This **works on the Pi 3B+** (joined, DHCP and ping over WiFi with the cable out). WPA3-only networks (SAE) are not
 supported (WPA2/WPA3 mixed are fine).
 The Zero 2 W is not tested yet.
+
+### Bluetooth (BLE scan)
+
+The WiFi chip is a Bluetooth chip too. It is switched on only when you ask:
+
+```
+bt scan          look for Bluetooth LE devices for 5 s (bt scan 20 = 20 s)
+bt               status
+bt off           switch it off
+```
+
+The list shows the address, signal, name and maker (Apple, Samsung, Xiaomi ...). Xiaomi
+LYWSD03MMC thermometers with the free ATC / pvvx firmware also show their temperature,
+humidity and battery. The chip needs its firmware from `/FIRMWARE/*.hcd` (in `sd/FIRMWARE`).
+While Bluetooth is on, the UART console runs on the mini UART - same pins 8/10, same 115200,
+nothing to change on the cable; `bt off` gives it back. Tested only in QEMU with a fake
+Bluetooth controller (`tools/qemu_bt_test.py`); the Zero 2 W BT_ON pin (GPIO42) is a guess.
+Next steps: a BLE device the phone can connect to (read sensors, switch pins).
 
 ### Date and time (NTP)
 
@@ -690,6 +708,7 @@ If you connect after boot, press Enter.
 | `http token [<secret>\|off]` | JSON API token (Bearer), see the JSON API section |
 | `http tls on\|off\|new` | HTTPS on port 443 (the API then only there), new certificate |
 | `wifi [scan\|join <net> [pw]\|band 2\|5\|auto\|leave\|forget]` | WiFi: networks, join (saved), status |
+| `bt [on\|scan [s]\|off]` | Bluetooth LE: devices around (switched on only when asked) |
 | `sensors [scan]`, `i2c scan\|read\|write` | I2C sensors (BME280, ADS1115, DS3231) |
 | `mqtt [broker\|user\|pub\|interval\|off]` | MQTT client (IoT) |
 | `users [add\|passwd\|del\|console on\|off]`, `logout` | logins for the web page + API (optional) |

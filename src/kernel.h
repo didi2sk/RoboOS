@@ -44,6 +44,11 @@ void uart_init(void);
 void uart_putc(char c);
 char uart_getc(void);
 int  uart_has_char(void);
+void uart_console_mini(int on);          /* console PL011 <-> mini UART (Bluetooth takes the PL011) */
+void uart_bt_init(int flow);
+void uart_bt_putc(u8 c);
+int  uart_bt_getc(u32 us);
+void bt_cmd(int argc, char **argv);
 
 /* mbox.c */
 #define MBOX_CH_PROP 8
