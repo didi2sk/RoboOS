@@ -15,7 +15,7 @@ python3 bom.py
 ./render.sh
 if [ -n "$1" ]; then
   rm -rf build/gerber && mkdir -p build/gerber
-  kicad-cli pcb export gerbers -o build/gerber/ iot-shield.kicad_pcb >/dev/null
+  kicad-cli pcb export gerbers -l F.Cu,B.Cu,F.Mask,B.Mask,F.SilkS,B.SilkS,F.Paste,B.Paste,Edge.Cuts -o build/gerber/ iot-shield.kicad_pcb >/dev/null
   kicad-cli pcb export drill -o build/gerber/ iot-shield.kicad_pcb >/dev/null
   rm -f iot-shield-gerbers.zip && (cd build/gerber && zip -q ../../iot-shield-gerbers.zip *)
   echo "iot-shield-gerbers.zip written"
