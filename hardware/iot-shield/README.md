@@ -40,9 +40,9 @@ signal between **INx** and **COM** (COM is isolated from the Pi ground).
 - Analog inputs: 0-3.3 V only. The ADC range is +-4.096 V but its inputs must not go above VDD.
 - The header socket J1 (2x20, female, 8.5 mm) goes on the **bottom** side; everything else on top.
 - `bom.csv` was checked in JLCPCB's BOM tool: D2 (SMBJ26CA), F1 (2 A hold, 30 V), J7 (side-entry Qwiic),
-  L1 (5x5 mm), R11-R14 (1206) and D3 were fixed with LCSC numbers looked up on lcsc.com / jlcpcb.com.
-  Still look at stock and at BT1 (the matched holder must fit the Keystone 3000 holes).
-  **U3 (BME280) and C40 are not assembled** (expensive, warmed by the board): plug a Qwiic BME280 module into J7. Terminal blocks: any 3.5 mm pitch, 2/5/5/6 pins.
+  L1 (5x5 mm), R11-R14 (1206), D3 and U4 (DS3231MZ+TRL C107410; C9867 was a DS1337) were fixed with LCSC numbers looked up on lcsc.com / jlcpcb.com.
+  **U3 (BME280), C40 and BT1 are not assembled**: plug a Qwiic BME280 module into J7 (the board warms U3); solder a
+  Keystone 3000 CR1220 holder by hand (JLCPCB's match did not fit). J1 (bottom), J2-J6 = through-hole, by hand. Terminal blocks: any 3.5 mm pitch, 2/5/5/6 pins.
 
 ## Routing
 

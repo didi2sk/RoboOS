@@ -40,9 +40,10 @@ Záťaž (cievka relé, LED pás, ventil) zapoj medzi **V+** a **OUTx**. Vstupy:
 - Analógové vstupy len 0-3,3 V (rozsah ADC je +-4,096 V, ale vstup nesmie byť nad VDD).
 - Konektor J1 (2x20 dutinky, 8,5 mm) ide na **spodnú** stranu, všetko ostatné hore.
 - `bom.csv` je skontrolovaný v BOM nástroji JLCPCB: D2 (SMBJ26CA), F1 (2 A, 30 V), J7 (Qwiic z boku),
-  L1 (5x5 mm), R11-R14 (1206) a D3 sú opravené podľa lcsc.com / jlcpcb.com. Pozri ešte sklad a BT1
-  (držiak musí sedieť do otvorov Keystone 3000). **U3 (BME280) a C40 sa neosadzujú** (drahé, doska ich
-  zohrieva): do J7 zapoj modul BME280 s konektorom Qwiic. Svorkovnice: hocijaké s roztečou 3,5 mm, 2/5/5/6 pinov.
+  L1 (5x5 mm), R11-R14 (1206), D3 a U4 (DS3231MZ+TRL C107410; C9867 bol DS1337)
+  sú opravené podľa lcsc.com / jlcpcb.com. **U3 (BME280), C40 a BT1 sa neosadzujú**: do J7 zapoj modul BME280
+  s konektorom Qwiic (doska U3 zohrieva); držiak CR1220 Keystone 3000 prispájkuj ručne (návrh JLCPCB nesedel).
+  J1 (spodok), J2-J6 = vývodové, ručne. Svorkovnice: hocijaké s roztečou 3,5 mm, 2/5/5/6 pinov.
 
 ## Routovanie
 

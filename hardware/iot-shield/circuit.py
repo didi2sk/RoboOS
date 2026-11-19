@@ -103,7 +103,7 @@ C("C34", "100n", "+3V3", "GND", "adc", 46, 2, C100N)
 part("U3", "Sensor:BME280", "BME280", "Package_LGA:Bosch_LGA-8_2.5x2.5mm_P0.65mm_ClockwisePinNumbering", "C92489",
      {"1": "GND", "2": "+3V3", "3": "SDA", "4": "SCL", "5": "GND", "6": "+3V3", "7": "GND", "8": "+3V3"}, "i2c", 6, 8)
 C("C40", "100n", "+3V3", "GND", "i2c", 14, 3, C100N)
-part("U4", "Timer_RTC:DS3231MZ", "DS3231MZ", "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm", "C9867",
+part("U4", "Timer_RTC:DS3231MZ", "DS3231MZ", "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm", "C107410",
      {"2": "+3V3", "5": "GND", "6": "VBAT", "7": "SDA", "8": "SCL"}, "i2c", 28, 8)
 C("C41", "100n", "+3V3", "GND", "i2c", 34, 3, C100N)
 part("BT1", "Device:Battery_Cell", "CR1220", "Battery:BatteryHolder_Keystone_3000_1x12mm", "C70376",
@@ -118,7 +118,7 @@ for i, (x, y) in enumerate(((2, 2), (8, 2), (2, 6), (8, 6))):
     part("H%d" % (i + 1), "Mechanical:MountingHole", "M2.5", "MountingHole:MountingHole_2.7mm_M2.5", "", {}, "mech", x, y)
 
 # not assembled by JLCPCB (DNP): the BME280 is expensive and warmed by the board - use a Qwiic module on J7
-dnp = {"U3", "C40"}
+dnp = {"U3", "C40", "BT1"}
 
 # PWR_FLAGs: nets fed only through connectors
 power_flags = ["VIN_RAW", "GND", "+3V3", "+5V", "VBAT", "COM_IN"]
