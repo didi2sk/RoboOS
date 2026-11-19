@@ -33,7 +33,7 @@ or GPIO47 (Pi 2 v1.2).
 1. Format the SD card as **FAT32** with an **MBR** partition table (any size).
 2. Copy the whole contents of the `sd/` folder onto it:
    `bootcode.bin`, `start.elf`, `fixup.dat`, `config.txt`, `kernel8.img`,
-   plus the folders `APPS` (example programs) and `RUN` (autostart).
+   plus the folders `APPS` (example programs), `RUN` (autostart) and `FIRMWARE` (WiFi chip firmware).
 3. Put the card in the Raspberry Pi and power it on.
 
 ## Programs and autostart
@@ -326,10 +326,12 @@ web, API, HTTPS, NTP, programs): **Ethernet when its cable is in, otherwise WiFi
 cable switches to WiFi (`[NET] now on WiFi`, a new address by DHCP). `ip` shows which one is used.
 The Zero 2 W has no Ethernet, so WiFi is its network.
 
-The chip needs its firmware on the card in `/FIRMWARE` (files from Raspberry Pi OS
-`/lib/firmware/brcm`, or `tools/getwifi.sh` downloads them): `brcmfmac43430-sdio.bin` + `.txt` +
+The chip needs its firmware on the card in `/FIRMWARE` - it is in `sd/FIRMWARE`, so copying
+`sd/` is enough (`tools/getwifi.sh` downloads a fresh copy): `brcmfmac43430-sdio.bin` + `.txt` +
 `.clm_blob` (Pi 3B; the newer firmware does not switch the radio on without the `.clm_blob`), `brcmfmac43436-sdio.bin` + `.txt` + `.clm_blob` (Zero 2 W), `brcmfmac43455-sdio.bin` +
-`.txt` + `.clm_blob` (Pi 3B+). They are not in this repository (Cypress / Synaptics licenses).
+`.txt` + `.clm_blob` (Pi 3B+). These files are not RoboOS: unmodified copies from Raspberry Pi's
+firmware-nonfree package under the Cypress / Synaptics licenses, which allow redistributing them
+for use with their chips - see `sd/FIRMWARE/README.txt` and the `LICENCE.*` files next to them.
 WiFi needs the SD card on SDHOST (see the SD card section). The scan works on the Pi 3B;
 joining works too (tested on the Pi 3B; the Pi 3B+ and the Zero 2 W are not tested yet).
 
