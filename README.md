@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.34**
+Current version: **0.37**
 
 ## Supported boards
 
@@ -242,7 +242,7 @@ ffmpeg -i film.mp4 -vf scale=640:-2 -c:v mpeg1video -q:v 4 -c:a mp2 -b:a 192k -f
 ## Network: messages between RoboOS boards
 
 The Pi 3B (LAN9514) and the Pi 3B+ (LAN7515) have an Ethernet chip that is a USB device
-behind the onboard hub; RoboOS has a driver for both. The 3B links at 100 Mbit, the 3B+
+behind the onboard hub; RoboOS has a driver for both (both work: DHCP, NTP). The 3B links at 100 Mbit, the 3B+
 at 1000 Mbit (`net speed 100` limits it; over USB 2.0 the chip moves at most ~300 Mbit). Plug the
 boards into the same switch or router and they can send each other short text messages.
 The protocol is RoboOS's own, on raw Ethernet frames (EtherType `88b5`), so a PC does
@@ -318,6 +318,8 @@ wifi scan                     load the firmware into the chip and list the netwo
 wifi join MyNet password      join (saved in /WIFI.TXT: the board joins by itself after a reboot)
 wifi join "My Net" password   a name with spaces
 wifi                          chip, firmware, MAC address, network, signal
+wifi band 2|5|auto            only 2.4 GHz / only 5 GHz / both (saved; a network with both bands:
+                              the firmware picks one, 'wifi' shows the channel it got)
 wifi leave                    disconnect;  wifi forget  also deletes /WIFI.TXT
 ```
 
@@ -332,8 +334,14 @@ The chip needs its firmware on the card in `/FIRMWARE` - it is in `sd/FIRMWARE`,
 `.txt` + `.clm_blob` (Pi 3B+). These files are not RoboOS: unmodified copies from Raspberry Pi's
 firmware-nonfree package under the Cypress / Synaptics licenses, which allow redistributing them
 for use with their chips - see `sd/FIRMWARE/README.txt` and the `LICENCE.*` files next to them.
-WiFi needs the SD card on SDHOST (see the SD card section). The scan works on the Pi 3B;
-joining works too (tested on the Pi 3B; the Pi 3B+ and the Zero 2 W are not tested yet).
+WiFi needs the SD card on SDHOST (see the SD card section). Scan and join work on the Pi 3B;
+the scan works on the Pi 3B+ (2.4 and 5 GHz). The Pi 3B+ firmware has no built-in WPA supplicant,
+so since 0.36 RoboOS does the WPA2-PSK handshake itself (`src/wpa.c`: PBKDF2, the 4-way and group
+key handshakes, AES key unwrap; checked on the PC against the IEEE 802.11 test vectors and a Python
+access point, `tools/test_wpa.py`) - `wifi join` then says "RoboOS does the WPA2 handshake" (just information).
+This **works on the Pi 3B+** (joined, DHCP and ping over WiFi with the cable out). WPA3-only networks (SAE) are not
+supported (WPA2/WPA3 mixed are fine).
+The Zero 2 W is not tested yet.
 
 ### Date and time (NTP)
 
@@ -411,6 +419,28 @@ from another address may call the API too (CORS is allowed). The board prints
 `[API] reboot asked by <address>` and `[API] wrong or missing token from <address>`.
 **HTTP is not encrypted**: anybody who can watch your LAN can read the token, so use the
 API only on your own network, not from the internet. Pins 14/15 are the UART.
+
+### Users: a login for the web page and the API (optional)
+
+As long as there are no users, nothing changes: the page is open and the API takes the token.
+The first `users add` turns the login on for the page and the whole API:
+
+```
+users add robo MyPassword1          an admin: may do everything (the first user must be an admin)
+users add guest Reader123 view      a "view" user: may only look (page, GET /api/...)
+users                               the list
+users passwd guest NewPass99        a new password
+users del guest                     delete (when the last one goes, the page is open again)
+```
+
+The browser shows its own login window; curl: `curl -u robo:MyPassword1 http://<address>/api/status`.
+A "view" user gets 403 for POST (pins, sound, reboot); the Bearer token still works and counts as
+an admin. Five wrong passwords (or tokens) from one address lock that address out for a minute
+(429), the board prints `[WEB] wrong login 'x' from <address>`. `/USERS.TXT` keeps only a salted
+hash of each password (PBKDF2-HMAC-SHA256, 1000 rounds), never the password itself.
+**Turn HTTPS on (`http tls on`)**: without it the browser sends the password readable over the
+network; with HTTPS on, `http://` pages jump to `https://` and nothing asks for a password in clear text.
+The keyboard / UART console on the board itself does not ask for a login.
 
 ### TCP and UDP in programs
 
@@ -520,7 +550,10 @@ interval 60
 discovery on
 ```
 
-MQTT here is not encrypted (port 1883, QoS 0) - use it on your own network.
+With a login (Mosquitto `password_file`, Home Assistant's MQTT add-on user): `mqtt user <name> <password>`;
+`mqtt` then shows "user <name>", a wrong login shows "last problem: bad user name or password" /
+"not authorized" and is tried again only once a minute. The password is stored in plain text in
+`/MQTT.TXT` and travels unencrypted, like everything on port 1883 (QoS 0) - use it on your own network.
 
 In programs: BASIC `SENSOR(n)` (0 CPU, 1 temperature, 2 humidity in 0.01 C / %, 3 pressure in Pa,
 4-7 ADC in mV, -999999 = no sensor), `MQTTPUB "topic", items` (like PRINT), `MQTTOK`;
@@ -651,9 +684,10 @@ If you connect after boot, press Enter.
 | `http on\|off` | small web page with board info (saved) |
 | `http token [<secret>\|off]` | JSON API token (Bearer), see the JSON API section |
 | `http tls on\|off\|new` | HTTPS on port 443 (the API then only there), new certificate |
-| `wifi [scan\|join <net> [pw]\|leave\|forget]` | WiFi: networks, join (saved), status |
+| `wifi [scan\|join <net> [pw]\|band 2\|5\|auto\|leave\|forget]` | WiFi: networks, join (saved), status |
 | `sensors [scan]`, `i2c scan\|read\|write` | I2C sensors (BME280, ADS1115, DS3231) |
 | `mqtt [broker\|user\|pub\|interval\|off]` | MQTT client (IoT) |
+| `users [add\|passwd\|del]` | logins for the web page + API (optional) |
 | `time [sync\|zone\|server\|set]` | date and time from NTP, time zone, set by hand |
 | `ls [path]` | list a directory on the SD card (default: the current one) |
 | `cd [dir]` | change directory (`..` = up, `/` = top, no argument = top) |

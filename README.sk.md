@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.34**
+Aktuálna verzia: **0.37**
 
 ## Podporované dosky
 
@@ -243,7 +243,7 @@ ffmpeg -i film.mp4 -vf scale=640:-2 -c:v mpeg1video -q:v 4 -c:a mp2 -b:a 192k -f
 ## Sieť: správy medzi RoboOS doskami
 
 Pi 3B (LAN9514) a Pi 3B+ (LAN7515) majú ethernetový čip, ktorý je USB zariadenie za hubom
-na doske; RoboOS má ovládač pre oba. 3B sa pripojí rýchlosťou 100 Mbit, 3B+ 1000 Mbit
+na doske; RoboOS má ovládač pre oba (oba fungujú: DHCP, NTP). 3B sa pripojí rýchlosťou 100 Mbit, 3B+ 1000 Mbit
 (`net speed 100` ju obmedzí; cez USB 2.0 čip prenesie najviac asi 300 Mbit). Zapoj dosky do
 toho istého switchu alebo routera a môžu si posielať krátke textové správy.
 Protokol je vlastný, na surových ethernetových rámcoch (EtherType `88b5`), takže PC mu
@@ -319,6 +319,8 @@ wifi scan                     nahrá firmvér do čipu a vypíše siete okolo
 wifi join MojaSiet heslo      pripojí sa (uloží sa do /WIFI.TXT: po reštarte sa pripojí sama)
 wifi join "Moja Siet" heslo   meno s medzerami
 wifi                          čip, firmvér, MAC adresa, sieť, signál
+wifi band 2|5|auto            len 2,4 GHz / len 5 GHz / obe (uloží sa; pri sieti na oboch pásmach
+                              vyberá firmvér, 'wifi' ukáže kanál, na ktorý sa pripojil)
 wifi leave                    odpojí sa;  wifi forget  zmaže aj /WIFI.TXT
 ```
 
@@ -334,8 +336,12 @@ firmvér bez `.clm_blob` nezapne rádio),
 `.clm_blob` (Pi 3B+). Tieto súbory nie sú súčasťou RoboOS: sú to nezmenené kópie z balíka
 firmware-nonfree od Raspberry Pi pod licenciami Cypress / Synaptics, ktoré ich dovoľujú šíriť na
 použitie s ich čipmi - pozri `sd/FIRMWARE/README.txt` a súbory `LICENCE.*` vedľa nich. WiFi potrebuje
-SD kartu na SDHOST (pozri časť o SD karte). Scan na Pi 3B funguje; pripojenie tiež funguje (vyskúšané na Pi 3B; Pi 3B+ a
-Zero 2 W ešte nie).
+SD kartu na SDHOST (pozri časť o SD karte). Na Pi 3B funguje scan aj pripojenie; na Pi 3B+ funguje scan
+(2,4 aj 5 GHz). Firmvér Pi 3B+ nemá zabudovaný WPA supplicant, preto od 0.36 robí WPA2-PSK handshake
+sám RoboOS (`src/wpa.c`: PBKDF2, 4-way a skupinový handshake, AES key unwrap; overené na PC proti
+testovacím vektorom IEEE 802.11 a prístupovému bodu v Pythone, `tools/test_wpa.py`) - `wifi join` potom
+napíše "RoboOS does the WPA2 handshake" (len informácia). Na Pi 3B+ to **funguje** (pripojenie, DHCP aj ping cez
+WiFi s vytiahnutým káblom). Siete len s WPA3 (SAE) nie sú podporované (zmiešané WPA2/WPA3 áno). Zero 2 W ešte nie je vyskúšaná.
 
 ### Dátum a čas (NTP)
 
@@ -412,6 +418,28 @@ volať aj webová stránka z inej adresy (CORS je povolený). Doska vypíše
 `[API] reboot asked by <adresa>` a `[API] wrong or missing token from <adresa>`.
 **HTTP nie je šifrované**: kto vidí do tvojej siete, prečíta aj token, takže API používaj
 len vo vlastnej sieti, nie z internetu. Piny 14/15 sú UART.
+
+### Používatelia: prihlásenie na webovú stránku a API (voliteľné)
+
+Kým nie je žiadny používateľ, nič sa nemení: stránka je otvorená a API berie token.
+Prvý `users add` zapne prihlasovanie pre stránku aj celé API:
+
+```
+users add robo MojeHeslo1           admin: smie všetko (prvý používateľ musí byť admin)
+users add host Citatel123 view      používateľ "view": smie len pozerať (stránka, GET /api/...)
+users                               zoznam
+users passwd host NoveHeslo9        nové heslo
+users del host                      zmazať (keď zmizne posledný, stránka je zase otvorená)
+```
+
+Prehliadač ukáže svoje prihlasovacie okno; curl: `curl -u robo:MojeHeslo1 http://<adresa>/api/status`.
+Používateľ "view" dostane na POST (piny, zvuk, reštart) 403; Bearer token stále funguje a platí ako
+admin. Päť zlých hesiel (alebo tokenov) z jednej adresy ju zablokuje na minútu (429), doska vypíše
+`[WEB] wrong login 'x' from <adresa>`. `/USERS.TXT` obsahuje len osolený hash hesla
+(PBKDF2-HMAC-SHA256, 1000 kôl), nikdy heslo samotné.
+**Zapni HTTPS (`http tls on`)**: bez neho prehliadač posiela heslo po sieti čitateľne; so zapnutým
+HTTPS stránky z `http://` skočia na `https://` a nič sa nepýta heslo nešifrovane.
+Klávesnica / UART konzola priamo na doske prihlásenie nepýta.
 
 ### TCP a UDP v programoch
 
@@ -520,7 +548,10 @@ interval 60
 discovery on
 ```
 
-MQTT tu nie je šifrované (port 1883, QoS 0) - používaj ho vo vlastnej sieti.
+S prihlásením (Mosquitto `password_file`, používateľ MQTT doplnku Home Assistant): `mqtt user <meno> <heslo>`;
+`mqtt` potom ukáže "user <meno>", zlé prihlásenie ukáže "last problem: bad user name or password" /
+"not authorized" a skúša sa znova len raz za minútu. Heslo je v `/MQTT.TXT` ako obyčajný text a po
+sieti ide nešifrovane, ako všetko na porte 1883 (QoS 0) - používaj to vo vlastnej sieti.
 
 V programoch: BASIC `SENSOR(n)` (0 CPU, 1 teplota, 2 vlhkosť v 0,01 C / %, 3 tlak v Pa,
 4-7 ADC v mV, -999999 = senzor nie je), `MQTTPUB "téma", položky` (ako PRINT), `MQTTOK`;
@@ -652,9 +683,10 @@ Systém komunikuje po anglicky.
 | `http on\|off` | malá webová stránka s údajmi o doske (uloží sa) |
 | `http token [<tajne>\|off]` | token pre JSON API (Bearer), pozri časť o JSON API |
 | `http tls on\|off\|new` | HTTPS na porte 443 (API potom len tam), nový certifikát |
-| `wifi [scan\|join <sieť> [heslo]\|leave\|forget]` | WiFi: siete, pripojenie (uloží sa), stav |
+| `wifi [scan\|join <sieť> [heslo]\|band 2\|5\|auto\|leave\|forget]` | WiFi: siete, pripojenie (uloží sa), stav |
 | `sensors [scan]`, `i2c scan\|read\|write` | senzory na I2C (BME280, ADS1115, DS3231) |
 | `mqtt [broker\|user\|pub\|interval\|off]` | MQTT klient (IoT) |
+| `users [add\|passwd\|del]` | prihlásenie na web a API (voliteľné) |
 | `time [sync\|zone\|server\|set]` | dátum a čas z NTP, časové pásmo, ručné nastavenie |
 | `ls [cesta]` | obsah priečinka na SD karte (bez cesty: aktuálneho) |
 | `cd [priečinok]` | zmena priečinka (`..` = vyššie, `/` = navrch, bez argumentu = navrch) |

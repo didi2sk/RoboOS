@@ -481,6 +481,10 @@ static void add_u(u64 v)
 static char addr_s[16];
 const char *ip_address_str(void) { return ip4addr_ntoa_r(netif_ip4_addr(&nif), addr_s, sizeof(addr_s)); }
 
+int https_on(void) { return https_pcb != 0; }
+static char page_user[24];
+static int page_role;
+
 static void build_page(void)
 {
     u32 t[2] = { 0, 0 };
@@ -501,6 +505,7 @@ static void build_page(void)
     add("<tr><td>visits</td><td>"); add_u(http_hits); add("</td></tr>");
     add("<tr><td>JSON API</td><td>"); add(api_token()[0] ? "on (/api/..., Bearer token)" : "off"); add("</td></tr>");
     add("<tr><td>HTTPS</td><td>"); add(https_pcb ? "on" : "off"); add("</td></tr>");
+    if (page_user[0]) { add("<tr><td>logged in</td><td>"); add(page_user); add(page_role == 2 ? " (admin)" : " (view)"); add("</td></tr>"); }
     {
         char tb[32];
         u64 now = clock_now();
@@ -594,7 +599,43 @@ static int http_try(struct tcp_pcb *pcb, struct http_conn *c)
     ip4addr_ntoa_r(ip_2_ip4(&pcb->remote_ip), from, sizeof(from));
 
     if (c->tls) https_hits++; else http_hits++;
-    if (!strncmp(path, "/api", 4) && (path[4] == 0 || path[4] == '/')) {
+    int is_api = !strncmp(path, "/api", 4) && (path[4] == 0 || path[4] == '/');
+    int role = 0;
+    page_user[0] = 0;
+    if (users_count() && strcmp(m, "OPTIONS") && !(is_api && !c->tls && https_pcb)) {   /* logins on: users.c (HTTP Basic) */
+        if (!c->tls && https_pcb && !is_api) {           /* never ask for a password in clear text when HTTPS is there */
+            plen = 0;
+            char hb[64];                                 /* the name the browser used, without its port */
+            int hn = 0;
+            char *hh = header(c->req + (sp ? (sp - c->req) + 1 : 0), "Host");
+            if (hh) while (hh[hn] && hh[hn] != '\r' && hh[hn] != ':' && hh[hn] != '/' && hn < 63) { hb[hn] = hh[hn]; hn++; }
+            hb[hn] = 0;
+            add("HTTP/1.0 301 Moved\r\nLocation: https://"); add(hn ? hb : ip_address_str()); add(path);
+            add("\r\nConnection: close\r\n\r\n");
+            return 1;
+        }
+        char *auth = header(c->req + (sp ? (sp - c->req) + 1 : 0), "Authorization");
+        char save = 0, *e = auth ? strstr(auth, "\r\n") : 0;
+        if (e) { save = *e; *e = 0; }
+        role = users_auth(auth, from, page_user, sizeof(page_user));
+        if (e) *e = save;
+        if (role < 0) {
+            plen = 0;
+            add("HTTP/1.0 429 Too Many Requests\r\nContent-Type: text/plain\r\nRetry-After: 60\r\nConnection: close\r\n\r\n"
+                "Too many wrong logins from this address - wait a minute.\n");
+            return 1;
+        }
+        if (!role && !(is_api && auth && !strncmp(auth, "Bearer ", 7))) {   /* the API may still use the token */
+            plen = 0;
+            add(is_api ? "HTTP/1.0 401 Unauthorized\r\nContent-Type: application/json\r\n" : "HTTP/1.0 401 Unauthorized\r\nContent-Type: text/html\r\n");
+            add("WWW-Authenticate: Basic realm=\"RoboOS\", charset=\"UTF-8\"\r\nConnection: close\r\n\r\n");
+            add(is_api ? "{\"ok\":false,\"error\":\"log in (HTTP Basic: curl -u name:password)\"}\n"
+                       : "<!doctype html><html><body style=\"font-family:monospace\"><h1>RoboOS</h1>Log in, please.</body></html>\n");
+            return 1;
+        }
+        page_role = role;
+    }
+    if (is_api) {
         if (!c->tls && https_pcb) {                      /* with HTTPS on, the token must not go in clear text */
             plen = 0;
             add("HTTP/1.0 403 Forbidden\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n"
@@ -610,7 +651,7 @@ static int http_try(struct tcp_pcb *pcb, struct http_conn *c)
             char *auth = header(c->req + (sp ? (sp - c->req) + 1 : 0), "Authorization");
             if (auth) { char *e = strstr(auth, "\r\n"); if (e) *e = 0; }
             body[need] = 0;
-            plen = api_handle(m, path, auth, body, need, from, page, sizeof(page));
+            plen = api_handle(m, path, auth, role, body, need, from, page, sizeof(page));
         }
     } else {
         build_page();

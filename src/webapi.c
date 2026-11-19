@@ -75,9 +75,9 @@ static void head(int code)
     put("HTTP/1.0 ");
     put_i(code);
     put(code == 200 ? " OK" : code == 400 ? " Bad Request" : code == 401 ? " Unauthorized" :
-        code == 202 ? " Accepted" : code == 403 ? " Forbidden" : code == 404 ? " Not Found" : code == 405 ? " Method Not Allowed" : " Error");
+        code == 202 ? " Accepted" : code == 403 ? " Forbidden" : code == 404 ? " Not Found" : code == 405 ? " Method Not Allowed" : code == 429 ? " Too Many Requests" : " Error");
     put("\r\nContent-Type: application/json\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n");
-    if (code == 401) put("WWW-Authenticate: Bearer\r\n");
+    if (code == 401) put(users_count() ? "WWW-Authenticate: Basic realm=\"RoboOS\", charset=\"UTF-8\"\r\n" : "WWW-Authenticate: Bearer\r\n");
     put("\r\n");
     body_start = olen;
 }
@@ -405,11 +405,13 @@ static int same_token(const char *a, int alen)
  * method, path, the Authorization header value (or 0) and the body; the whole
  * HTTP answer goes to o. Returns its length.
  */
-int api_handle(const char *method, const char *path, const char *auth, const char *body, int blen,
+int api_handle(const char *method, const char *path, const char *auth, int role, const char *body, int blen,
                const char *from, char *o, int max)
 {
     out = o; omax = max; olen = 0;
-    if (!token[0]) return fail(403, "API off: set a token on the board with 'http token <secret>'");
+    if (role) goto logged_in;                             /* a user login (users.c) instead of the token */
+    if (users_locked(from)) return fail(429, "too many wrong logins from this address - wait a minute");
+    if (!token[0]) return fail(403, users_count() ? "log in (HTTP Basic: curl -u name:password)" : "API off: set a token on the board with 'http token <secret>'");
     int alen = 0;
     if (auth) {
         while (*auth == ' ') auth++;
@@ -417,10 +419,14 @@ int api_handle(const char *method, const char *path, const char *auth, const cha
     }
     if (auth) { while (*auth == ' ') auth++; while (auth[alen] && auth[alen] != ' ' && auth[alen] != '\r') alen++; }
     if (!auth || !same_token(auth, alen)) {
-        kprintf("\n[API] wrong or missing token from %s\n", from);
-        return fail(401, "Authorization: Bearer <token> needed");
+        if (auth) users_failed(from); else kprintf("\n[API] missing token from %s\n", from);
+        return fail(401, users_count() ? "log in (HTTP Basic: curl -u name:password) or Authorization: Bearer <token>" : "Authorization: Bearer <token> needed");
     }
+    users_ok(from);
+    role = 2;                                             /* the token counts as an admin */
+logged_in:;
     int get = !strcmp(method, "GET"), post = !strcmp(method, "POST") || !strcmp(method, "PUT");
+    if (role < 2 && !get) return fail(403, "this user may only read (GET) - an admin user can change things");
 
     if (!strcmp(path, "/api/status") || !strcmp(path, "/api") || !strcmp(path, "/api/")) {
         if (!get) return fail(405, "use GET");

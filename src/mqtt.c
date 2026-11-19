@@ -248,6 +248,8 @@ static void got_packet(u8 type, const u8 *p, int len)
         } else {
             static const char *const rc[] = { "", "bad protocol", "client id refused", "broker unavailable", "bad user name or password", "not authorized" };
             drop(len >= 2 && p[1] < 6 ? rc[p[1]] : "refused", 0);
+            if (len >= 2 && (p[1] == 4 || p[1] == 5))
+                retry_at = timer_us() + 60000000ULL;      /* wrong login: do not hammer the broker */
         }
         break;
     case 3: {                                             /* PUBLISH */
@@ -498,7 +500,7 @@ void mqtt_cmd(int argc, char **argv)
     io_unlock();
     if (changed) save();
     kprintf("MQTT: %s", broker[0] ? mname[st] : "off ('mqtt broker <host>')");
-    if (broker[0]) kprintf(" - %s:%d, topic %s/...", broker, port, base);
+    if (broker[0]) kprintf(" - %s:%d, topic %s/...%s%s", broker, port, base, user[0] ? ", user " : "", user);
     kprintf("\n");
     if (broker[0]) kprintf("  every %d s to %s/state, Home Assistant discovery %s, %u sent, %u received%s%s\n",
                            interval, base, discovery ? "on" : "off", sent, received, why[0] ? ", last problem: " : "", why);
