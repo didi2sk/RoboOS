@@ -15,6 +15,7 @@
  *   Pi 3B+:    brcmfmac43455-sdio.bin  brcmfmac43455-sdio.txt  brcmfmac43455-sdio.clm_blob
  */
 #include "kernel.h"
+#include "wpa.h"
 #include "sd.h"
 
 /* ---------------- Arasan as an SDIO host ---------------- */
@@ -662,7 +663,7 @@ static int pending(void)
 
 /* events: escan results end up here */
 #define MAXBSS 32
-static struct bss { u8 bssid[6]; char ssid[33]; int rssi, chan, sec; } bsslist[MAXBSS];
+static struct bss { u8 bssid[6]; char ssid[33]; int rssi, chan, sec, grp; } bsslist[MAXBSS];
 static int nbss, scan_done;
 
 static u32 be32(const u8 *p) { return (u32)p[0] << 24 | (u32)p[1] << 16 | (u32)p[2] << 8 | p[3]; }
@@ -678,13 +679,26 @@ static void add_bss(const u8 *p, int len)
     memcpy(b.ssid, p + 19, (size_t)sl);
     b.ssid[sl] = 0;
     b.rssi = (short)le16(p + 78);
-    b.chan = le16(p + 72) & 0xFF;
+    b.chan = p[88];                                       /* ctl_ch; 0 = take it from the chanspec */
+    if (!b.chan) {
+        u16 cs = le16(p + 72);
+        int c = cs & 0xFF, sb, bw;
+        if (w.chipid == 0x4345) {                         /* d11ac chanspec: center channel + sideband */
+            sb = (cs >> 8) & 7; bw = (cs >> 11) & 7;
+            if (bw == 3) c = c - 2 + 4 * sb; else if (bw == 4) c = c - 6 + 4 * sb; else if (bw == 5) c = c - 14 + 4 * sb;
+        } else {                                          /* d11n: 40 MHz has a lower / upper sideband */
+            sb = (cs >> 8) & 3; bw = (cs >> 10) & 3;
+            if (bw == 3) c = sb == 1 ? c - 2 : c + 2;
+        }
+        b.chan = c;
+    }
+    b.grp = 4;
     b.sec = (le16(p + 16) & 0x10) ? 1 : 0;               /* privacy bit: WEP or better */
     u32 ieoff = le32(p + 0x74), ielen = le32(p + 0x78);
     if (ielen && ieoff + ielen <= (u32)len) {
         const u8 *t = p + ieoff, *e = t + ielen;
         while (t + 2 <= e && t + 2 + t[1] <= e) {
-            if (t[0] == 0x30) b.sec = 3;                  /* RSN = WPA2/WPA3 */
+            if (t[0] == 0x30) { b.sec = 3; if (t[1] >= 6) b.grp = t[7]; }   /* RSN = WPA2/WPA3; group cipher 2 TKIP, 4 CCMP */
             else if (t[0] == 0xDD && t[1] >= 4 && t[2] == 0 && t[3] == 0x50 && t[4] == 0xF2 && t[5] == 1 && b.sec < 2) b.sec = 2;
             t += 2 + t[1];
         }
@@ -698,6 +712,19 @@ static void add_bss(const u8 *p, int len)
 static volatile int j_ssid_ok, j_link, j_keyed, j_fail, j_need_key, j_told;
 static char j_ssid[33];
 
+/* our own WPA2 supplicant, for firmware without one (Pi 3B+): see wpa.c */
+static struct wpa sup;
+static int host_sup, sup_ie_wanted, sup_keys, sup_gtk_only, sup_fails;
+static u64 sup_key_at;
+static const char *sup_err;
+static u8 sup_pmk[32];
+void wpa_random(unsigned char *out, int n)
+{
+    rng_bytes(out, n);
+    u64 t = timer_us();                                   /* mixed in, in case there is no hardware RNG */
+    for (int i = 0; i < n; i++) out[i] ^= (u8)(t >> (8 * (i & 7))) ^ (u8)(i * 151);
+}
+
 static void event(const u8 *p, int len)
 {
     if (len < 14 + 10 + 48) return;
@@ -709,7 +736,8 @@ static void event(const u8 *p, int len)
         if (status == 0) j_ssid_ok = 1; else j_fail = 1 + (int)status;   /* 1 fail, 2 timeout, 3 no network */
         return;
     case 16:                                              /* E_LINK */
-        if (flags & 1) j_link = 1; else { j_link = 0; j_keyed = 0; }
+        if (flags & 1) { if (!j_link && host_sup) { wpa_start(&sup, sup_pmk, w.mac, 0, 0); sup_ie_wanted = 1; } j_link = 1; }
+        else { j_link = 0; j_keyed = 0; }
         return;
     case 46:                                              /* E_PSK_SUP: the firmware's WPA supplicant */
         if (status == 6) j_keyed = 1;                     /* keyed */
@@ -975,6 +1003,77 @@ const u8 *wifi_mac(void) { return w.mac; }
 const char *wifi_ssid(void) { return j_ssid; }
 
 static volatile int rx_more;
+static u8 sup_out[160];
+static int sup_outlen;
+static int send_frame(const void *f, int len);
+
+/* our RSN element as the firmware sent it in the association request (it must be in message 2) */
+static void sup_fetch_ie(void)
+{
+    static u8 b[512] __attribute__((aligned(4)));
+    u8 il[8];
+    sup_ie_wanted = 0;
+    if (getvar("assoc_info", il, 8)) return;
+    u32 req = le32(il);
+    if (!req || req > sizeof(b)) return;
+    if (getvar("assoc_req_ies", b, (int)req)) return;
+    for (u32 i = 0; i + 2 <= req && i + 2 + b[i + 1] <= req; i += 2 + b[i + 1])
+        if (b[i] == 0x30) { wpa_start(&sup, sup_pmk, w.mac, b + i, 2 + b[i + 1]); return; }
+}
+
+/* a key into the firmware ("wsec_key", struct brcmf_wsec_key_le, 164 bytes) */
+static int sup_key(int idx, const u8 *key, int len, const u8 *ea, const u8 *rsc)
+{
+    u8 k[164];
+    memset(k, 0, sizeof(k));
+    k[0] = (u8)idx;
+    k[4] = (u8)len;
+    memcpy(k + 8, key, (size_t)len);
+    if (len == 32) { u8 t[8]; memcpy(t, k + 8 + 24, 8); memcpy(k + 8 + 24, k + 8 + 16, 8); memcpy(k + 8 + 16, t, 8); }   /* TKIP: rx/tx MIC swapped, as brcmfmac */
+    k[112] = len == 32 ? 2 : 4;                           /* CRYPTO_ALGO_TKIP / AES_CCM */
+    if (ea) memcpy(k + 156, ea, 6);
+    else k[116] = 2;                                      /* group key: BRCMF_PRIMARY_KEY */
+    if (rsc) {                                            /* receive sequence of the group key */
+        k[132] = 1;
+        k[144] = rsc[0]; k[145] = rsc[1];
+        k[140] = rsc[2]; k[141] = rsc[3]; k[142] = rsc[4]; k[143] = rsc[5];
+    }
+    return setvar("wsec_key", k, sizeof(k));
+}
+
+static void sup_eapol(const u8 *f, int len)
+{
+    static u8 c[1600];
+    if (!host_sup || !j_link || len > (int)sizeof(c)) return;
+    memcpy(c, f, (size_t)len);                            /* rx is reused by the commands below */
+    if (sup_ie_wanted) sup_fetch_ie();
+    if (!wpa_rx(&sup, c, len)) {
+        sup_err = sup.err;
+        if (sup.err && sup.err[0] == 'M' && ++sup_fails >= 2 && j_need_key && !j_keyed) j_fail = 100;   /* MIC wrong twice = password */
+        return;
+    }
+    if (sup.outlen) { memcpy(sup_out, sup.out, (size_t)sup.outlen); sup_outlen = sup.outlen; }
+    if (sup.set_ptk || sup.set_gtk) {                     /* after message 4 has left */
+        sup_keys = 1;
+        sup_gtk_only = !sup.set_ptk;
+        sup_key_at = timer_us() + 30000;
+        sup.set_ptk = sup.set_gtk = 0;
+    }
+}
+
+static void sup_work(void)
+{
+    if (sup_outlen && send_frame(sup_out, sup_outlen) != -2) sup_outlen = 0;
+    if (sup_keys && !sup_outlen && timer_us() >= sup_key_at) {
+        sup_keys = 0;
+        int r = 0;
+        if (!sup_gtk_only) r |= sup_key(0, sup.ptk + 32, 16, sup.aa, 0);
+        r |= sup_key(sup.gtk_idx, sup.gtk, sup.gtk_len, 0, sup.gtk_rsc);
+        if (r) { sup_err = werr; return; }
+        sup_err = 0;
+        j_keyed = 1;
+    }
+}
 
 /* the next data frame (Ethernet) into buf, 0 = none; events are handled on the way.
  * want_data = 0: only events (WiFi is up but Ethernet carries the traffic) */
@@ -987,15 +1086,17 @@ int wifi_recv(void *buf, int max, int want_data)
         if (n <= 0) { rx_more = 0; break; }
         u16 id;
         int ch = dispatch(n, &id);
-        if (ch == 2 && want_data) {
+        if (ch == 2) {
             int doff = rx[7];
             if (n <= doff + 4) continue;
             int off = doff + 4 + (rx[doff + 3] << 2), len = n - off;
-            if (len < 14 || len > max) continue;
+            if (len >= 14 && rx[off + 12] == 0x88 && rx[off + 13] == 0x8E) { sup_eapol(rx + off, len); continue; }
+            if (!want_data || len < 14 || len > max) continue;
             memcpy(buf, rx + off, (size_t)len);
             return len;
         }
     }
+    if (host_sup) sup_work();
     if (wifi_joined() && !j_told) {                       /* tell once: connected */
         j_told = 1;
         con_color(COL_CYAN); kprintf("\n[NET] WiFi connected to %s\n", j_ssid); con_color(COL_DEFAULT);
@@ -1009,8 +1110,14 @@ int wifi_recv(void *buf, int max, int want_data)
 /* an Ethernet frame out: SDPCM header (channel 2) + BDC header + frame */
 int wifi_send(const void *f, int len)
 {
+    if (!wifi_joined()) return -1;
+    return send_frame(f, len);
+}
+
+static int send_frame(const void *f, int len)
+{
     static u8 tb[1600] __attribute__((aligned(4)));
-    if (!wifi_joined() || len > 1514) return -1;
+    if (!w.up || len > 1514) return -1;
     if (w.txseq == w.txwindow || (w.fcmask & (1 << 2))) return -2;   /* the firmware has no room now */
     int total = Sdpcmsz + 4 + len;
     memset(tb, 0, Sdpcmsz + 4);
@@ -1038,12 +1145,25 @@ static int join_send(const char *ssid, const char *pass)
     j_ssid[sl] = 0;
     /* WPA (TKIP) only networks need the old WPA mode; everything else WPA2 (AES) */
     u32 auth = 0x80;                                      /* WPA2_AUTH_PSK */
-    for (int i = 0; i < nbss; i++) if (!strcmp(bsslist[i].ssid, ssid) && bsslist[i].sec == 2) auth = 0x04;
+    int grp = 4;
+    for (int i = 0; i < nbss; i++)
+        if (!strcmp(bsslist[i].ssid, ssid)) { if (bsslist[i].sec == 2) auth = 0x04; if (bsslist[i].sec == 3) grp = bsslist[i].grp; }
     int r = 0;
     io_lock();
-    r |= chk("wsec", setint("wsec", pl ? 6 : 0));        /* TKIP + AES */
-    r |= chk("sup_wpa", setint("sup_wpa", pl ? 1 : 0));   /* the firmware does the WPA handshake */
-    if (pl) {
+    host_sup = 0;
+    sup_outlen = sup_keys = sup_fails = 0;
+    sup_err = 0;
+    r |= chk("wsec", setint("wsec", pl ? 6 : 0));        /* TKIP + AES; the same order as before for the Pi 3B firmware */
+    if (pl && setint("sup_wpa", 1)) {                     /* no supplicant in this firmware (Pi 3B+): RoboOS does WPA2 */
+        if (auth != 0x80) { io_unlock(); werr = "this firmware has no WPA supplicant and RoboOS does WPA2 only (the network is WPA1)"; return -1; }
+        io_unlock();
+        wpa_pmk(pass, ssid, sl, sup_pmk);                 /* ~0.1 s: 8192 x HMAC-SHA1 */
+        io_lock();
+        host_sup = 1;
+        if (grp != 2) r |= chk("wsec", setint("wsec", 4));   /* AES only, unless the group key is TKIP */
+    }
+    if (!pl) chk("sup_wpa", setint("sup_wpa", 0));
+    if (pl && !host_sup) {
         setint("sup_wpa2_eapver", 0xFFFFFFFF);
         setint("sup_wpa_tmo", 2500);
         u8 pmk[68];
@@ -1061,8 +1181,20 @@ static int join_send(const char *ssid, const char *pass)
     memset(sb, 0, sizeof(sb));
     sb[0] = (u8)sl;
     memcpy(sb + 4, ssid, (size_t)sl);
-    r |= chk("join", wlcmd(1, 26, sb, sizeof(sb), 0, 0));   /* WLC_SET_SSID */
+    if (wlcmd(1, 26, sb, sizeof(sb), 0, 0)) {             /* WLC_SET_SSID */
+        char e1[48];                                      /* werr's buffer is reused by the next command */
+        int k = 0;
+        for (const char *t = werr; *t && k < 47; t++) e1[k++] = *t;
+        e1[k] = 0;
+        u8 jp[68];                                        /* else the "join" iovar (brcmf_ext_join_params_le), as Linux */
+        memset(jp, 0, sizeof(jp));
+        memcpy(jp, sb, 36);
+        memset(jp + 36, 0xFF, 20);                        /* scan type, probes, times: firmware defaults */
+        memset(jp + 56, 0xFF, 6);                         /* any BSSID */
+        if (setvar("join", jp, sizeof(jp))) { kprintf("  join: %s (and 'join': %s)\n", e1, werr); r = -1; }
+    }
     io_unlock();
+    if (host_sup && !r) kprintf("  (this firmware has no WPA supplicant: RoboOS does the WPA2 handshake)\n");
     return r ? -1 : 0;
 }
 
@@ -1125,9 +1257,10 @@ static void wait_join(void)
     }
     if (wifi_joined()) { j_told = 1; kprintf("connected to %s - the address comes by DHCP ('ip')\n", j_ssid); return; }
     if (j_fail == 4) kprintf("join failed: network %s not found\n", j_ssid);
-    else if (j_fail >= 100) kprintf("join failed: the WPA handshake did not finish (wrong password?)\n");
+    else if (j_fail >= 100) kprintf("join failed: the WPA handshake did not finish (wrong password?)%s%s\n", sup_err ? " - " : "", sup_err ? sup_err : "");
     else if (j_fail) kprintf("join failed (status %d)\n", j_fail - 1);
-    else kprintf("join: no answer in 20 s%s\n", j_link ? " (associated, but no WPA keys - wrong password?)" : "");
+    else kprintf("join: no answer in 20 s%s%s%s\n", j_link ? " (associated, but no WPA keys - wrong password?)" : "",
+                 sup_err ? " - " : "", sup_err ? sup_err : "");
 }
 
 void wifi_cmd(int argc, char **argv)

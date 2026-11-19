@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.35**
+Current version: **0.36**
 
 ## Supported boards
 
@@ -242,7 +242,7 @@ ffmpeg -i film.mp4 -vf scale=640:-2 -c:v mpeg1video -q:v 4 -c:a mp2 -b:a 192k -f
 ## Network: messages between RoboOS boards
 
 The Pi 3B (LAN9514) and the Pi 3B+ (LAN7515) have an Ethernet chip that is a USB device
-behind the onboard hub; RoboOS has a driver for both. The 3B links at 100 Mbit, the 3B+
+behind the onboard hub; RoboOS has a driver for both (both work: DHCP, NTP). The 3B links at 100 Mbit, the 3B+
 at 1000 Mbit (`net speed 100` limits it; over USB 2.0 the chip moves at most ~300 Mbit). Plug the
 boards into the same switch or router and they can send each other short text messages.
 The protocol is RoboOS's own, on raw Ethernet frames (EtherType `88b5`), so a PC does
@@ -332,8 +332,13 @@ The chip needs its firmware on the card in `/FIRMWARE` - it is in `sd/FIRMWARE`,
 `.txt` + `.clm_blob` (Pi 3B+). These files are not RoboOS: unmodified copies from Raspberry Pi's
 firmware-nonfree package under the Cypress / Synaptics licenses, which allow redistributing them
 for use with their chips - see `sd/FIRMWARE/README.txt` and the `LICENCE.*` files next to them.
-WiFi needs the SD card on SDHOST (see the SD card section). The scan works on the Pi 3B;
-joining works too (tested on the Pi 3B; the Pi 3B+ and the Zero 2 W are not tested yet).
+WiFi needs the SD card on SDHOST (see the SD card section). Scan and join work on the Pi 3B;
+the scan works on the Pi 3B+ (2.4 and 5 GHz). The Pi 3B+ firmware has no built-in WPA supplicant,
+so since 0.36 RoboOS does the WPA2-PSK handshake itself (`src/wpa.c`: PBKDF2, the 4-way and group
+key handshakes, AES key unwrap; checked on the PC against the IEEE 802.11 test vectors and a Python
+access point, `tools/test_wpa.py`) - `wifi join` then says "RoboOS does the WPA2 handshake". Joining
+on the 3B+ is not confirmed yet; WPA3-only networks (SAE) are not supported (WPA2/WPA3 mixed are fine).
+The Zero 2 W is not tested yet.
 
 ### Date and time (NTP)
 

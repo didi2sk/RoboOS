@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.35**
+Aktuálna verzia: **0.36**
 
 ## Podporované dosky
 
@@ -243,7 +243,7 @@ ffmpeg -i film.mp4 -vf scale=640:-2 -c:v mpeg1video -q:v 4 -c:a mp2 -b:a 192k -f
 ## Sieť: správy medzi RoboOS doskami
 
 Pi 3B (LAN9514) a Pi 3B+ (LAN7515) majú ethernetový čip, ktorý je USB zariadenie za hubom
-na doske; RoboOS má ovládač pre oba. 3B sa pripojí rýchlosťou 100 Mbit, 3B+ 1000 Mbit
+na doske; RoboOS má ovládač pre oba (oba fungujú: DHCP, NTP). 3B sa pripojí rýchlosťou 100 Mbit, 3B+ 1000 Mbit
 (`net speed 100` ju obmedzí; cez USB 2.0 čip prenesie najviac asi 300 Mbit). Zapoj dosky do
 toho istého switchu alebo routera a môžu si posielať krátke textové správy.
 Protokol je vlastný, na surových ethernetových rámcoch (EtherType `88b5`), takže PC mu
@@ -334,8 +334,12 @@ firmvér bez `.clm_blob` nezapne rádio),
 `.clm_blob` (Pi 3B+). Tieto súbory nie sú súčasťou RoboOS: sú to nezmenené kópie z balíka
 firmware-nonfree od Raspberry Pi pod licenciami Cypress / Synaptics, ktoré ich dovoľujú šíriť na
 použitie s ich čipmi - pozri `sd/FIRMWARE/README.txt` a súbory `LICENCE.*` vedľa nich. WiFi potrebuje
-SD kartu na SDHOST (pozri časť o SD karte). Scan na Pi 3B funguje; pripojenie tiež funguje (vyskúšané na Pi 3B; Pi 3B+ a
-Zero 2 W ešte nie).
+SD kartu na SDHOST (pozri časť o SD karte). Na Pi 3B funguje scan aj pripojenie; na Pi 3B+ funguje scan
+(2,4 aj 5 GHz). Firmvér Pi 3B+ nemá zabudovaný WPA supplicant, preto od 0.36 robí WPA2-PSK handshake
+sám RoboOS (`src/wpa.c`: PBKDF2, 4-way a skupinový handshake, AES key unwrap; overené na PC proti
+testovacím vektorom IEEE 802.11 a prístupovému bodu v Pythone, `tools/test_wpa.py`) - `wifi join` potom
+napíše "RoboOS does the WPA2 handshake". Pripojenie na 3B+ ešte nie je potvrdené; siete len s WPA3 (SAE)
+nie sú podporované (zmiešané WPA2/WPA3 áno). Zero 2 W ešte nie je vyskúšaná.
 
 ### Dátum a čas (NTP)
 
