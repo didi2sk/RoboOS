@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.38**
+Current version: **0.39**
 
 ## Supported boards
 
@@ -320,7 +320,7 @@ wifi join "My Net" password   a name with spaces
 wifi                          chip, firmware, MAC address, network, signal
 wifi band 2|5|auto            only 2.4 GHz / only 5 GHz / both (saved; a network with both bands:
                               the firmware picks one, 'wifi' shows the channel it got)
-wifi leave                    disconnect;  wifi forget  also deletes /WIFI.TXT
+wifi leave                    disconnect (and stop re-joining);  wifi forget  also deletes /WIFI.TXT
 ```
 
 The chip's own firmware does the WPA2 handshake. One IP interface carries everything (DHCP,
@@ -339,7 +339,8 @@ the scan works on the Pi 3B+ (2.4 and 5 GHz). The Pi 3B+ firmware has no built-i
 so since 0.36 RoboOS does the WPA2-PSK handshake itself (`src/wpa.c`: PBKDF2, the 4-way and group
 key handshakes, AES key unwrap; checked on the PC against the IEEE 802.11 test vectors and a Python
 access point, `tools/test_wpa.py`) - `wifi join` then says "RoboOS does the WPA2 handshake" (just information).
-This **works on the Pi 3B+** (joined, DHCP and ping over WiFi with the cable out). WPA3-only networks (SAE) are not
+If the join fails (at boot, a lost link, a rebooted router), the board tries again by itself: after 20 s,
+then every minute (`[NET] WiFi: joining <net> again`), until `wifi leave`. This **works on the Pi 3B+** (joined, DHCP and ping over WiFi with the cable out). WPA3-only networks (SAE) are not
 supported (WPA2/WPA3 mixed are fine).
 The Zero 2 W is not tested yet.
 

@@ -710,8 +710,11 @@ static void add_bss(const u8 *p, int len)
 
 /* joining: set by events (on core 1 once WiFi is up) */
 static volatile int j_ssid_ok, j_link, j_keyed, j_fail, j_need_key, j_told;
-static char j_ssid[33];
-static int cfg_band;                                      /* 0 auto, 1 = 5 GHz only, 2 = 2.4 GHz only (WLC_SET_BAND) */
+static char j_ssid[33], j_pass[64];
+static int cfg_band;
+static int j_want, j_tries, pmk_ok;                       /* j_want: keep re-joining j_ssid (until 'wifi leave') */
+static u64 j_next_try;
+static int join_send(const char *ssid, const char *pass);                                      /* 0 auto, 1 = 5 GHz only, 2 = 2.4 GHz only (WLC_SET_BAND) */
 
 /* our own WPA2 supplicant, for firmware without one (Pi 3B+): see wpa.c */
 static struct wpa sup;
@@ -1113,12 +1116,26 @@ int wifi_recv(void *buf, int max, int want_data)
         }
     }
     if (host_sup) sup_work();
+    if (j_want) {                                         /* keep trying: at boot, after a lost link, a rebooted router */
+        u64 now = timer_us();
+        if (wifi_joined()) j_tries = 0;
+        else if (now >= j_next_try) {
+            char ss[33], pw[64];
+            memcpy(ss, j_ssid, sizeof(ss));
+            memcpy(pw, j_pass, sizeof(pw));
+            j_tries++;
+            con_color(COL_YELLOW); kprintf("\n[NET] WiFi: joining %s again (try %d)\n", ss, j_tries); con_color(COL_DEFAULT);
+            if (join_send(ss, pw[0] ? pw : 0)) kprintf("[NET] WiFi join: %s\n", werr);
+            j_next_try = timer_us() + (j_tries < 3 ? 20000000ULL : 60000000ULL);
+        }
+    }
     if (wifi_joined() && !j_told) {                       /* tell once: connected */
         j_told = 1;
         con_color(COL_CYAN); kprintf("\n[NET] WiFi connected to %s\n", j_ssid); con_color(COL_DEFAULT);
     } else if (!wifi_joined() && j_told == 1 && j_ssid_ok) {
         j_told = 2;
         con_color(COL_YELLOW); kprintf("\n[NET] WiFi lost %s\n", j_ssid); con_color(COL_DEFAULT);
+        if (j_want) j_next_try = timer_us() + 5000000ULL;  /* try again in 5 s */
     }
     return 0;
 }
@@ -1155,6 +1172,10 @@ static int join_send(const char *ssid, const char *pass)
     int sl = (int)strlen(ssid), pl = pass ? (int)strlen(pass) : 0;
     if (sl < 1 || sl > 32) { werr = "the network name must be 1-32 characters"; return -1; }
     if (pl && (pl < 8 || pl > 63)) { werr = "a WPA password has 8-63 characters"; return -1; }
+    int same = pmk_ok && !strcmp(ssid, j_ssid) && !strcmp(pass ? pass : "", j_pass);   /* PMK still good */
+    for (int i = 0; i < 64; i++) j_pass[i] = i < pl ? pass[i] : 0;
+    j_want = 1;                                           /* wifi_recv keeps trying until 'wifi leave' */
+    j_next_try = timer_us() + 20000000ULL;
     j_ssid_ok = j_link = j_keyed = j_fail = j_told = 0;
     j_need_key = pl > 0;
     memcpy(j_ssid, ssid, (size_t)sl);
@@ -1172,9 +1193,12 @@ static int join_send(const char *ssid, const char *pass)
     r |= chk("wsec", setint("wsec", pl ? 6 : 0));        /* TKIP + AES; the same order as before for the Pi 3B firmware */
     if (pl && setint("sup_wpa", 1)) {                     /* no supplicant in this firmware (Pi 3B+): RoboOS does WPA2 */
         if (auth != 0x80) { io_unlock(); werr = "this firmware has no WPA supplicant and RoboOS does WPA2 only (the network is WPA1)"; return -1; }
-        io_unlock();
-        wpa_pmk(pass, ssid, sl, sup_pmk);                 /* ~0.1 s: 8192 x HMAC-SHA1 */
-        io_lock();
+        if (!same) {
+            io_unlock();
+            wpa_pmk(pass, ssid, sl, sup_pmk);             /* ~0.1 s: 8192 x HMAC-SHA1 */
+            io_lock();
+            pmk_ok = 1;
+        }
         host_sup = 1;
         sup_started = 0;
         d_eapol = d_m1 = d_m3 = d_grp = d_sent = d_sendfail = d_ie_fw = d_ie_len = d_keys = 0;
@@ -1331,6 +1355,7 @@ void wifi_cmd(int argc, char **argv)
     if (argc > 1 && (!strcmp(argv[1], "leave") || !strcmp(argv[1], "forget"))) {
         if (w.up) { io_lock(); wlcmd(1, 52, 0, 0, 0, 0); io_unlock(); }   /* WLC_DISASSOC */
         j_link = j_keyed = j_ssid_ok = 0; j_told = 0;
+        j_want = 0;                                       /* stop the automatic re-joining */
         if (!strcmp(argv[1], "forget") && fat_mounted()) { fat_remove("/WIFI.TXT"); kprintf("/WIFI.TXT removed\n"); }
         kprintf("WiFi: not connected\n");
         return;
@@ -1363,7 +1388,10 @@ void wifi_cmd(int argc, char **argv)
         kprintf("  connected to %s, channel %d (%s GHz), signal %d dBm%s%s\n", j_ssid, c, c > 14 ? "5" : "2.4",
                 (int)(r[0] | r[1] << 8 | r[2] << 16 | (u32)r[3] << 24),
                 host_sup ? ", WPA2 by RoboOS" : "", link_wifi() ? ", carries the network now" : " (Ethernet carries the network)");
-    } else if (j_ssid[0]) { kprintf("  not connected (%s)\n", j_ssid); wpa_diag(); }
+    } else if (j_ssid[0]) {
+        kprintf("  not connected (%s)%s\n", j_ssid, j_want ? " - trying again by itself ('wifi leave' stops it)" : "");
+        wpa_diag();
+    }
     else kprintf("  not connected ('wifi join <network> <password>')\n");
     if (cfg_band) kprintf("  band: %s GHz only ('wifi band auto' allows both)\n", cfg_band == 1 ? "5" : "2.4");
 }
