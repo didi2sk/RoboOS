@@ -134,6 +134,7 @@ static int  a_writefile(const char *p, const void *d, int len)
     return fat_write_file(full, d, (u32)len) ? -2 : 0;
 }
 
+static int  a_mqttpub(const char *t, const char *m, int retain) { return mqtt_publish(t, m, (int)strlen(m), retain); }
 static u64  a_unixtime(void) { return clock_now(); }
 static int  a_timetext(char *b)
 {
@@ -205,6 +206,10 @@ static const struct robos_api api_table = {
     .writeFile = a_writefile,
     .unixTime = a_unixtime,
     .timeText = a_timetext,
+    .sensorRead = sensor_value,
+    .mqttConnected = mqtt_connected,
+    .mqttPublish = a_mqttpub,
+    .mqttReceive = mqtt_receive,
 };
 
 /* called from the exception handler: a crash inside a program ends the program */

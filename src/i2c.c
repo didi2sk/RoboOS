@@ -1,0 +1,170 @@
+/*
+ * I2C master on BSC1 (0x3F804000), GPIO2 = SDA, GPIO3 = SCL (ALT0) - pins 3 and 5
+ * on the 40-pin header, with the Pi's own 1.8 kOhm pull-ups. 100 kHz.
+ * Polled. A spinlock makes every transfer whole: core 0 (shell, BASIC, programs)
+ * and core 1 (MQTT publishing sensor values) may both use the bus.
+ */
+#include "kernel.h"
+
+#define BSC        (MMIO_BASE + 0x804000)
+#define BSC_C      (BSC + 0x00)
+#define BSC_S      (BSC + 0x04)
+#define BSC_DLEN   (BSC + 0x08)
+#define BSC_A      (BSC + 0x0C)
+#define BSC_FIFO   (BSC + 0x10)
+#define BSC_DIV    (BSC + 0x14)
+#define BSC_CLKT   (BSC + 0x1C)
+
+#define C_I2CEN    (1u << 15)
+#define C_ST       (1u << 7)
+#define C_CLEAR    (3u << 4)
+#define C_READ     (1u << 0)
+#define S_TA       (1u << 0)
+#define S_DONE     (1u << 1)
+#define S_TXD      (1u << 4)
+#define S_RXD      (1u << 5)
+#define S_ERR      (1u << 8)            /* no ACK */
+#define S_CLKT     (1u << 9)            /* the slave held SCL too long */
+
+static int ready, lock;
+static u32 speed = 100000;
+
+static void lk(void)  { while (__atomic_test_and_set(&lock, __ATOMIC_ACQUIRE)) ; }
+static void ulk(void) { __atomic_clear(&lock, __ATOMIC_RELEASE); }
+
+void i2c_init(void)
+{
+    if (ready) return;
+    gpio_func(2, 4);
+    gpio_func(3, 4);
+    u32 clk[2] = { 4, 0 };                                /* core clock */
+    u32 core = mbox_prop(0x00030002, clk, 2) && clk[1] ? clk[1] : 250000000;
+    mmio_write(BSC_DIV, core / speed);
+    mmio_write(BSC_CLKT, 0x40);
+    mmio_write(BSC_C, C_I2CEN | C_CLEAR);
+    mmio_write(BSC_S, S_DONE | S_ERR | S_CLKT);
+    ready = 1;
+}
+
+/* one transfer; 0 = ok, -1 = no answer (NACK), -2 = timeout / bus stuck */
+static int xfer(u8 addr, u8 *buf, int n, int rd)
+{
+    int i = 0;
+    mmio_write(BSC_C, C_I2CEN | C_CLEAR);
+    mmio_write(BSC_S, S_DONE | S_ERR | S_CLKT);
+    mmio_write(BSC_A, addr);
+    mmio_write(BSC_DLEN, (u32)n);
+    if (!rd) while (i < n && i < 16) mmio_write(BSC_FIFO, buf[i++]);   /* fill the FIFO first */
+    mmio_write(BSC_C, C_I2CEN | C_ST | (rd ? C_READ : 0));
+    u64 end = timer_us() + 5000 + (u64)n * 200;
+    for (;;) {
+        u32 s = mmio_read(BSC_S);
+        if (rd) while ((s & S_RXD) && i < n) { buf[i++] = (u8)mmio_read(BSC_FIFO); s = mmio_read(BSC_S); }
+        else while ((s & S_TXD) && i < n) { mmio_write(BSC_FIFO, buf[i++]); s = mmio_read(BSC_S); }
+        if (s & (S_ERR | S_CLKT)) {
+            mmio_write(BSC_S, S_DONE | S_ERR | S_CLKT);
+            mmio_write(BSC_C, C_I2CEN | C_CLEAR);
+            return (s & S_ERR) ? -1 : -2;
+        }
+        if (s & S_DONE) {
+            if (rd) while ((mmio_read(BSC_S) & S_RXD) && i < n) buf[i++] = (u8)mmio_read(BSC_FIFO);
+            mmio_write(BSC_S, S_DONE);
+            return i == n ? 0 : -2;
+        }
+        if (timer_us() > end) { mmio_write(BSC_C, C_I2CEN | C_CLEAR); return -2; }
+    }
+}
+
+int i2c_write(u8 addr, const void *buf, int n)
+{
+    i2c_init();
+    lk();
+    int r = xfer(addr, (u8 *)buf, n, 0);
+    ulk();
+    return r;
+}
+
+int i2c_read(u8 addr, void *buf, int n)
+{
+    i2c_init();
+    lk();
+    int r = xfer(addr, buf, n, 1);
+    ulk();
+    return r;
+}
+
+/* write a register number, then read n bytes (a stop in between: fine for the usual sensors) */
+int i2c_read_reg(u8 addr, u8 reg, void *buf, int n)
+{
+    i2c_init();
+    lk();
+    int r = xfer(addr, &reg, 1, 0);
+    if (!r) r = xfer(addr, buf, n, 1);
+    ulk();
+    return r;
+}
+
+int i2c_write_reg(u8 addr, u8 reg, const void *data, int n)
+{
+    u8 b[17];
+    if (n > 16) return -3;
+    b[0] = reg;
+    memcpy(b + 1, data, (size_t)n);
+    return i2c_write(addr, b, n + 1);
+}
+
+/* is somebody at addr? (a one-byte read is answered by every device) */
+int i2c_probe(u8 addr)
+{
+    u8 b;
+    return i2c_read(addr, &b, 1) == 0;
+}
+
+static const char *guess(u8 a)
+{
+    switch (a) {
+    case 0x76: case 0x77: return "BME280 / BMP280 (temperature, humidity, pressure)";
+    case 0x48: case 0x49: case 0x4A: case 0x4B: return "ADS1115 (ADC) or a TMP102 / LM75 thermometer";
+    case 0x68: return "DS3231 / DS1307 (clock) or an MPU6050";
+    case 0x57: return "AT24C32 EEPROM (on DS3231 boards)";
+    case 0x3C: case 0x3D: return "SSD1306 OLED display";
+    case 0x27: case 0x3F: return "PCF8574 (LCD backpack)";
+    case 0x44: case 0x45: return "SHT3x (temperature, humidity)";
+    case 0x40: return "INA219 / HTU21D / Si7021";
+    case 0x23: return "BH1750 (light)";
+    case 0x50: return "EEPROM (HAT ID)";
+    }
+    return "";
+}
+
+void i2c_cmd(int argc, char **argv)
+{
+    u64 a = 0, r = 0, v = 0;
+    if (argc > 1 && !strcmp(argv[1], "scan")) {
+        int n = 0;
+        kprintf("I2C on GPIO2 (SDA) / GPIO3 (SCL), 100 kHz:\n");
+        for (int ad = 0x08; ad < 0x78; ad++)
+            if (i2c_probe((u8)ad)) { kprintf("  0x%02x  %s\n", ad, guess((u8)ad)); n++; }
+        kprintf("%d device(s)\n", n);
+        return;
+    }
+    if (argc > 3 && !strcmp(argv[1], "read") && parse_num(argv[2], &a) && parse_num(argv[3], &r)) {
+        u64 cnt = 1;
+        if (argc > 4) parse_num(argv[4], &cnt);
+        if (cnt < 1 || cnt > 16) cnt = 1;
+        u8 b[16];
+        int e = i2c_read_reg((u8)a, (u8)r, b, (int)cnt);
+        if (e) { kprintf("0x%02x: %s\n", (u32)a, e == -1 ? "no answer" : "timeout"); return; }
+        kprintf("0x%02x reg 0x%02x:", (u32)a, (u32)r);
+        for (int i = 0; i < (int)cnt; i++) kprintf(" %02x", b[i]);
+        kprintf("\n");
+        return;
+    }
+    if (argc > 4 && !strcmp(argv[1], "write") && parse_num(argv[2], &a) && parse_num(argv[3], &r) && parse_num(argv[4], &v)) {
+        u8 b = (u8)v;
+        int e = i2c_write_reg((u8)a, (u8)r, &b, 1);
+        kprintf("%s\n", e ? (e == -1 ? "no answer" : "timeout") : "ok");
+        return;
+    }
+    kprintf("usage: i2c scan | read <addr> <reg> [count] | write <addr> <reg> <value>   (0x.. hex)\n");
+}

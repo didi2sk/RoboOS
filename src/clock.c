@@ -74,6 +74,18 @@ static u64 last_sunday(int y, int m)
     return (u64)(last - wd) * 86400 + 3600;
 }
 
+u64 clock_make(int y, int mo, int d, int h, int mi, int s)
+{
+    return (u64)days_from_civil(y, mo, d) * 86400 + (u64)(h * 3600 + mi * 60 + s);
+}
+
+void clock_split(u64 t, int *y, int *mo, int *d, int *h, int *mi, int *s)
+{
+    civil((long)(t / 86400), y, mo, d);
+    int r = (int)(t % 86400);
+    *h = r / 3600; *mi = r / 60 % 60; *s = r % 60;
+}
+
 /* minutes to add to UTC at that moment */
 int clock_offset(u64 t)
 {
@@ -230,6 +242,7 @@ void time_cmd(int argc, char **argv)
         u64 utc = local - (u64)((long)zone_min * 60);
         utc -= (u64)((long)(clock_offset(utc) - zone_min) * 60);   /* summer time */
         clock_set_time(utc, 2);
+        rtc_write(utc);                                   /* the battery clock too, if there is one */
     } else if (argc > 1) {
         kprintf("usage: time [sync | server <name>|off | zone <+h[:mm]> [eu] | set YYYY-MM-DD HH:MM[:SS]]\n");
         return;
@@ -245,6 +258,7 @@ void time_cmd(int argc, char **argv)
     } else kprintf("time not known yet\n");
     if (set_by == 1) kprintf("from NTP %s, %u s ago\n", server, (u32)clock_synced_ago());
     else if (set_by == 2) kprintf("set by hand\n");
+    else if (set_by == 3) kprintf("from the battery clock (DS3231), NTP not yet\n");
     int az = zone_min < 0 ? -zone_min : zone_min;
     kprintf("ntp: %s, zone: UTC%c%d", server[0] ? server : "off", zone_min < 0 ? '-' : '+', az / 60);
     if (az % 60) kprintf(":%02d", az % 60);

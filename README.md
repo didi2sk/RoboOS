@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.33**
+Current version: **0.34**
 
 ## Supported boards
 
@@ -331,7 +331,7 @@ The chip needs its firmware on the card in `/FIRMWARE` (files from Raspberry Pi 
 `.clm_blob` (Pi 3B; the newer firmware does not switch the radio on without the `.clm_blob`), `brcmfmac43436-sdio.bin` + `.txt` + `.clm_blob` (Zero 2 W), `brcmfmac43455-sdio.bin` +
 `.txt` + `.clm_blob` (Pi 3B+). They are not in this repository (Cypress / Synaptics licenses).
 WiFi needs the SD card on SDHOST (see the SD card section). The scan works on the Pi 3B;
-joining is new in 0.33 and not tested on a board yet.
+joining works too (tested on the Pi 3B; the Pi 3B+ and the Zero 2 W are not tested yet).
 
 ### Date and time (NTP)
 
@@ -449,6 +449,88 @@ pings, serves its web page and receives messages even while a program is busy co
 
 A standard USB network adapter of the CDC-ECM class works too (this is how QEMU
 tests the network; on real boards not tested yet).
+
+## IoT: sensors (I2C) and MQTT
+
+### I2C sensors
+
+The I2C bus is on header pins 3 (GPIO2 = SDA) and 5 (GPIO3 = SCL), with 3.3 V on pin 1 and GND
+on pin 6. At boot RoboOS looks for these modules by itself (`sensors scan` looks again):
+
+| Module | Address | Values |
+|---|---|---|
+| BME280 (BMP280) | 0x76 / 0x77 | temperature, humidity (BME280 only), pressure |
+| ADS1115 | 0x48-0x4B | 4 analog inputs A0-A3, 0-4.096 V in mV (do not exceed 3.3 V!) |
+| DS3231 (DS1307) | 0x68 | battery clock: the time is known at boot even without a network |
+
+```
+sensors                  values of everything found (+ CPU temperature)
+i2c scan                 every device on the bus, with a guess what it is
+i2c read 0x76 0xd0       read a register (i2c read <addr> <reg> [count])
+i2c write 0x76 0xf4 0x27 write a register
+```
+
+The clock module is set every time NTP answers (or by `time set`), and at boot the time is
+taken from it - `time` then says "from the battery clock (DS3231)".
+
+### MQTT
+
+MQTT is the usual way IoT devices talk to a server (Home Assistant, Node-RED, Mosquitto...).
+RoboOS connects to a broker and sends its values; the broker passes commands back.
+
+```
+mqtt broker 192.168.1.10      the broker (name or address, port 1883; saved to /MQTT.TXT)
+mqtt user robo secret         if the broker wants a login
+mqtt                          status
+mqtt interval 30              send the values every 30 s (0 = never on its own)
+mqtt pub hello world          send roboos/<name>/hello = world
+mqtt off                      stop
+```
+
+Topics (`<name>` is the board name from `/NAME.TXT`, e.g. `roboos/rpi3-3456/...`):
+
+| Topic | |
+|---|---|
+| `roboos/<name>/status` | `online` / `offline` (retained; `offline` is the "last will" when the board disappears) |
+| `roboos/<name>/state` | JSON: `{"cpu":48.31,"temp":21.53,"hum":40.12,"press":1013.25,"a0":1234,...,"uptime":..,"ip":"..","time":".."}` |
+| `roboos/<name>/set/gpio/17` | send `1` / `0` / `on` / `off` / `toggle`: the pin becomes an output |
+| `roboos/<name>/gpio/17` | the board answers with the new level (retained) |
+| `roboos/<name>/set/publish` | send the state now |
+| `roboos/<name>/cmd/...` | free for your programs (BASIC / C read them) |
+
+Home Assistant finds the sensors by itself (MQTT discovery, `mqtt discovery off` turns it
+off). From a PC:
+
+```
+mosquitto_sub -h 192.168.1.10 -t 'roboos/#' -v
+mosquitto_pub -h 192.168.1.10 -t roboos/rpi3-3456/set/gpio/17 -m toggle
+```
+
+`/MQTT.TXT` (you can also write it by hand):
+
+```
+broker 192.168.1.10
+port 1883
+user robo
+pass secret
+topic roboos/garden
+interval 60
+discovery on
+```
+
+MQTT here is not encrypted (port 1883, QoS 0) - use it on your own network.
+
+In programs: BASIC `SENSOR(n)` (0 CPU, 1 temperature, 2 humidity in 0.01 C / %, 3 pressure in Pa,
+4-7 ADC in mV, -999999 = no sensor), `MQTTPUB "topic", items` (like PRINT), `MQTTOK`;
+example `/APPS/mqtt.bas`. C (API 10): `sensorRead(n)`, `mqttPublish(topic, text, retain)`,
+`mqttReceive(topic, tmax, payload, pmax)` (messages to `cmd/...`), `mqttConnected()`;
+example `iotnode` (sends sensor JSON, LED on GPIO23 by `cmd/led` on / off / blink).
+
+### IoT shield (hardware design)
+
+`hardware/iot-shield/` has a KiCad design of a board that sits on the 40-pin header:
+power from 12-24 V, 4 isolated inputs, 4 MOSFET outputs, ADS1115, BME280, DS3231 clock,
+1-Wire. See its README - **placed but not routed yet, never manufactured or tested**.
 
 ## Sound
 
@@ -568,6 +650,8 @@ If you connect after boot, press Enter.
 | `http token [<secret>\|off]` | JSON API token (Bearer), see the JSON API section |
 | `http tls on\|off\|new` | HTTPS on port 443 (the API then only there), new certificate |
 | `wifi [scan\|join <net> [pw]\|leave\|forget]` | WiFi: networks, join (saved), status |
+| `sensors [scan]`, `i2c scan\|read\|write` | I2C sensors (BME280, ADS1115, DS3231) |
+| `mqtt [broker\|user\|pub\|interval\|off]` | MQTT client (IoT) |
 | `time [sync\|zone\|server\|set]` | date and time from NTP, time zone, set by hand |
 | `ls [path]` | list a directory on the SD card (default: the current one) |
 | `cd [dir]` | change directory (`..` = up, `/` = top, no argument = top) |
