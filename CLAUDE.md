@@ -106,7 +106,9 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
   fatal, `wifi band 5` refused on 2.4 GHz chips. v0.41 photo (3B): WiFi joined by itself at boot (/WIFI.TXT) - re-join confirmed.
 - **Zero 2 W works** (owner, on v0.40/0.41 - "everything so far, also the keyboard and WiFi"): boot, USB keyboard on the root
   port (OTG), WiFi CYW43436 (so WL_ON = GPIO41, the Synaptics firmware + CLM and the 43436 path are right). The ACT LED
-  (GPIO29 active-low) and BT (BT_ON GPIO42 assumed, BCM43430B0.hcd) not confirmed yet.
+  (GPIO29 active-low) not confirmed yet. **v0.42 BT scan works on the Zero 2 W** (owner's photo): BT_ON = GPIO42 is right;
+  the chip reported its local name as "BCM43430A1" (not B0), so BCM43430A1.hcd was loaded and works; address 2c:cf:67:c0:ed:11
+  (newer RPi OUI), 12 devices.
 - v0.34 (I2C sensors BME280/ADS1115/DS3231, MQTT, `hardware/iot-shield` KiCad design): nothing verified on hardware yet;
   MQTT only in QEMU against mosquitto. The shield is a first draft - never manufactured.
 - Not yet verified on hardware: RoboOS messages between two boards (v0.9, tested only with `net loop on`

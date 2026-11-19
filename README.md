@@ -378,7 +378,7 @@ login robo MyPassword1        needed when users exist ('users add'); a "view" us
 There is no pairing yet: the link is not encrypted, use it nearby (a password typed there
 crosses the air readable). While Bluetooth is on, the UART console runs on the mini UART - same
 pins 8/10, same 115200; `bt off` gives it back. Scanning works on the Pi 3B (19 devices on the first
-try); the phone part is tested in QEMU (`tools/qemu_bt_test.py` plays the controller and a phone).
+try) and the Zero 2 W (12 devices); the phone part is tested in QEMU (`tools/qemu_bt_test.py` plays the controller and a phone).
 Next: a Bluetooth keyboard.
 
 ### Date and time (NTP)
