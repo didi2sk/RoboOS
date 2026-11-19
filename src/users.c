@@ -154,14 +154,16 @@ static int b64v(char c)
     return c == '+' ? 62 : c == '/' ? 63 : -1;
 }
 
+static int check(const char *name, const char *pass, const char *from, char *who, int wmax);
+
 static void failed(const char *from, const char *what)
 {
     int li = find_lock(from, 1);
     if (++lock[li].fails >= 5) {
         lock[li].fails = 0;
         lock[li].until = timer_us() + 60000000ULL;
-        kprintf("\n[WEB] 5 wrong logins from %s - locked out for 60 s\n", from);
-    } else kprintf("\n[WEB] wrong %s from %s\n", what, from);
+        kprintf("\n[LOGIN] 5 wrong logins from %s - locked out for 60 s\n", from);
+    } else kprintf("\n[LOGIN] wrong %s from %s\n", what, from);
 }
 
 /* also for the Bearer token (webapi.c): 1 = this address is locked out now */
@@ -200,9 +202,16 @@ int users_auth(const char *auth, const char *from, char *who, int wmax)
     char *colon = strchr(up, ':');
     if (!colon) return 0;
     *colon = 0;
-    const char *pass = colon + 1;
+    return check(up, colon + 1, from, who, wmax);
+}
+
+/* name + password: 2 admin, 1 view, 0 wrong (counted for the lockout), -1 = from is locked out */
+static int check(const char *name, const char *pass, const char *from, char *who, int wmax)
+{
+    int li = find_lock(from, 0);
+    if (li >= 0 && lock[li].until > timer_us()) return -1;
     struct user *u = 0;
-    for (int i = 0; i < nusers; i++) if (!strcmp(users[i].name, up)) u = &users[i];
+    for (int i = 0; i < nusers; i++) if (!strcmp(users[i].name, name)) u = &users[i];
     u8 h[32], salt[8] = { 0 };
     pbkdf2(pass, (int)strlen(pass), u ? u->salt : salt, h);   /* the same work for an unknown name */
     u8 d = u ? 0 : 1;
@@ -216,11 +225,17 @@ int users_auth(const char *auth, const char *from, char *who, int wmax)
     }
     char what[48] = "login '";
     int k = 7;
-    for (const char *s = up; *s && k < 44; s++) what[k++] = *s;
+    for (const char *s = name; *s && k < 44; s++) what[k++] = *s;
     what[k++] = '\'';
     what[k] = 0;
     failed(from, what);
     return 0;
+}
+
+int users_check(const char *name, const char *pass, const char *from, char *who, int wmax)
+{
+    who[0] = 0;
+    return check(name, pass, from, who, wmax);
 }
 
 /* ---------------- the console login (core 0, before every shell prompt) ---------------- */

@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.40**
+Current version: **0.42**
 
 ## Supported boards
 
@@ -342,7 +342,44 @@ access point, `tools/test_wpa.py`) - `wifi join` then says "RoboOS does the WPA2
 If the join fails (at boot, a lost link, a rebooted router), the board tries again by itself: after 20 s,
 then every minute (`[NET] WiFi: joining <net> again`), until `wifi leave`. This **works on the Pi 3B+** (joined, DHCP and ping over WiFi with the cable out). WPA3-only networks (SAE) are not
 supported (WPA2/WPA3 mixed are fine).
-The Zero 2 W is not tested yet.
+**The Zero 2 W works too** (boot, USB keyboard through OTG, WiFi).
+
+### Bluetooth (BLE: sensors, phone)
+
+The WiFi chip is a Bluetooth chip too. It is switched on only when you ask:
+
+```
+bt on            switch on: listens to the devices around and can be found by a phone
+bt scan          what is around (bt scan 20 = listen 20 s)
+bt sensors       Bluetooth thermometers as JSON
+bt               status (connected phone, devices, thermometers)
+bt off           switch off
+bt auto on|off   switch on at boot (/BT.TXT)
+```
+
+**Sensors.** Xiaomi LYWSD03MMC thermometers with the free ATC / pvvx firmware (service data
+0x181A) are read all the time while Bluetooth is on: `bt sensors`, `GET /api/ble`
+and MQTT `roboos/<name>/ble/<mac>` = `{"temp":21.53,"hum":45.12,"batt":87,"rssi":-63,"name":"ATC_112233"}`
+(at most every 30 s), Home Assistant finds them by itself (temperature, humidity, battery).
+`bt scan` also shows names and makers of everything else (phones, TVs, headphones).
+
+**Phone.** The board shows up as its name (`rpi3-...`) with the Nordic UART Service. Connect with
+a terminal app - Android: *Serial Bluetooth Terminal* (Devices -> Bluetooth LE), iPhone / Android:
+*nRF Toolbox* (UART) or *Bluefruit Connect* (UART) - and type:
+
+```
+help                          the commands
+status                        name, version, uptime, address, time
+sensors                       CPU, BME280, ADS1115 and the Bluetooth thermometers
+gpio 17                       read a pin;  gpio 17 1 / gpio 17 0 / gpio 17 toggle = set it
+login robo MyPassword1        needed when users exist ('users add'); a "view" user only reads
+```
+
+There is no pairing yet: the link is not encrypted, use it nearby (a password typed there
+crosses the air readable). While Bluetooth is on, the UART console runs on the mini UART - same
+pins 8/10, same 115200; `bt off` gives it back. Scanning works on the Pi 3B (19 devices on the first
+try); the phone part is tested in QEMU (`tools/qemu_bt_test.py` plays the controller and a phone).
+Next: a Bluetooth keyboard.
 
 ### Date and time (NTP)
 
@@ -690,6 +727,7 @@ If you connect after boot, press Enter.
 | `http token [<secret>\|off]` | JSON API token (Bearer), see the JSON API section |
 | `http tls on\|off\|new` | HTTPS on port 443 (the API then only there), new certificate |
 | `wifi [scan\|join <net> [pw]\|band 2\|5\|auto\|leave\|forget]` | WiFi: networks, join (saved), status |
+| `bt [on\|scan [s]\|sensors\|off\|auto on\|off]` | Bluetooth LE: devices, thermometers, phone (only when asked) |
 | `sensors [scan]`, `i2c scan\|read\|write` | I2C sensors (BME280, ADS1115, DS3231) |
 | `mqtt [broker\|user\|pub\|interval\|off]` | MQTT client (IoT) |
 | `users [add\|passwd\|del\|console on\|off]`, `logout` | logins for the web page + API (optional) |
