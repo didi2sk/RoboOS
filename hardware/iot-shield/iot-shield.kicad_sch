@@ -3743,7 +3743,7 @@
       (effects
         (font (size 1.27 1.27))
         (justify left)))
-    (property "Value" "green"
+    (property "Value" "red (power)"
       (at 300.99 54.61 90)
       (effects
         (font (size 1.27 1.27))
@@ -3756,7 +3756,7 @@
       (at 297.18 53.34 0)
       (effects
         (font (size 1.27 1.27)) hide))
-    (property "LCSC" "C12624"
+    (property "LCSC" "C2286"
       (at 297.18 53.34 0)
       (effects
         (font (size 1.27 1.27)) hide))
@@ -7744,7 +7744,7 @@
       (at 241.3 224.79 0)
       (effects
         (font (size 1.27 1.27)) hide))
-    (property "LCSC" "C9867"
+    (property "LCSC" "C107410"
       (at 241.3 224.79 0)
       (effects
         (font (size 1.27 1.27)) hide))

@@ -60,7 +60,7 @@ part("L1", "Device:L", "4.7u 3A", "Inductor_SMD:L_Changjiang_FNR5040S", "C167963
 C("C4", "22u", "+5V", "GND", "pwr", 51, 6, C22U, FP_C0805)
 C("C5", "22u", "+5V", "GND", "pwr", 54, 6, C22U, FP_C0805)
 R("R1", "2.2k", "+5V", "PWR_LED", "pwr", 58, 4, "C4190")
-part("D3", "Device:LED", "green", FP_LED, "C12624", {"1": "GND", "2": "PWR_LED"}, "pwr", 58, 9, rot=90)
+part("D3", "Device:LED", "red (power)", FP_LED, "C2286", {"1": "GND", "2": "PWR_LED"}, "pwr", 58, 9, rot=90)
 R("R2", "1k", "LED_ST", "ST_LED", "pwr", 68, 4, R1K)
 part("D4", "Device:LED", "red (GPIO23)", FP_LED, "C2286", {"1": "GND", "2": "ST_LED"}, "pwr", 68, 9, rot=90)
 

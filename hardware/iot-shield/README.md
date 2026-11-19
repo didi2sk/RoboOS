@@ -26,7 +26,7 @@ Schematic: [iot-shield-schematic.pdf](iot-shield-schematic.pdf) (KiCad 7: `iot-s
 | Clock | DS3231MZ at 0x68 + CR1220 | the time at boot without a network |
 | 1-Wire | J6 3V3 / DQ / GND, 4.7 k pull-up | GPIO4 (DS18B20 - no RoboOS driver yet) |
 | Qwiic / STEMMA QT | J7, 3.3 V I2C | `i2c scan` |
-| LEDs | green = 5 V, red = GPIO23 (status) | `gpio 23 hi` |
+| LEDs | red D3 = 5 V (power), red D4 = GPIO23 (status); D3 was green, now the Basic red part (no JLCPCB feeder fee) | `gpio 23 hi` |
 
 Connect a load (relay coil, LED strip, valve) between **V+** and **OUTx**. Inputs: put the
 signal between **INx** and **COM** (COM is isolated from the Pi ground).

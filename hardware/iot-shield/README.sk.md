@@ -26,7 +26,7 @@ Schéma: [iot-shield-schematic.pdf](iot-shield-schematic.pdf) (KiCad 7: `iot-shi
 | Hodiny | DS3231MZ na 0x68 + CR1220 | čas po štarte aj bez siete |
 | 1-Wire | J6 3V3 / DQ / GND, pull-up 4,7 k | GPIO4 (DS18B20 - ovládač v RoboOS ešte nie je) |
 | Qwiic / STEMMA QT | J7, I2C 3,3 V | `i2c scan` |
-| LED | zelená = 5 V, červená = GPIO23 (stav) | `gpio 23 hi` |
+| LED | červená D3 = 5 V (napájanie), červená D4 = GPIO23 (stav); D3 bola zelená, teraz Basic červená (bez poplatku JLCPCB za cievku) | `gpio 23 hi` |
 
 Záťaž (cievka relé, LED pás, ventil) zapoj medzi **V+** a **OUTx**. Vstupy: signál medzi
 **INx** a **COM** (COM je oddelený od zeme Pi).
