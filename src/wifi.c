@@ -711,6 +711,7 @@ static void add_bss(const u8 *p, int len)
 /* joining: set by events (on core 1 once WiFi is up) */
 static volatile int j_ssid_ok, j_link, j_keyed, j_fail, j_need_key, j_told;
 static char j_ssid[33];
+static int cfg_band;                                      /* 0 auto, 1 = 5 GHz only, 2 = 2.4 GHz only (WLC_SET_BAND) */
 
 /* our own WPA2 supplicant, for firmware without one (Pi 3B+): see wpa.c */
 static struct wpa sup;
@@ -1174,6 +1175,7 @@ static int join_send(const char *ssid, const char *pass)
         delay_us(2000);
         r |= chk("password", wlcmd(1, 268, pmk, sizeof(pmk), 0, 0));   /* WLC_SET_WSEC_PMK */
     }
+    r |= chk("band", cmdint(142, (u32)cfg_band));         /* WLC_SET_BAND: which band the join may use */
     r |= chk("infrastructure", cmdint(20, 1));
     r |= chk("auth open", cmdint(22, 0));
     r |= chk("wpa_auth", cmdint(165, pl ? auth : 0));
@@ -1198,13 +1200,14 @@ static int join_send(const char *ssid, const char *pass)
     return r ? -1 : 0;
 }
 
-/* /WIFI.TXT: "ssid=<name>" and "psk=<password>" lines */
+/* /WIFI.TXT: "ssid=<name>", "psk=<password>" and "band=2|5|auto" lines */
 static char cfg_ssid[33], cfg_psk[64];
 static int load_cfg(void)
 {
     struct fat_file f;
     char b[200];
     cfg_ssid[0] = cfg_psk[0] = 0;
+    cfg_band = 0;
     if (!fat_mounted() || fat_open("/WIFI.TXT", &f) || f.is_dir) return 0;
     int n = fat_read(&f, b, sizeof(b) - 1);
     if (n <= 0) return 0;
@@ -1217,6 +1220,7 @@ static int load_cfg(void)
         char *dst = 0; int max = 0;
         if (!strncmp(l, "ssid=", 5)) { dst = cfg_ssid; max = 32; l += 5; }
         else if (!strncmp(l, "psk=", 4)) { dst = cfg_psk; max = 63; l += 4; }
+        else if (!strncmp(l, "band=", 5)) cfg_band = l[5] == '5' ? 1 : l[5] == '2' ? 2 : 0;
         if (dst) { int i = 0; for (; l[i] && i < max; i++) dst[i] = l[i]; dst[i] = 0; }
         l = e ? e + 1 : 0;
     }
@@ -1225,7 +1229,7 @@ static int load_cfg(void)
 
 static void save_cfg(const char *ssid, const char *psk)
 {
-    char b[120];
+    char b[160];
     int n = 0;
     const char *t = "ssid=";
     while (*t) b[n++] = *t++;
@@ -1234,6 +1238,7 @@ static void save_cfg(const char *ssid, const char *psk)
     while (*t) b[n++] = *t++;
     while (psk && *psk && n < 116) b[n++] = *psk++;
     b[n++] = '\r'; b[n++] = '\n';
+    if (cfg_band) { t = cfg_band == 1 ? "band=5\r\n" : "band=2\r\n"; while (*t) b[n++] = *t++; }
     if (!fat_mounted() || fat_write_file("/WIFI.TXT", b, (u32)n)) kprintf("(not saved: no SD card or write error)\n");
 }
 
@@ -1274,6 +1279,20 @@ void wifi_cmd(int argc, char **argv)
         wait_join();
         return;
     }
+    if (argc > 1 && !strcmp(argv[1], "band")) {
+        static const char *const bn[3] = { "auto (2.4 or 5 GHz, the firmware picks)", "5 GHz only", "2.4 GHz only" };
+        if (argc > 2) {
+            int b = !strcmp(argv[2], "5") ? 1 : (!strcmp(argv[2], "2") || !strcmp(argv[2], "2.4")) ? 2 : !strcmp(argv[2], "auto") ? 0 : -1;
+            if (b < 0) { kprintf("usage: wifi band 2|5|auto\n"); return; }
+            int saved = load_cfg();                       /* keeps the network + password in /WIFI.TXT */
+            cfg_band = b;
+            if (saved) save_cfg(cfg_ssid, cfg_psk[0] ? cfg_psk : 0);
+            else kprintf("(saved with the next 'wifi join')\n");
+            if (w.up) { io_lock(); cmdint(142, (u32)b); io_unlock(); }
+            kprintf("WiFi band: %s%s\n", bn[b], j_ssid_ok ? " - 'wifi join' again to switch now" : "");
+        } else kprintf("WiFi band: %s\n", bn[cfg_band]);
+        return;
+    }
     if (argc > 1 && (!strcmp(argv[1], "leave") || !strcmp(argv[1], "forget"))) {
         if (w.up) { io_lock(); wlcmd(1, 52, 0, 0, 0, 0); io_unlock(); }   /* WLC_DISASSOC */
         j_link = j_keyed = j_ssid_ok = 0; j_told = 0;
@@ -1293,18 +1312,23 @@ void wifi_cmd(int argc, char **argv)
         if (!strcmp(argv[1], "scan")) scan();
         return;
     }
-    if (argc > 1) { kprintf("usage: wifi [init | scan | join <network> [password] | leave | forget]\n"); return; }
+    if (argc > 1) { kprintf("usage: wifi [init | scan | join <network> [password] | band 2|5|auto | leave | forget]\n"); return; }
     if (!w.up) { kprintf("WiFi off ('wifi init' or 'wifi scan' starts it; firmware in /FIRMWARE)\n"); return; }
     kprintf("WiFi: chip %d rev %d, firmware %s\n  MAC %02x:%02x:%02x:%02x:%02x:%02x\n",
             w.chipid == 0x4345 ? 43455 : w.chipid, w.chiprev, w.ver,
             w.mac[0], w.mac[1], w.mac[2], w.mac[3], w.mac[4], w.mac[5]);
     if (wifi_joined()) {
-        u8 r[4] = { 0, 0, 0, 0 };
+        u8 r[4] = { 0, 0, 0, 0 }, ch[12];
+        memset(ch, 0, sizeof(ch));
         io_lock();
         wlcmd(0, 127, 0, 0, r, 4);                        /* WLC_GET_RSSI */
+        wlcmd(0, 29, 0, 0, ch, 12);                       /* WLC_GET_CHANNEL: hw_channel first */
         io_unlock();
-        kprintf("  connected to %s, signal %d dBm%s\n", j_ssid, (int)(r[0] | r[1] << 8 | r[2] << 16 | (u32)r[3] << 24),
-                link_wifi() ? ", carries the network now" : " (Ethernet carries the network)");
+        int c = (int)le32(ch);
+        kprintf("  connected to %s, channel %d (%s GHz), signal %d dBm%s%s\n", j_ssid, c, c > 14 ? "5" : "2.4",
+                (int)(r[0] | r[1] << 8 | r[2] << 16 | (u32)r[3] << 24),
+                host_sup ? ", WPA2 by RoboOS" : "", link_wifi() ? ", carries the network now" : " (Ethernet carries the network)");
     } else if (j_ssid[0]) kprintf("  not connected (%s)\n", j_ssid);
     else kprintf("  not connected ('wifi join <network> <password>')\n");
+    if (cfg_band) kprintf("  band: %s GHz only ('wifi band auto' allows both)\n", cfg_band == 1 ? "5" : "2.4");
 }

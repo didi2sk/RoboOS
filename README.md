@@ -318,6 +318,8 @@ wifi scan                     load the firmware into the chip and list the netwo
 wifi join MyNet password      join (saved in /WIFI.TXT: the board joins by itself after a reboot)
 wifi join "My Net" password   a name with spaces
 wifi                          chip, firmware, MAC address, network, signal
+wifi band 2|5|auto            only 2.4 GHz / only 5 GHz / both (saved; a network with both bands:
+                              the firmware picks one, 'wifi' shows the channel it got)
 wifi leave                    disconnect;  wifi forget  also deletes /WIFI.TXT
 ```
 
@@ -659,7 +661,7 @@ If you connect after boot, press Enter.
 | `http on\|off` | small web page with board info (saved) |
 | `http token [<secret>\|off]` | JSON API token (Bearer), see the JSON API section |
 | `http tls on\|off\|new` | HTTPS on port 443 (the API then only there), new certificate |
-| `wifi [scan\|join <net> [pw]\|leave\|forget]` | WiFi: networks, join (saved), status |
+| `wifi [scan\|join <net> [pw]\|band 2\|5\|auto\|leave\|forget]` | WiFi: networks, join (saved), status |
 | `sensors [scan]`, `i2c scan\|read\|write` | I2C sensors (BME280, ADS1115, DS3231) |
 | `mqtt [broker\|user\|pub\|interval\|off]` | MQTT client (IoT) |
 | `time [sync\|zone\|server\|set]` | date and time from NTP, time zone, set by hand |

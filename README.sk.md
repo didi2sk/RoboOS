@@ -319,6 +319,8 @@ wifi scan                     nahrá firmvér do čipu a vypíše siete okolo
 wifi join MojaSiet heslo      pripojí sa (uloží sa do /WIFI.TXT: po reštarte sa pripojí sama)
 wifi join "Moja Siet" heslo   meno s medzerami
 wifi                          čip, firmvér, MAC adresa, sieť, signál
+wifi band 2|5|auto            len 2,4 GHz / len 5 GHz / obe (uloží sa; pri sieti na oboch pásmach
+                              vyberá firmvér, 'wifi' ukáže kanál, na ktorý sa pripojil)
 wifi leave                    odpojí sa;  wifi forget  zmaže aj /WIFI.TXT
 ```
 
@@ -659,7 +661,7 @@ Systém komunikuje po anglicky.
 | `http on\|off` | malá webová stránka s údajmi o doske (uloží sa) |
 | `http token [<tajne>\|off]` | token pre JSON API (Bearer), pozri časť o JSON API |
 | `http tls on\|off\|new` | HTTPS na porte 443 (API potom len tam), nový certifikát |
-| `wifi [scan\|join <sieť> [heslo]\|leave\|forget]` | WiFi: siete, pripojenie (uloží sa), stav |
+| `wifi [scan\|join <sieť> [heslo]\|band 2\|5\|auto\|leave\|forget]` | WiFi: siete, pripojenie (uloží sa), stav |
 | `sensors [scan]`, `i2c scan\|read\|write` | senzory na I2C (BME280, ADS1115, DS3231) |
 | `mqtt [broker\|user\|pub\|interval\|off]` | MQTT klient (IoT) |
 | `time [sync\|zone\|server\|set]` | dátum a čas z NTP, časové pásmo, ručné nastavenie |

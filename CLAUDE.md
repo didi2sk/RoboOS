@@ -91,7 +91,7 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
   msg2 carries OUR RSN IE read back from the firmware ("assoc_info" + "assoc_req_ies", fallback a standard CCMP IE);
   keys via iovar "wsec_key" (brcmf_wsec_key_le, 164 B: algo @112 AES_CCM 4 / TKIP 2, flags @116 = 2 PRIMARY for the
   group key, iv_initialized @132, rxiv hi @140 lo @144, ea @156 for the pairwise key) 30 ms after msg4 left;
-  wsec 4 (6 if the AP's RSN group cipher is TKIP); SET_SSID failure falls back to the "join" iovar
+  wsec 4 (6 if the AP's RSN group cipher is TKIP); `wifi band 2|5|auto` = WLC_SET_BAND (142: 0 auto, 1 5G, 2 2G) before every join, saved as band= in /WIFI.TXT, `wifi` shows WLC_GET_CHANNEL (29) hw_channel; SET_SSID failure falls back to the "join" iovar
   (brcmf_ext_join_params_le, 68 B, unpacked layout ASSUMED). PC test: `tools/test_wpa.c` (host-built BearSSL) +
   `tools/test_wpa.py` (AP in Python/cryptography): PMK + PRF IEEE vectors, MICs, TK, GTK, rekey, replay, wrong
   password - all OK. **Not yet verified on the 3B+**; the 3B keeps the firmware supplicant (same command order).
