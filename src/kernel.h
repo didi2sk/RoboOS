@@ -49,6 +49,11 @@ void uart_bt_init(int flow);
 void uart_bt_putc(u8 c);
 int  uart_bt_getc(u32 us);
 void bt_cmd(int argc, char **argv);
+void bt_poll(void);                      /* core 1 (io_poll_all): the HCI UART once Bluetooth is on */
+void bt_boot(void);                      /* core 0 at boot: /BT.TXT "auto on" */
+struct ble_th { u8 mac[6]; char name[30]; int temp, hum, batt, rssi, first; };   /* temp/hum in 0.01 */
+int  bt_ble_next(struct ble_th *o);      /* core 1: a thermometer with new data for MQTT */
+int  bt_ble_json(char *b, int max);      /* GET /api/ble */
 
 /* mbox.c */
 #define MBOX_CH_PROP 8
@@ -285,6 +290,7 @@ int  api_handle(const char *method, const char *path, const char *auth, int role
 int  users_count(void);
 void users_load(void);                   /* core 0, at boot */
 int  users_auth(const char *auth, const char *from, char *who, int wmax);   /* 2 admin 1 view 0 no -1 locked */
+int  users_check(const char *name, const char *pass, const char *from, char *who, int wmax);   /* the same, name + password */
 void users_cmd(int argc, char **argv);
 void users_console_login(void);          /* core 0: before the shell prompt, when 'users console on' */
 int  users_console_active(void);

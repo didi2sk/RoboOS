@@ -91,6 +91,7 @@ void io_poll_all(void)
     kbd_poll();
     usb_hotplug();
     net_poll();
+    bt_poll();
 }
 
 static void worker(int core)

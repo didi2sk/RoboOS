@@ -2,7 +2,7 @@
 #include "usb.h"
 #include "sd.h"
 
-#define VERSION "0.41"
+#define VERSION "0.42"
 
 const char *os_version(void) { return VERSION; }
 
@@ -103,6 +103,7 @@ void kernel_main(void)
         if (sde) sd_print_fail(sde); else con_puts("no FAT16/FAT32 partition\n");
     }
     wifi_boot();                         /* /WIFI.TXT: start the WiFi chip and join (core 0, before core 1) */
+    bt_boot();                           /* /BT.TXT "auto on": Bluetooth at boot (console -> mini UART) */
     net_name();                          /* /NAME.TXT and /IP.TXT are read here, on core 0 */
     clock_prepare();                     /* /TIME.TXT */
     sensors_probe();                     /* I2C: BME280, ADS1115, DS3231 */

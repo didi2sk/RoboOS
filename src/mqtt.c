@@ -149,6 +149,40 @@ static void ha_one(const char *key, const char *name, const char *unit, const ch
     publish_raw(t, js, jn, 1);
 }
 
+/* a Bluetooth thermometer (bt.c): <base>/ble/<mac>, and on its first message Home Assistant config */
+static void ble_publish(const struct ble_th *b)
+{
+    char mac[13], sub[24] = "ble/", t[128], node[40];
+    const char *h = "0123456789abcdef";
+    for (int i = 0; i < 6; i++) { mac[2 * i] = h[b->mac[i] >> 4]; mac[2 * i + 1] = h[b->mac[i] & 15]; }
+    mac[12] = 0;
+    memcpy(sub + 4, mac, 13);
+    jn = 0;
+    ja("{\"temp\":"); jfix(b->temp); ja(",\"hum\":"); jfix(b->hum); ja(",\"batt\":"); jnum(b->batt);
+    ja(",\"rssi\":"); jnum(b->rssi); ja(",\"name\":\""); ja(b->name); ja("\"}");
+    publish(sub, js, 0);
+    if (!b->first || !discovery) return;
+    int n = 0;
+    for (const char *s = net_name(); *s && n < 39; s++) node[n++] = (*s == '-' || *s == '.') ? '_' : *s;
+    node[n] = 0;
+    static const char *const key[3] = { "temp", "hum", "batt" }, *const unit[3] = { "\\u00b0C", "%", "%" },
+                      *const cls[3] = { "temperature", "humidity", "battery" };
+    for (int k = 0; k < 3; k++) {
+        char st[96];
+        topic(st, sizeof(st), sub);
+        jn = 0;
+        ja("homeassistant/sensor/ble_"); ja(mac); ja("/"); ja(key[k]); ja("/config");
+        memcpy(t, js, (size_t)jn + 1);
+        jn = 0;
+        ja("{\"name\":\""); ja(cls[k]); ja("\",\"state_topic\":\""); ja(st); ja("\",\"value_template\":\"{{ value_json.");
+        ja(key[k]); ja(" }}\",\"unit_of_measurement\":\""); ja(unit[k]); ja("\",\"device_class\":\""); ja(cls[k]);
+        ja("\",\"state_class\":\"measurement\",\"unique_id\":\"ble_"); ja(mac); ja("_"); ja(key[k]);
+        ja("\",\"device\":{\"identifiers\":[\"ble_"); ja(mac); ja("\"],\"name\":\""); ja(b->name[0] ? b->name : mac);
+        ja("\",\"model\":\"BLE thermometer (ATC/pvvx)\",\"via_device\":\""); ja(node); ja("\"}}");
+        publish_raw(t, js, jn, 1);
+    }
+}
+
 static void ha_discovery(void)
 {
     int h = sensors_have();
@@ -369,6 +403,7 @@ void mqtt_poll(int have_ip)
         if (now - last_rx > (KEEPALIVE + KEEPALIVE / 2) * 1000000ULL) { drop("broker silent (keep-alive)", 1); return; }
         if (now - last_tx > (KEEPALIVE / 2) * 1000000ULL) { txn = 5; send_packet(0xC0); }   /* PINGREQ */
         if (interval > 0 && now >= next_state) { publish_state(); next_state = now + (u64)interval * 1000000; }
+        { struct ble_th b; if (bt_ble_next(&b)) ble_publish(&b); }   /* Bluetooth thermometers, one per poll */
         return;
     }
 }

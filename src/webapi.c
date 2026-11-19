@@ -468,6 +468,14 @@ logged_in:;
         put("{\"ok\":true,\"gpio\":"); put_pin(p); put("}\n");
         return olen;
     }
+    if (!strcmp(path, "/api/ble")) {                      /* Bluetooth thermometers (bt.c) */
+        if (!get) return fail(405, "use GET");
+        static char jb[1536];
+        int jl = bt_ble_json(jb, sizeof(jb));
+        head(200);
+        if (jl) put(jb);
+        return olen;
+    }
     if (!strcmp(path, "/api/sound")) {
         if (post) return post_sound(body, blen);
         if (!get) return fail(405, "use GET or POST");

@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.41**
+Aktuálna verzia: **0.42**
 
 ## Podporované dosky
 
@@ -344,23 +344,41 @@ napíše "RoboOS does the WPA2 handshake" (len informácia). Ak sa pripojenie ne
 po 20 s, potom raz za minútu (`[NET] WiFi: joining <sieť> again`), kým nedáš `wifi leave`. Na Pi 3B+ to **funguje** (pripojenie, DHCP aj ping cez
 WiFi s vytiahnutým káblom). Siete len s WPA3 (SAE) nie sú podporované (zmiešané WPA2/WPA3 áno). Zero 2 W ešte nie je vyskúšaná.
 
-### Bluetooth (BLE scan)
+### Bluetooth (BLE: senzory, mobil)
 
 WiFi čip je zároveň Bluetooth čip. Zapne sa, až keď ho zavoláš:
 
 ```
-bt scan          hľadá Bluetooth LE zariadenia 5 s (bt scan 20 = 20 s)
-bt               stav
+bt on            zapnúť: počúva zariadenia okolo a mobil ho nájde
+bt scan          čo je okolo (bt scan 20 = počúvať 20 s)
+bt sensors       Bluetooth teplomery ako JSON
+bt               stav (pripojený mobil, zariadenia, teplomery)
 bt off           vypnúť
+bt auto on|off   zapnúť pri štarte (/BT.TXT)
 ```
 
-Zoznam ukáže adresu, signál, meno a výrobcu (Apple, Samsung, Xiaomi ...). Teplomery Xiaomi
-LYWSD03MMC s voľným firmvérom ATC / pvvx ukážu aj teplotu, vlhkosť a batériu. Čip potrebuje
-firmvér z `/FIRMWARE/*.hcd` (v `sd/FIRMWARE`). Kým je Bluetooth zapnutý, UART konzola beží na
-mini UARTe - rovnaké piny 8/10, rovnakých 115200, na kábli netreba nič meniť; `bt off` ju vráti.
-**Na Pi 3B funguje** (na prvý pokus našiel 19 zariadení);
-3B+ a Zero 2 W ešte nie sú vyskúšané (pin BT_ON na Zero 2 W, GPIO42, je odhad). Test v QEMU s falošným
-Bluetooth radičom: `tools/qemu_bt_test.py`. Ďalej: BLE zariadenie, na ktoré sa pripojí mobil (čítať senzory, prepínať piny).
+**Senzory.** Teplomery Xiaomi LYWSD03MMC s voľným firmvérom ATC / pvvx (service data 0x181A) sa
+čítajú stále, kým je Bluetooth zapnutý: `bt sensors`, `GET /api/ble` a MQTT `roboos/<meno>/ble/<mac>` =
+`{"temp":21.53,"hum":45.12,"batt":87,"rssi":-63,"name":"ATC_112233"}` (najviac raz za 30 s), Home
+Assistant ich nájde sám (teplota, vlhkosť, batéria). `bt scan` ukáže aj mená a výrobcov všetkého
+ostatného (mobily, TV, slúchadlá).
+
+**Mobil.** Doska sa ukáže pod svojím menom (`rpi3-...`) so službou Nordic UART. Pripoj sa terminálovou
+aplikáciou - Android: *Serial Bluetooth Terminal* (Devices -> Bluetooth LE), iPhone / Android:
+*nRF Toolbox* (UART) alebo *Bluefruit Connect* (UART) - a píš:
+
+```
+help                          príkazy
+status                        meno, verzia, čas behu, adresa, čas
+sensors                       CPU, BME280, ADS1115 a Bluetooth teplomery
+gpio 17                       prečíta pin;  gpio 17 1 / gpio 17 0 / gpio 17 toggle = nastaví
+login robo MojeHeslo1         treba, keď sú používatelia ('users add'); "view" len číta
+```
+
+Párovanie zatiaľ nie je: spojenie nie je šifrované, používaj ho nablízku (heslo napísané tam ide
+vzduchom čitateľne). Kým je Bluetooth zapnutý, UART konzola beží na mini UARTe - rovnaké piny 8/10,
+rovnakých 115200; `bt off` ju vráti. Scan funguje na Pi 3B (19 zariadení na prvý pokus); časť s mobilom
+je vyskúšaná v QEMU (`tools/qemu_bt_test.py` hrá radič aj mobil). Ďalej: Bluetooth klávesnica.
 
 ### Dátum a čas (NTP)
 
@@ -707,7 +725,7 @@ Systém komunikuje po anglicky.
 | `http token [<tajne>\|off]` | token pre JSON API (Bearer), pozri časť o JSON API |
 | `http tls on\|off\|new` | HTTPS na porte 443 (API potom len tam), nový certifikát |
 | `wifi [scan\|join <sieť> [heslo]\|band 2\|5\|auto\|leave\|forget]` | WiFi: siete, pripojenie (uloží sa), stav |
-| `bt [on\|scan [s]\|off]` | Bluetooth LE: zariadenia okolo (zapne sa len na požiadanie) |
+| `bt [on\|scan [s]\|sensors\|off\|auto on\|off]` | Bluetooth LE: zariadenia, teplomery, mobil (len na požiadanie) |
 | `sensors [scan]`, `i2c scan\|read\|write` | senzory na I2C (BME280, ADS1115, DS3231) |
 | `mqtt [broker\|user\|pub\|interval\|off]` | MQTT klient (IoT) |
 | `users [add\|passwd\|del\|console on\|off]`, `logout` | prihlásenie na web a API (voliteľné) |
