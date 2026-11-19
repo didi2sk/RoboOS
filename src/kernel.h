@@ -273,8 +273,18 @@ const char *api_token(void);
 void api_poll(void);
 void api_sound_poll(void);               /* core 0, from con_trygetc: plays what the API asked */
 void api_sound_scan(void);               /* core 0: list /SOUNDS for GET /api/sound */
-int  api_handle(const char *method, const char *path, const char *auth, const char *body, int blen,
+/* role: 2 / 1 = already logged in as an admin / view user (users.c), 0 = check the Bearer token */
+int  api_handle(const char *method, const char *path, const char *auth, int role, const char *body, int blen,
                 const char *from, char *out, int max);
+/* users.c - optional logins for the web page + API (HTTP Basic), /USERS.TXT */
+int  users_count(void);
+void users_load(void);                   /* core 0, at boot */
+int  users_auth(const char *auth, const char *from, char *who, int wmax);   /* 2 admin 1 view 0 no -1 locked */
+void users_cmd(int argc, char **argv);
+int  users_locked(const char *from);     /* wrong passwords / tokens: 5 = locked out for 60 s */
+void users_failed(const char *from);
+void users_ok(const char *from);
+int  https_on(void);
 const char *os_version(void);
 /* sockets for programs: handles 1..8, errors < 0 (sock_error); idle() polls the network */
 int  sock_tcp_connect(const char *host, int port, int (*idle)(void));

@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.36**
+Current version: **0.37**
 
 ## Supported boards
 
@@ -420,6 +420,28 @@ from another address may call the API too (CORS is allowed). The board prints
 **HTTP is not encrypted**: anybody who can watch your LAN can read the token, so use the
 API only on your own network, not from the internet. Pins 14/15 are the UART.
 
+### Users: a login for the web page and the API (optional)
+
+As long as there are no users, nothing changes: the page is open and the API takes the token.
+The first `users add` turns the login on for the page and the whole API:
+
+```
+users add robo MyPassword1          an admin: may do everything (the first user must be an admin)
+users add guest Reader123 view      a "view" user: may only look (page, GET /api/...)
+users                               the list
+users passwd guest NewPass99        a new password
+users del guest                     delete (when the last one goes, the page is open again)
+```
+
+The browser shows its own login window; curl: `curl -u robo:MyPassword1 http://<address>/api/status`.
+A "view" user gets 403 for POST (pins, sound, reboot); the Bearer token still works and counts as
+an admin. Five wrong passwords (or tokens) from one address lock that address out for a minute
+(429), the board prints `[WEB] wrong login 'x' from <address>`. `/USERS.TXT` keeps only a salted
+hash of each password (PBKDF2-HMAC-SHA256, 1000 rounds), never the password itself.
+**Turn HTTPS on (`http tls on`)**: without it the browser sends the password readable over the
+network; with HTTPS on, `http://` pages jump to `https://` and nothing asks for a password in clear text.
+The keyboard / UART console on the board itself does not ask for a login.
+
 ### TCP and UDP in programs
 
 Connections are numbered 1-8 (a program gets a number from `TCPCONNECT`, `TCPLISTEN`,
@@ -665,6 +687,7 @@ If you connect after boot, press Enter.
 | `wifi [scan\|join <net> [pw]\|band 2\|5\|auto\|leave\|forget]` | WiFi: networks, join (saved), status |
 | `sensors [scan]`, `i2c scan\|read\|write` | I2C sensors (BME280, ADS1115, DS3231) |
 | `mqtt [broker\|user\|pub\|interval\|off]` | MQTT client (IoT) |
+| `users [add\|passwd\|del]` | logins for the web page + API (optional) |
 | `time [sync\|zone\|server\|set]` | date and time from NTP, time zone, set by hand |
 | `ls [path]` | list a directory on the SD card (default: the current one) |
 | `cd [dir]` | change directory (`..` = up, `/` = top, no argument = top) |

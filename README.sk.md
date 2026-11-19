@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.36**
+Aktuálna verzia: **0.37**
 
 ## Podporované dosky
 
@@ -419,6 +419,28 @@ volať aj webová stránka z inej adresy (CORS je povolený). Doska vypíše
 **HTTP nie je šifrované**: kto vidí do tvojej siete, prečíta aj token, takže API používaj
 len vo vlastnej sieti, nie z internetu. Piny 14/15 sú UART.
 
+### Používatelia: prihlásenie na webovú stránku a API (voliteľné)
+
+Kým nie je žiadny používateľ, nič sa nemení: stránka je otvorená a API berie token.
+Prvý `users add` zapne prihlasovanie pre stránku aj celé API:
+
+```
+users add robo MojeHeslo1           admin: smie všetko (prvý používateľ musí byť admin)
+users add host Citatel123 view      používateľ "view": smie len pozerať (stránka, GET /api/...)
+users                               zoznam
+users passwd host NoveHeslo9        nové heslo
+users del host                      zmazať (keď zmizne posledný, stránka je zase otvorená)
+```
+
+Prehliadač ukáže svoje prihlasovacie okno; curl: `curl -u robo:MojeHeslo1 http://<adresa>/api/status`.
+Používateľ "view" dostane na POST (piny, zvuk, reštart) 403; Bearer token stále funguje a platí ako
+admin. Päť zlých hesiel (alebo tokenov) z jednej adresy ju zablokuje na minútu (429), doska vypíše
+`[WEB] wrong login 'x' from <adresa>`. `/USERS.TXT` obsahuje len osolený hash hesla
+(PBKDF2-HMAC-SHA256, 1000 kôl), nikdy heslo samotné.
+**Zapni HTTPS (`http tls on`)**: bez neho prehliadač posiela heslo po sieti čitateľne; so zapnutým
+HTTPS stránky z `http://` skočia na `https://` a nič sa nepýta heslo nešifrovane.
+Klávesnica / UART konzola priamo na doske prihlásenie nepýta.
+
 ### TCP a UDP v programoch
 
 Spojenia majú čísla 1-8 (program dostane číslo od `TCPCONNECT`, `TCPLISTEN`, `TCPACCEPT`
@@ -664,6 +686,7 @@ Systém komunikuje po anglicky.
 | `wifi [scan\|join <sieť> [heslo]\|band 2\|5\|auto\|leave\|forget]` | WiFi: siete, pripojenie (uloží sa), stav |
 | `sensors [scan]`, `i2c scan\|read\|write` | senzory na I2C (BME280, ADS1115, DS3231) |
 | `mqtt [broker\|user\|pub\|interval\|off]` | MQTT klient (IoT) |
+| `users [add\|passwd\|del]` | prihlásenie na web a API (voliteľné) |
 | `time [sync\|zone\|server\|set]` | dátum a čas z NTP, časové pásmo, ručné nastavenie |
 | `ls [cesta]` | obsah priečinka na SD karte (bez cesty: aktuálneho) |
 | `cd [priečinok]` | zmena priečinka (`..` = vyššie, `/` = navrch, bez argumentu = navrch) |

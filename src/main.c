@@ -2,7 +2,7 @@
 #include "usb.h"
 #include "sd.h"
 
-#define VERSION "0.36"
+#define VERSION "0.37"
 
 const char *os_version(void) { return VERSION; }
 
@@ -109,6 +109,7 @@ void kernel_main(void)
     { u64 rt = rtc_read(); if (rt) clock_set_time(rt, 3); }   /* the time before NTP answers */
     ip_prepare();
     mqtt_prepare();                      /* /MQTT.TXT */
+    users_load();                        /* /USERS.TXT: logins for the web page + API */
     api_sound_scan();                    /* /SOUNDS for the JSON API, before core 1 starts */
     int io = smp_start_io();             /* core 1 takes over USB + network */
     status(io);
