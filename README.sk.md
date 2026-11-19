@@ -530,7 +530,7 @@ príklad `iotnode` (posiela JSON so senzormi, LED na GPIO23 cez `cmd/led` on / o
 
 `hardware/iot-shield/` obsahuje návrh dosky v KiCade, ktorá sa nasadí na 40-pinový konektor:
 napájanie 12-24 V, 4 izolované vstupy, 4 MOSFET výstupy, ADS1115, BME280, hodiny DS3231,
-1-Wire. Pozri jej README - **súčiastky rozmiestnené, spoje ešte nie, nevyrobená ani neotestovaná**.
+1-Wire. Pozri jej README - **natiahnutá, Gerbery sú pribalené, nevyrobená ani neotestovaná**.
 
 ## Zvuk
 
