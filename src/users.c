@@ -18,6 +18,8 @@
 #define ROUNDS 1000
 static struct user { char name[24]; int role; u8 salt[8], hash[32]; } users[MAXU];
 static int nusers;
+static int console_login, logged_in;                      /* 'users console on': the shell asks for a login too */
+static char console_user[24];
 
 int users_count(void) { return nusers; }
 
@@ -74,6 +76,7 @@ void users_load(void)
     struct fat_file f;
     static char b[MAXU * 120 + 8];
     nusers = 0;
+    console_login = 0;
     if (!fat_mounted() || fat_open("/USERS.TXT", &f) || f.is_dir) return;
     int n = fat_read(&f, b, sizeof(b) - 1);
     if (n <= 0) return;
@@ -90,6 +93,7 @@ void users_load(void)
             w[k++] = p;
             while (*p && *p != ' ' && *p != '\r') p++;
         }
+        if (k == 2 && !strcmp(w[0], "console")) { console_login = !strcmp(w[1], "on"); l = e ? e + 1 : 0; continue; }
         if (k == 4 && name_ok(w[0]) && strlen(w[2]) == 16 && strlen(w[3]) == 64) {
             struct user *u = &users[nusers];
             int i = 0;
@@ -116,6 +120,7 @@ static int save(void)
         d = puthex(d, users[i].hash, 32);
         *d++ = '\r'; *d++ = '\n';
     }
+    if (console_login) for (const char *s = "console on\r\n"; *s; s++) *d++ = *s;
     if (!fat_mounted()) return -1;
     if (!nusers) { fat_remove("/USERS.TXT"); return 0; }
     return fat_write_file("/USERS.TXT", b, (u32)(d - b));
@@ -218,6 +223,60 @@ int users_auth(const char *auth, const char *from, char *who, int wmax)
     return 0;
 }
 
+/* ---------------- the console login (core 0, before every shell prompt) ---------------- */
+
+static int read_line(char *b, int max, int mask)
+{
+    int n = 0;
+    for (;;) {
+        int c = con_getkey();
+        if (c == '\r' || c == '\n') { con_puts("\n"); b[n] = 0; return n; }
+        if ((c == 8 || c == 127) && n) { n--; con_puts("\b \b"); continue; }
+        if (c == 3 || c == 21) { while (n) { n--; con_puts("\b \b"); } continue; }   /* Ctrl+C / Ctrl+U: clear */
+        if (c >= 32 && c < 127 && n < max - 1) { b[n++] = (char)c; char e[2] = { mask ? '*' : (char)c, 0 }; con_puts(e); }
+    }
+}
+
+int users_console_active(void) { return console_login && nusers > 0; }
+const char *users_console_user(void) { return logged_in ? console_user : ""; }
+void users_logout(void) { logged_in = 0; }
+
+/* returns when an admin has logged in (or no console login is wanted) */
+void users_console_login(void)
+{
+    int fails = 0;
+    while (users_console_active() && !logged_in) {
+        char name[32], pass[72];
+        con_color(COL_CYAN); con_puts("\nRoboOS login: "); con_color(COL_DEFAULT);
+        if (!read_line(name, sizeof(name), 0)) continue;
+        con_puts("password: ");
+        read_line(pass, sizeof(pass), 1);
+        struct user *u = 0;
+        for (int i = 0; i < nusers; i++) if (!strcmp(users[i].name, name)) u = &users[i];
+        u8 h[32], salt[8] = { 0 }, d = u ? 0 : 1;
+        pbkdf2(pass, (int)strlen(pass), u ? u->salt : salt, h);
+        memset(pass, 0, sizeof(pass));
+        for (int i = 0; i < 32; i++) d |= h[i] ^ (u ? u->hash[i] : 0);
+        if (!d && u->role == 2) {
+            int i = 0;
+            for (; u->name[i]; i++) console_user[i] = u->name[i];
+            console_user[i] = 0;
+            logged_in = 1;
+            kprintf("welcome, %s ('logout' when you are done)\n", console_user);
+            return;
+        }
+        if (!d) { kprintf("%s may only use the web page (a 'view' user)\n", name); continue; }
+        fails++;
+        con_color(COL_RED); kprintf("wrong name or password\n"); con_color(COL_DEFAULT);
+        if (fails >= 3) {                                   /* 3 wrong: wait 10 s (keys typed meanwhile are dropped) */
+            kprintf("(wait 10 s)\n");
+            u64 end = timer_us() + 10000000ULL;
+            while (timer_us() < end) con_trygetc();
+            fails = 0;
+        }
+    }
+}
+
 /* ---------------- command (core 0) ---------------- */
 
 void users_cmd(int argc, char **argv)
@@ -249,6 +308,22 @@ void users_cmd(int argc, char **argv)
         io_unlock();
         if (save()) kprintf("(not saved: no SD card or write error)\n");
         kprintf("%s %s (%s)\n", add ? "user" : "password changed:", name, nu.role == 2 ? "admin" : "view");
+    } else if (argc > 2 && !strcmp(argv[1], "console")) {
+        int on = !strcmp(argv[2], "on");
+        if (!on && strcmp(argv[2], "off")) { kprintf("usage: users console on|off\n"); return; }
+        int admins = 0;
+        for (int i = 0; i < nusers; i++) if (users[i].role == 2) admins++;
+        if (on && !admins) { kprintf("add an admin first ('users add <name> <password>')\n"); return; }
+        console_login = on;
+        if (on && !logged_in) {                           /* whoever turns it on stays logged in, as the first admin */
+            logged_in = 1;
+            for (int i = 0; i < nusers; i++) if (users[i].role == 2) { memcpy(console_user, users[i].name, sizeof(console_user)); break; }
+        }
+        if (save()) kprintf("(not saved: no SD card or write error)\n");
+        if (on) kprintf("the keyboard / UART shell now asks for an admin login (after a reboot or 'logout').\n"
+                        "forgot the password? delete /USERS.TXT from the card on a PC.\n");
+        else kprintf("the shell no longer asks for a login\n");
+        return;
     } else if (argc > 2 && (!strcmp(argv[1], "del") || !strcmp(argv[1], "rm"))) {
         int idx = -1;
         for (int i = 0; i < nusers; i++) if (!strcmp(users[i].name, argv[2])) idx = i;
@@ -264,7 +339,8 @@ void users_cmd(int argc, char **argv)
         kprintf("user %s deleted%s\n", argv[2], nusers ? "" : " - no users left: the web page is open again");
         return;
     } else if (argc > 1) {
-        kprintf("usage: users [add <name> <password> [admin|view] | passwd <name> <password> | del <name>]\n");
+        kprintf("usage: users [add <name> <password> [admin|view] | passwd <name> <password> | del <name>\n"
+                "             | console on|off]   (console = the shell asks for a login too)\n");
         return;
     }
     if (!nusers) {
@@ -274,5 +350,7 @@ void users_cmd(int argc, char **argv)
     }
     kprintf("%d user(s) - the web page and the API ask for a login (HTTP Basic):\n", nusers);
     for (int i = 0; i < nusers; i++) kprintf("  %-23s %s\n", users[i].name, users[i].role == 2 ? "admin (everything)" : "view (only reads)");
+    kprintf("shell login: %s%s%s\n", console_login ? "on" : "off ('users console on')",
+            logged_in && console_login ? ", logged in: " : "", logged_in && console_login ? console_user : "");
     if (!https_on()) kprintf("note: without HTTPS the password crosses the network readable - 'http tls on'\n");
 }

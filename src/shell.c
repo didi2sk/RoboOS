@@ -598,6 +598,14 @@ struct cmd {
     void (*fn)(int, char **);
 };
 
+static void logout_cmd(int argc, char **argv)
+{
+    (void)argc; (void)argv;
+    if (!users_console_active()) { kprintf("the shell has no login ('users console on' turns it on)\n"); return; }
+    kprintf("bye, %s\n", users_console_user());
+    users_logout();
+}
+
 static const struct cmd cmds[] = {
     { "help",   "",                     "list of commands",                cmd_help   },
     { "info",   "",                     "board and system information",    cmd_info   },
@@ -614,7 +622,8 @@ static const struct cmd cmds[] = {
     { "http",   "[on|off|token|tls]",   "web page, JSON API, HTTPS",       http_cmd   },
     { "wifi",   "[init|scan]",          "WiFi chip: firmware, scan",       wifi_cmd   },
     { "i2c",    "scan|read|write",      "I2C bus on GPIO2/3",              i2c_cmd    },
-    { "users",  "[add|passwd|del]",     "logins for the web page + API", users_cmd  },
+    { "users",  "[add|passwd|del|console]", "logins: web page, API, shell", users_cmd },
+    { "logout", "",                     "end the shell login",           logout_cmd },
     { "mqtt",   "[broker|pub|off|..]", "MQTT client (IoT broker)",       mqtt_cmd   },
     { "sensors", "[scan]",              "temperature, humidity, ADC, RTC", sensors_cmd },
     { "time",   "[sync|zone|server]",   "date and time (NTP), time zone",  time_cmd   },
@@ -808,6 +817,7 @@ void shell_run(void)
 {
     char line[LINE_MAX];
     for (;;) {
+        users_console_login();         /* 'users console on': an admin must log in first */
         prompt();
         net_notify(1);                 /* messages show up while waiting at the prompt */
         int len = line_edit(line, LINE_MAX, &hist, complete, prompt);

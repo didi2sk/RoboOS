@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.37**
+Aktuálna verzia: **0.38**
 
 ## Podporované dosky
 
@@ -439,7 +439,11 @@ admin. Päť zlých hesiel (alebo tokenov) z jednej adresy ju zablokuje na minú
 (PBKDF2-HMAC-SHA256, 1000 kôl), nikdy heslo samotné.
 **Zapni HTTPS (`http tls on`)**: bez neho prehliadač posiela heslo po sieti čitateľne; so zapnutým
 HTTPS stránky z `http://` skočia na `https://` a nič sa nepýta heslo nešifrovane.
-Klávesnica / UART konzola priamo na doske prihlásenie nepýta.
+Prihlásenie môže pýtať aj shell (klávesnica / UART na doske): `users console on` - po reštarte alebo
+`logout` ukáže `RoboOS login:` a pustí len admina (heslo sa zobrazuje ako `*`, 3 zlé pokusy = 10 s
+čakanie). Programy v `/RUN` sa spustia samy ako doteraz; Ctrl+C z nich vedie na prihlásenie.
+`users console off` to vypne. **Zabudnuté heslo?** Daj SD kartu do PC a zmaž `/USERS.TXT` - shell aj
+webová stránka sú potom znova otvorené (žiadne skryté hlavné heslo nie je).
 
 ### TCP a UDP v programoch
 
@@ -686,7 +690,7 @@ Systém komunikuje po anglicky.
 | `wifi [scan\|join <sieť> [heslo]\|band 2\|5\|auto\|leave\|forget]` | WiFi: siete, pripojenie (uloží sa), stav |
 | `sensors [scan]`, `i2c scan\|read\|write` | senzory na I2C (BME280, ADS1115, DS3231) |
 | `mqtt [broker\|user\|pub\|interval\|off]` | MQTT klient (IoT) |
-| `users [add\|passwd\|del]` | prihlásenie na web a API (voliteľné) |
+| `users [add\|passwd\|del\|console on\|off]`, `logout` | prihlásenie na web a API (voliteľné) |
 | `time [sync\|zone\|server\|set]` | dátum a čas z NTP, časové pásmo, ručné nastavenie |
 | `ls [cesta]` | obsah priečinka na SD karte (bez cesty: aktuálneho) |
 | `cd [priečinok]` | zmena priečinka (`..` = vyššie, `/` = navrch, bez argumentu = navrch) |
