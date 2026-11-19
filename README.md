@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.37**
+Current version: **0.38**
 
 ## Supported boards
 
@@ -440,7 +440,11 @@ an admin. Five wrong passwords (or tokens) from one address lock that address ou
 hash of each password (PBKDF2-HMAC-SHA256, 1000 rounds), never the password itself.
 **Turn HTTPS on (`http tls on`)**: without it the browser sends the password readable over the
 network; with HTTPS on, `http://` pages jump to `https://` and nothing asks for a password in clear text.
-The keyboard / UART console on the board itself does not ask for a login.
+The shell (keyboard / UART on the board) can ask for a login too: `users console on` - after a
+reboot or `logout` it shows `RoboOS login:` and only an admin gets in (the password shows as `*`,
+3 wrong tries = 10 s wait). Programs in `/RUN` still start by themselves; Ctrl+C out of them leads to
+the login. `users console off` turns it off. **Forgot the password?** Take the SD card to a PC and
+delete `/USERS.TXT` - that opens the shell and the web page again (there is no hidden master password).
 
 ### TCP and UDP in programs
 
@@ -687,7 +691,7 @@ If you connect after boot, press Enter.
 | `wifi [scan\|join <net> [pw]\|band 2\|5\|auto\|leave\|forget]` | WiFi: networks, join (saved), status |
 | `sensors [scan]`, `i2c scan\|read\|write` | I2C sensors (BME280, ADS1115, DS3231) |
 | `mqtt [broker\|user\|pub\|interval\|off]` | MQTT client (IoT) |
-| `users [add\|passwd\|del]` | logins for the web page + API (optional) |
+| `users [add\|passwd\|del\|console on\|off]`, `logout` | logins for the web page + API (optional) |
 | `time [sync\|zone\|server\|set]` | date and time from NTP, time zone, set by hand |
 | `ls [path]` | list a directory on the SD card (default: the current one) |
 | `cd [dir]` | change directory (`..` = up, `/` = top, no argument = top) |

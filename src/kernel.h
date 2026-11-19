@@ -281,6 +281,10 @@ int  users_count(void);
 void users_load(void);                   /* core 0, at boot */
 int  users_auth(const char *auth, const char *from, char *who, int wmax);   /* 2 admin 1 view 0 no -1 locked */
 void users_cmd(int argc, char **argv);
+void users_console_login(void);          /* core 0: before the shell prompt, when 'users console on' */
+int  users_console_active(void);
+const char *users_console_user(void);
+void users_logout(void);
 int  users_locked(const char *from);     /* wrong passwords / tokens: 5 = locked out for 60 s */
 void users_failed(const char *from);
 void users_ok(const char *from);
