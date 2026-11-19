@@ -39,6 +39,10 @@ signal between **INx** and **COM** (COM is isolated from the Pi ground).
 - Output current: the polyfuse (2 A) covers the Pi and the loads together.
 - Analog inputs: 0-3.3 V only. The ADC range is +-4.096 V but its inputs must not go above VDD.
 - The header socket J1 (2x20, female, 8.5 mm) goes on the **bottom** side; everything else on top.
+  Cut the through-hole leads short on the bottom (the Pi's HDMI and audio jack sit under the board, 11 mm spacers).
+- Mounting holes on the Pi pattern 58 x 49 mm (H3/H4 were 0.5 mm off before the order check, fixed).
+- DS3231 (U4): put a CR1220 into BT1 - without the battery its VBAT pin floats (the datasheet wants a battery or GND).
+- 1-Wire (J6, GPIO4 + 4.7k pull-up) is hardware only: RoboOS has no 1-Wire / DS18B20 driver yet.
 - `bom.csv` was checked in JLCPCB's BOM tool: D2 (SMBJ26CA), F1 (2 A hold, 30 V), J7 (side-entry Qwiic),
   L1 (5x5 mm), R11-R14 (1206), D3 and U4 (DS3231MZ+TRL C107410; C9867 was a DS1337) were fixed with LCSC numbers looked up on lcsc.com / jlcpcb.com.
   **U3 (BME280), C40 and BT1 are not assembled**: plug a Qwiic BME280 module into J7 (the board warms U3); solder a
