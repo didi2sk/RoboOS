@@ -101,7 +101,9 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
   v0.39: owner: WiFi did not come back after a reboot (one join try at boot, before core 1 polls - the AP likely gave
   up on msg1; and no retry existed at all). Now `j_want` + `j_next_try`: wifi_recv (core 1) calls join_send again 20 s
   after a try that did not join, 5 s after a lost link, backoff 20 s x2 then 60 s; `wifi leave/forget` stop it; the PMK
-  is reused when ssid + password are the same (pmk_ok). Not verified on hardware yet.
+  is reused when ssid + password are the same (pmk_ok). Owner (3B, v0.39): `wifi band 5` -> join printed "band: error -13" (BCME_BADBAND, 43430 is 2.4 GHz only) and "join: ..."
+  but then connected by itself (DHCP 192.168.1.97, NTP) - so the retry works. v0.40: WLC_SET_BAND only on chipid 0x4345, not
+  fatal, `wifi band 5` refused on 2.4 GHz chips.
 - v0.34 (I2C sensors BME280/ADS1115/DS3231, MQTT, `hardware/iot-shield` KiCad design): nothing verified on hardware yet;
   MQTT only in QEMU against mosquitto. The shield is a first draft - never manufactured.
 - Not yet verified on hardware: RoboOS messages between two boards (v0.9, tested only with `net loop on`

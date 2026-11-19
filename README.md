@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.39**
+Current version: **0.40**
 
 ## Supported boards
 
@@ -318,7 +318,7 @@ wifi scan                     load the firmware into the chip and list the netwo
 wifi join MyNet password      join (saved in /WIFI.TXT: the board joins by itself after a reboot)
 wifi join "My Net" password   a name with spaces
 wifi                          chip, firmware, MAC address, network, signal
-wifi band 2|5|auto            only 2.4 GHz / only 5 GHz / both (saved; a network with both bands:
+wifi band 2|5|auto            only 2.4 GHz / only 5 GHz / both (Pi 3B+ only - the 3B and Zero 2 W have 2.4 GHz; saved; a network with both bands:
                               the firmware picks one, 'wifi' shows the channel it got)
 wifi leave                    disconnect (and stop re-joining);  wifi forget  also deletes /WIFI.TXT
 ```

@@ -1218,7 +1218,7 @@ static int join_send(const char *ssid, const char *pass)
         delay_us(2000);
         r |= chk("password", wlcmd(1, 268, pmk, sizeof(pmk), 0, 0));   /* WLC_SET_WSEC_PMK */
     }
-    r |= chk("band", cmdint(142, (u32)cfg_band));         /* WLC_SET_BAND: which band the join may use */
+    if (w.chipid == 0x4345) chk("band", cmdint(142, (u32)cfg_band));   /* WLC_SET_BAND (5 GHz chips only); not fatal */
     r |= chk("infrastructure", cmdint(20, 1));
     r |= chk("auth open", cmdint(22, 0));
     r |= chk("wpa_auth", cmdint(165, pl ? auth : 0));
@@ -1343,6 +1343,7 @@ void wifi_cmd(int argc, char **argv)
         if (argc > 2) {
             int b = !strcmp(argv[2], "5") ? 1 : (!strcmp(argv[2], "2") || !strcmp(argv[2], "2.4")) ? 2 : !strcmp(argv[2], "auto") ? 0 : -1;
             if (b < 0) { kprintf("usage: wifi band 2|5|auto\n"); return; }
+            if (b == 1 && w.up && w.chipid != 0x4345) { kprintf("this WiFi chip has 2.4 GHz only (5 GHz: the Pi 3B+)\n"); return; }
             int saved = load_cfg();                       /* keeps the network + password in /WIFI.TXT */
             cfg_band = b;
             if (saved) save_cfg(cfg_ssid, cfg_psk[0] ? cfg_psk : 0);
@@ -1393,5 +1394,6 @@ void wifi_cmd(int argc, char **argv)
         wpa_diag();
     }
     else kprintf("  not connected ('wifi join <network> <password>')\n");
-    if (cfg_band) kprintf("  band: %s GHz only ('wifi band auto' allows both)\n", cfg_band == 1 ? "5" : "2.4");
+    if (cfg_band) kprintf("  band: %s GHz only%s\n", cfg_band == 1 ? "5" : "2.4",
+                          w.chipid != 0x4345 ? " - ignored, this chip has 2.4 GHz only" : " ('wifi band auto' allows both)");
 }
