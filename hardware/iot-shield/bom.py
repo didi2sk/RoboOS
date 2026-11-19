@@ -26,11 +26,12 @@ except ImportError:
 b = pcbnew.LoadBoard(os.path.join(D, "iot-shield.kicad_pcb"))
 with open(os.path.join(D, "cpl.csv"), "w", newline="") as f:
     w = csv.writer(f)
+    # same coordinates as the Gerbers (KiCad Y down -> Gerber Y up), so JLCPCB needs no alignment
     w.writerow(["Designator", "Mid X", "Mid Y", "Layer", "Rotation"])
     for fp in sorted(b.GetFootprints(), key=lambda f: key(f.GetReference())):
         if fp.GetReference().startswith("H") or fp.GetReference() in circuit.dnp:
             continue
         pos = fp.GetPosition()
-        w.writerow([fp.GetReference(), "%.3fmm" % (pcbnew.ToMM(pos.x) - 100), "%.3fmm" % (100 - pcbnew.ToMM(pos.y)),
+        w.writerow([fp.GetReference(), "%.3fmm" % pcbnew.ToMM(pos.x), "%.3fmm" % -pcbnew.ToMM(pos.y),
                     "Bottom" if fp.IsFlipped() else "Top", "%.0f" % fp.GetOrientationDegrees()])
 print("cpl.csv written (JLCPCB may need rotation fixes per part - check their preview)")
