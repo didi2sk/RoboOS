@@ -7,7 +7,7 @@ import circuit
 
 groups = {}
 for p in circuit.parts:
-    if p["ref"].startswith("H"):
+    if p["ref"].startswith("H") or p["ref"] in circuit.dnp:
         continue
     k = (p["value"], p["fp"].split(":")[1], p["lcsc"])
     groups.setdefault(k, []).append(p["ref"])
@@ -28,7 +28,7 @@ with open(os.path.join(D, "cpl.csv"), "w", newline="") as f:
     w = csv.writer(f)
     w.writerow(["Designator", "Mid X", "Mid Y", "Layer", "Rotation"])
     for fp in sorted(b.GetFootprints(), key=lambda f: key(f.GetReference())):
-        if fp.GetReference().startswith("H"):
+        if fp.GetReference().startswith("H") or fp.GetReference() in circuit.dnp:
             continue
         pos = fp.GetPosition()
         w.writerow([fp.GetReference(), "%.3fmm" % (pcbnew.ToMM(pos.x) - 100), "%.3fmm" % (100 - pcbnew.ToMM(pos.y)),

@@ -31,7 +31,7 @@ def C(ref, value, a, b, block, x, y, lcsc="", fp=FP_C, rot=0):
     part(ref, "Device:C", value, fp, lcsc, {"1": a, "2": b}, block, x, y, rot)
 
 
-R10K, R1K, R4K7, R100, R100K, R3K3 = "C25804", "C21190", "C23162", "C22775", "C25803", "C26010"
+R10K, R1K, R4K7, R100, R100K, R3K3 = "C25804", "C21190", "C23162", "C22775", "C25803", "C26032"
 C100N, C10U50, C22U = "C14663", "C13585", "C45783"
 
 # ---------------- Raspberry Pi header ----------------
@@ -48,19 +48,19 @@ part("J1", "Connector:Raspberry_Pi_2_3", "RPi 40-pin socket",
 
 # ---------------- power: 12-24 V in, 5 V 2 A buck ----------------
 part("J2", "Connector_Generic:Conn_01x02", "12-24V IN", FP_TB % (2, 2), "", {"1": "VIN_RAW", "2": "GND"}, "pwr", 2, 4)
-part("F1", "Device:Polyfuse", "2A", "Fuse:Fuse_1812_4532Metric", "C70119", {"1": "VIN_RAW", "2": "VIN_F"}, "pwr", 8, 2, rot=270)
+part("F1", "Device:Polyfuse", "2A hold 30V", "Fuse:Fuse_1812_4532Metric", "C6851470", {"1": "VIN_RAW", "2": "VIN_F"}, "pwr", 8, 2, rot=270)
 part("D1", "Diode:SS34", "SS34", "Diode_SMD:D_SMA", "C8678", {"1": "VIN", "2": "VIN_F"}, "pwr", 14, 2, rot=180)
-part("D2", "Device:D_TVS", "SMBJ26CA", "Diode_SMD:D_SMB", "C114005", {"1": "VIN", "2": "GND"}, "pwr", 18, 6, rot=90)
+part("D2", "Device:D_TVS", "SMBJ26CA", "Diode_SMD:D_SMB", "C123932", {"1": "VIN", "2": "GND"}, "pwr", 18, 6, rot=90)
 C("C1", "10u 50V", "VIN", "GND", "pwr", 22, 6, C10U50, FP_C1206)
 C("C2", "100n", "VIN", "GND", "pwr", 25, 6, C100N)
 part("U1", "Regulator_Switching:AP63205WU", "AP63205WU", "Package_TO_SOT_SMD:TSOT-23-6", "C2071056",
      {"1": "+5V", "2": "VIN", "3": "VIN", "4": "GND", "5": "SW", "6": "BST"}, "pwr", 33, 6)
 C("C3", "100n", "BST", "SW", "pwr", 41, 2, C100N)
-part("L1", "Device:L", "4.7u 3A", "Inductor_SMD:L_Changjiang_FNR5040S", "C167220", {"1": "SW", "2": "+5V"}, "pwr", 46, 4, rot=90)
+part("L1", "Device:L", "4.7u 3A", "Inductor_SMD:L_Changjiang_FNR5040S", "C167963", {"1": "SW", "2": "+5V"}, "pwr", 46, 4, rot=90)
 C("C4", "22u", "+5V", "GND", "pwr", 51, 6, C22U, FP_C0805)
 C("C5", "22u", "+5V", "GND", "pwr", 54, 6, C22U, FP_C0805)
 R("R1", "2.2k", "+5V", "PWR_LED", "pwr", 58, 4, "C4190")
-part("D3", "Device:LED", "green", FP_LED, "C72043", {"1": "GND", "2": "PWR_LED"}, "pwr", 58, 9, rot=90)
+part("D3", "Device:LED", "green", FP_LED, "C12624", {"1": "GND", "2": "PWR_LED"}, "pwr", 58, 9, rot=90)
 R("R2", "1k", "LED_ST", "ST_LED", "pwr", 68, 4, R1K)
 part("D4", "Device:LED", "red (GPIO23)", FP_LED, "C2286", {"1": "GND", "2": "ST_LED"}, "pwr", 68, 9, rot=90)
 
@@ -111,11 +111,14 @@ part("BT1", "Device:Battery_Cell", "CR1220", "Battery:BatteryHolder_Keystone_300
 part("J6", "Connector_Generic:Conn_01x03", "1-WIRE (DS18B20)", "Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical", "",
      {"1": "+3V3", "2": "ONEWIRE", "3": "GND"}, "i2c", 54, 10)
 R("R40", "4.7k", "+3V3", "ONEWIRE", "i2c", 46, 3, R4K7)
-part("J7", "Connector_Generic:Conn_01x04", "QWIIC (I2C)", "Connector_JST:JST_SH_SM04B-SRSS-TB_1x04-1MP_P1.00mm_Horizontal", "C160390",
+part("J7", "Connector_Generic:Conn_01x04", "QWIIC (I2C)", "Connector_JST:JST_SH_SM04B-SRSS-TB_1x04-1MP_P1.00mm_Horizontal", "C160404",
      {"1": "GND", "2": "+3V3", "3": "SDA", "4": "SCL"}, "i2c", 68, 8)
 
 for i, (x, y) in enumerate(((2, 2), (8, 2), (2, 6), (8, 6))):
     part("H%d" % (i + 1), "Mechanical:MountingHole", "M2.5", "MountingHole:MountingHole_2.7mm_M2.5", "", {}, "mech", x, y)
+
+# not assembled by JLCPCB (DNP): the BME280 is expensive and warmed by the board - use a Qwiic module on J7
+dnp = {"U3", "C40"}
 
 # PWR_FLAGs: nets fed only through connectors
 power_flags = ["VIN_RAW", "GND", "+3V3", "+5V", "VBAT", "COM_IN"]

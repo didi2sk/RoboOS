@@ -39,8 +39,10 @@ signal between **INx** and **COM** (COM is isolated from the Pi ground).
 - Output current: the polyfuse (2 A) covers the Pi and the loads together.
 - Analog inputs: 0-3.3 V only. The ADC range is +-4.096 V but its inputs must not go above VDD.
 - The header socket J1 (2x20, female, 8.5 mm) goes on the **bottom** side; everything else on top.
-- LCSC part numbers in `bom.csv` were typed from memory: **check each one** (value, package, stock)
-  in the JLCPCB parts list before ordering. Terminal blocks: any 3.5 mm pitch, 2/5/5/6 pins.
+- `bom.csv` was checked in JLCPCB's BOM tool: D2 (SMBJ26CA), F1 (2 A hold, 30 V), J7 (side-entry Qwiic),
+  L1 (5x5 mm), R11-R14 (1206) and D3 were fixed with LCSC numbers looked up on lcsc.com / jlcpcb.com.
+  Still look at stock and at BT1 (the matched holder must fit the Keystone 3000 holes).
+  **U3 (BME280) and C40 are not assembled** (expensive, warmed by the board): plug a Qwiic BME280 module into J7. Terminal blocks: any 3.5 mm pitch, 2/5/5/6 pins.
 
 ## Routing
 

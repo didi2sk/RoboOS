@@ -2927,7 +2927,7 @@
       (effects
         (font (size 1.27 1.27))
         (justify left)))
-    (property "Value" "2A"
+    (property "Value" "2A hold 30V"
       (at 173.99 36.83 90)
       (effects
         (font (size 1.27 1.27))
@@ -2940,7 +2940,7 @@
       (at 170.18 35.56 0)
       (effects
         (font (size 1.27 1.27)) hide))
-    (property "LCSC" "C70119"
+    (property "LCSC" "C6851470"
       (at 170.18 35.56 0)
       (effects
         (font (size 1.27 1.27)) hide))
@@ -3076,7 +3076,7 @@
       (at 195.58 45.72 0)
       (effects
         (font (size 1.27 1.27)) hide))
-    (property "LCSC" "C114005"
+    (property "LCSC" "C123932"
       (at 195.58 45.72 0)
       (effects
         (font (size 1.27 1.27)) hide))
@@ -3484,7 +3484,7 @@
       (at 266.7 40.64 0)
       (effects
         (font (size 1.27 1.27)) hide))
-    (property "LCSC" "C167220"
+    (property "LCSC" "C167963"
       (at 266.7 40.64 0)
       (effects
         (font (size 1.27 1.27)) hide))
@@ -3756,7 +3756,7 @@
       (at 297.18 53.34 0)
       (effects
         (font (size 1.27 1.27)) hide))
-    (property "LCSC" "C72043"
+    (property "LCSC" "C12624"
       (at 297.18 53.34 0)
       (effects
         (font (size 1.27 1.27)) hide))
@@ -4075,7 +4075,7 @@
       (at 175.26 90.17 0)
       (effects
         (font (size 1.27 1.27)) hide))
-    (property "LCSC" "C26010"
+    (property "LCSC" "C26032"
       (at 175.26 90.17 0)
       (effects
         (font (size 1.27 1.27)) hide))
@@ -4381,7 +4381,7 @@
       (at 175.26 107.95 0)
       (effects
         (font (size 1.27 1.27)) hide))
-    (property "LCSC" "C26010"
+    (property "LCSC" "C26032"
       (at 175.26 107.95 0)
       (effects
         (font (size 1.27 1.27)) hide))
@@ -4687,7 +4687,7 @@
       (at 175.26 125.73 0)
       (effects
         (font (size 1.27 1.27)) hide))
-    (property "LCSC" "C26010"
+    (property "LCSC" "C26032"
       (at 175.26 125.73 0)
       (effects
         (font (size 1.27 1.27)) hide))
@@ -4993,7 +4993,7 @@
       (at 175.26 143.51 0)
       (effects
         (font (size 1.27 1.27)) hide))
-    (property "LCSC" "C26010"
+    (property "LCSC" "C26032"
       (at 175.26 143.51 0)
       (effects
         (font (size 1.27 1.27)) hide))
@@ -8163,7 +8163,7 @@
       (at 342.9 224.79 0)
       (effects
         (font (size 1.27 1.27)) hide))
-    (property "LCSC" "C160390"
+    (property "LCSC" "C160404"
       (at 342.9 224.79 0)
       (effects
         (font (size 1.27 1.27)) hide))
