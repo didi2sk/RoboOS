@@ -338,8 +338,9 @@ WiFi needs the SD card on SDHOST (see the SD card section). Scan and join work o
 the scan works on the Pi 3B+ (2.4 and 5 GHz). The Pi 3B+ firmware has no built-in WPA supplicant,
 so since 0.36 RoboOS does the WPA2-PSK handshake itself (`src/wpa.c`: PBKDF2, the 4-way and group
 key handshakes, AES key unwrap; checked on the PC against the IEEE 802.11 test vectors and a Python
-access point, `tools/test_wpa.py`) - `wifi join` then says "RoboOS does the WPA2 handshake". Joining
-on the 3B+ is not confirmed yet; WPA3-only networks (SAE) are not supported (WPA2/WPA3 mixed are fine).
+access point, `tools/test_wpa.py`) - `wifi join` then says "RoboOS does the WPA2 handshake" (just information).
+This **works on the Pi 3B+** (joined, DHCP and ping over WiFi with the cable out). WPA3-only networks (SAE) are not
+supported (WPA2/WPA3 mixed are fine).
 The Zero 2 W is not tested yet.
 
 ### Date and time (NTP)

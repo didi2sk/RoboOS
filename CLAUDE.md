@@ -94,7 +94,10 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
   wsec 4 (6 if the AP's RSN group cipher is TKIP); `wifi band 2|5|auto` = WLC_SET_BAND (142: 0 auto, 1 5G, 2 2G) before every join, saved as band= in /WIFI.TXT, `wifi` shows WLC_GET_CHANNEL (29) hw_channel; SET_SSID failure falls back to the "join" iovar
   (brcmf_ext_join_params_le, 68 B, unpacked layout ASSUMED). PC test: `tools/test_wpa.c` (host-built BearSSL) +
   `tools/test_wpa.py` (AP in Python/cryptography): PMK + PRF IEEE vectors, MICs, TK, GTK, rekey, replay, wrong
-  password - all OK. **Not yet verified on the 3B+**; the 3B keeps the firmware supplicant (same command order).
+  password - all OK. **v0.36 on the 3B+ WORKS** (owner): own supplicant + 'wpaie' build -> joined, keys set, cable out -> DHCP
+  over WiFi + ping to the internet (= WiFi data tx/rx confirmed for the first time). (The first v0.36 build, without 'wpaie',
+  associated but the AP dropped it before keys - so setting our RSN element via 'wpaie' was the fix, most likely.)
+  The 3B keeps the firmware supplicant (same command order).
 - v0.34 (I2C sensors BME280/ADS1115/DS3231, MQTT, `hardware/iot-shield` KiCad design): nothing verified on hardware yet;
   MQTT only in QEMU against mosquitto. The shield is a first draft - never manufactured.
 - Not yet verified on hardware: RoboOS messages between two boards (v0.9, tested only with `net loop on`

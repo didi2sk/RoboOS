@@ -340,8 +340,8 @@ SD kartu na SDHOST (pozri časť o SD karte). Na Pi 3B funguje scan aj pripojeni
 (2,4 aj 5 GHz). Firmvér Pi 3B+ nemá zabudovaný WPA supplicant, preto od 0.36 robí WPA2-PSK handshake
 sám RoboOS (`src/wpa.c`: PBKDF2, 4-way a skupinový handshake, AES key unwrap; overené na PC proti
 testovacím vektorom IEEE 802.11 a prístupovému bodu v Pythone, `tools/test_wpa.py`) - `wifi join` potom
-napíše "RoboOS does the WPA2 handshake". Pripojenie na 3B+ ešte nie je potvrdené; siete len s WPA3 (SAE)
-nie sú podporované (zmiešané WPA2/WPA3 áno). Zero 2 W ešte nie je vyskúšaná.
+napíše "RoboOS does the WPA2 handshake" (len informácia). Na Pi 3B+ to **funguje** (pripojenie, DHCP aj ping cez
+WiFi s vytiahnutým káblom). Siete len s WPA3 (SAE) nie sú podporované (zmiešané WPA2/WPA3 áno). Zero 2 W ešte nie je vyskúšaná.
 
 ### Dátum a čas (NTP)
 
