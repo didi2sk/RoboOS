@@ -152,7 +152,7 @@ net_classes = {
     "Contacts": (1.5, 0.5, ["K1_NO", "K1_COM", "K1_NC", "K2_NO", "K2_COM", "K2_NC"]),
     "Power": (1.0, 0.3, ["VIN_RAW", "VIN_F", "VIN", "+5V", "OUT3_D", "OUT4_D"]),
     "Ground": (0.6, 0.25, ["GND"]),
-    "Default": (0.4, 0.25, None),
+    "Default": (0.3, 0.2, None),
 }
 
 

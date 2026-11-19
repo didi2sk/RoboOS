@@ -90,8 +90,8 @@
       },
       {
         "name": "Default",
-        "clearance": 0.25,
-        "track_width": 0.4,
+        "clearance": 0.2,
+        "track_width": 0.3,
         "via_diameter": 0.6,
         "via_drill": 0.3,
         "microvia_diameter": 0.3,
