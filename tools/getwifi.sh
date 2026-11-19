@@ -1,10 +1,10 @@
 #!/bin/sh
 # WiFi firmware for RoboOS ('wifi init'): downloads the Broadcom/Cypress/Synaptics files from
 # Raspberry Pi's firmware-nonfree repository into a FIRMWARE folder - copy it to the SD card root.
-#   tools/getwifi.sh [folder]        (default: sd/FIRMWARE, not part of the git repository)
-# The files are not ours to put into the repository: binary-redist licenses from Cypress /
-# Synaptics, the .txt NVRAM files are GPL-2. You can also take them from Raspberry Pi OS:
-# /lib/firmware/brcm/brcmfmac434*-sdio.* (follow the symlinks).
+#   tools/getwifi.sh [folder]        (default: sd/FIRMWARE)
+# sd/FIRMWARE is already in the repository (unmodified copies + LICENCE.cypress / LICENCE.synaptics,
+# see sd/FIRMWARE/README.txt) - run this only to update them. You can also take them from
+# Raspberry Pi OS: /lib/firmware/brcm/brcmfmac434*-sdio.* (follow the symlinks).
 set -e
 D=${1:-sd/FIRMWARE}
 B=https://raw.githubusercontent.com/RPi-Distro/firmware-nonfree/bookworm/debian/config/brcm80211

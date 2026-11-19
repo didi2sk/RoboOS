@@ -5,7 +5,6 @@ kernel8.elf
 sd.img
 sdk/build/
 sdk/bin/
-sd/FIRMWARE/
 __pycache__/
 *.kicad_prl
 hardware/iot-shield/logs/

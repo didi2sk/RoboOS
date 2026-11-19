@@ -34,7 +34,7 @@ alebo na GPIO47 (Pi 2 v1.2).
    Pri kartách nad 32 GB to vo Windows ide cez Raspberry Pi Imager (*Erase*) alebo `diskpart`.
 2. Skopíruj na ňu celý obsah priečinka `sd/`:
    `bootcode.bin`, `start.elf`, `fixup.dat`, `config.txt`, `kernel8.img`
-   a priečinky `APPS` (ukážkové programy) a `RUN` (autostart).
+   a priečinky `APPS` (ukážkové programy), `RUN` (autostart) a `FIRMWARE` (firmvér WiFi čipu).
 3. Vlož kartu do Raspberry Pi a zapni ho.
 
 ## Programy a autostart
@@ -327,11 +327,13 @@ NTP, programy): **Ethernet, keď je zapojený kábel, inak WiFi** - vytiahnutie 
 WiFi (`[NET] now on WiFi`, nová adresa cez DHCP). `ip` ukáže, ktoré sa používa. Zero 2 W
 Ethernet nemá, takže WiFi je jej sieť.
 
-Čip potrebuje svoj firmvér na karte v `/FIRMWARE` (súbory z Raspberry Pi OS `/lib/firmware/brcm`,
-alebo ich stiahne `tools/getwifi.sh`): `brcmfmac43430-sdio.bin` + `.txt` + `.clm_blob` (Pi 3B; novší
+Čip potrebuje svoj firmvér na karte v `/FIRMWARE` - je v `sd/FIRMWARE`, takže stačí skopírovať
+`sd/` (`tools/getwifi.sh` stiahne čerstvú kópiu): `brcmfmac43430-sdio.bin` + `.txt` + `.clm_blob` (Pi 3B; novší
 firmvér bez `.clm_blob` nezapne rádio),
 `brcmfmac43436-sdio.bin` + `.txt` + `.clm_blob` (Zero 2 W), `brcmfmac43455-sdio.bin` + `.txt` +
-`.clm_blob` (Pi 3B+). V tomto repozitári nie sú (licencie Cypress / Synaptics). WiFi potrebuje
+`.clm_blob` (Pi 3B+). Tieto súbory nie sú súčasťou RoboOS: sú to nezmenené kópie z balíka
+firmware-nonfree od Raspberry Pi pod licenciami Cypress / Synaptics, ktoré ich dovoľujú šíriť na
+použitie s ich čipmi - pozri `sd/FIRMWARE/README.txt` a súbory `LICENCE.*` vedľa nich. WiFi potrebuje
 SD kartu na SDHOST (pozri časť o SD karte). Scan na Pi 3B funguje; pripojenie tiež funguje (vyskúšané na Pi 3B; Pi 3B+ a
 Zero 2 W ešte nie).
 
