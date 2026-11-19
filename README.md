@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.34**
+Current version: **0.35**
 
 ## Supported boards
 
@@ -520,7 +520,10 @@ interval 60
 discovery on
 ```
 
-MQTT here is not encrypted (port 1883, QoS 0) - use it on your own network.
+With a login (Mosquitto `password_file`, Home Assistant's MQTT add-on user): `mqtt user <name> <password>`;
+`mqtt` then shows "user <name>", a wrong login shows "last problem: bad user name or password" /
+"not authorized" and is tried again only once a minute. The password is stored in plain text in
+`/MQTT.TXT` and travels unencrypted, like everything on port 1883 (QoS 0) - use it on your own network.
 
 In programs: BASIC `SENSOR(n)` (0 CPU, 1 temperature, 2 humidity in 0.01 C / %, 3 pressure in Pa,
 4-7 ADC in mV, -999999 = no sensor), `MQTTPUB "topic", items` (like PRINT), `MQTTOK`;

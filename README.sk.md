@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.34**
+Aktuálna verzia: **0.35**
 
 ## Podporované dosky
 
@@ -520,7 +520,10 @@ interval 60
 discovery on
 ```
 
-MQTT tu nie je šifrované (port 1883, QoS 0) - používaj ho vo vlastnej sieti.
+S prihlásením (Mosquitto `password_file`, používateľ MQTT doplnku Home Assistant): `mqtt user <meno> <heslo>`;
+`mqtt` potom ukáže "user <meno>", zlé prihlásenie ukáže "last problem: bad user name or password" /
+"not authorized" a skúša sa znova len raz za minútu. Heslo je v `/MQTT.TXT` ako obyčajný text a po
+sieti ide nešifrovane, ako všetko na porte 1883 (QoS 0) - používaj to vo vlastnej sieti.
 
 V programoch: BASIC `SENSOR(n)` (0 CPU, 1 teplota, 2 vlhkosť v 0,01 C / %, 3 tlak v Pa,
 4-7 ADC v mV, -999999 = senzor nie je), `MQTTPUB "téma", položky` (ako PRINT), `MQTTOK`;
