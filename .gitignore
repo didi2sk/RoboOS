@@ -8,3 +8,4 @@ sdk/bin/
 sd/FIRMWARE/
 __pycache__/
 *.kicad_prl
+hardware/iot-shield/logs/
