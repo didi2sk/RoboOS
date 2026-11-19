@@ -6,7 +6,8 @@ The **hand-solderable** variant of the [IoT shield](../iot-shield/README.md): th
 built at home with an ordinary soldering iron. Same GPIOs as the SMD shield, so the same RoboOS setup
 (`alarm`, MQTT, BASIC, the JSON API) works on both.
 
-**Status: drawn and routed (Freerouting), not manufactured, not tested.** Check everything before ordering.
+**Status: drawn and routed (Freerouting, 300 passes), not manufactured, not tested.** KiCad DRC: every net
+connected, no clearance errors (only silkscreen warnings). Check everything before ordering.
 
 | top | bottom (seen from below) |
 |---|---|

@@ -6,7 +6,8 @@ Verzia [IoT shieldu](../iot-shield/README.sk.md) **na spájkovanie doma**: len v
 obyčajná spájkovačka. GPIO sú rovnaké ako na SMD doske, takže to isté nastavenie RoboOS (`alarm`, MQTT, BASIC,
 JSON API) funguje na oboch.
 
-**Stav: nakreslená a natiahnutá (Freerouting), nevyrobená, neodskúšaná.** Pred objednaním všetko skontroluj.
+**Stav: nakreslená a natiahnutá (Freerouting, 300 priechodov), nevyrobená, neodskúšaná.** KiCad DRC: všetky
+spoje zapojené, žiadne chyby izolačných vzdialeností (len varovania potlače). Pred objednaním všetko skontroluj.
 
 | vrch | spodok (pohľad zdola) |
 |---|---|
