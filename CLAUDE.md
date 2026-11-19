@@ -98,6 +98,10 @@ QEMU limitations: no split transactions / HS hubs (QEMU hubs are FS), no Zero 2 
   over WiFi + ping to the internet (= WiFi data tx/rx confirmed for the first time). (The first v0.36 build, without 'wpaie',
   associated but the AP dropped it before keys - so setting our RSN element via 'wpaie' was the fix, most likely.)
   The 3B keeps the firmware supplicant (same command order).
+  v0.39: owner: WiFi did not come back after a reboot (one join try at boot, before core 1 polls - the AP likely gave
+  up on msg1; and no retry existed at all). Now `j_want` + `j_next_try`: wifi_recv (core 1) calls join_send again 20 s
+  after a try that did not join, 5 s after a lost link, backoff 20 s x2 then 60 s; `wifi leave/forget` stop it; the PMK
+  is reused when ssid + password are the same (pmk_ok). Not verified on hardware yet.
 - v0.34 (I2C sensors BME280/ADS1115/DS3231, MQTT, `hardware/iot-shield` KiCad design): nothing verified on hardware yet;
   MQTT only in QEMU against mosquitto. The shield is a first draft - never manufactured.
 - Not yet verified on hardware: RoboOS messages between two boards (v0.9, tested only with `net loop on`

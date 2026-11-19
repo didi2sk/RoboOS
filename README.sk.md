@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.38**
+Aktuálna verzia: **0.39**
 
 ## Podporované dosky
 
@@ -321,7 +321,7 @@ wifi join "Moja Siet" heslo   meno s medzerami
 wifi                          čip, firmvér, MAC adresa, sieť, signál
 wifi band 2|5|auto            len 2,4 GHz / len 5 GHz / obe (uloží sa; pri sieti na oboch pásmach
                               vyberá firmvér, 'wifi' ukáže kanál, na ktorý sa pripojil)
-wifi leave                    odpojí sa;  wifi forget  zmaže aj /WIFI.TXT
+wifi leave                    odpojí sa (a prestane sa pripájať znova);  wifi forget  zmaže aj /WIFI.TXT
 ```
 
 WPA2 handshake robí firmvér čipu sám. Jedno IP rozhranie nesie všetko (DHCP, web, API, HTTPS,
@@ -340,7 +340,8 @@ SD kartu na SDHOST (pozri časť o SD karte). Na Pi 3B funguje scan aj pripojeni
 (2,4 aj 5 GHz). Firmvér Pi 3B+ nemá zabudovaný WPA supplicant, preto od 0.36 robí WPA2-PSK handshake
 sám RoboOS (`src/wpa.c`: PBKDF2, 4-way a skupinový handshake, AES key unwrap; overené na PC proti
 testovacím vektorom IEEE 802.11 a prístupovému bodu v Pythone, `tools/test_wpa.py`) - `wifi join` potom
-napíše "RoboOS does the WPA2 handshake" (len informácia). Na Pi 3B+ to **funguje** (pripojenie, DHCP aj ping cez
+napíše "RoboOS does the WPA2 handshake" (len informácia). Ak sa pripojenie nepodarí (pri štarte, po strate signálu, po reštarte routera), doska to skúša znova sama:
+po 20 s, potom raz za minútu (`[NET] WiFi: joining <sieť> again`), kým nedáš `wifi leave`. Na Pi 3B+ to **funguje** (pripojenie, DHCP aj ping cez
 WiFi s vytiahnutým káblom). Siete len s WPA3 (SAE) nie sú podporované (zmiešané WPA2/WPA3 áno). Zero 2 W ešte nie je vyskúšaná.
 
 ### Dátum a čas (NTP)
