@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.39**
+Aktuálna verzia: **0.40**
 
 ## Podporované dosky
 
@@ -319,7 +319,7 @@ wifi scan                     nahrá firmvér do čipu a vypíše siete okolo
 wifi join MojaSiet heslo      pripojí sa (uloží sa do /WIFI.TXT: po reštarte sa pripojí sama)
 wifi join "Moja Siet" heslo   meno s medzerami
 wifi                          čip, firmvér, MAC adresa, sieť, signál
-wifi band 2|5|auto            len 2,4 GHz / len 5 GHz / obe (uloží sa; pri sieti na oboch pásmach
+wifi band 2|5|auto            len 2,4 GHz / len 5 GHz / obe (len Pi 3B+ - 3B a Zero 2 W majú len 2,4 GHz; uloží sa; pri sieti na oboch pásmach
                               vyberá firmvér, 'wifi' ukáže kanál, na ktorý sa pripojil)
 wifi leave                    odpojí sa (a prestane sa pripájať znova);  wifi forget  zmaže aj /WIFI.TXT
 ```
