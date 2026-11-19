@@ -26,7 +26,7 @@ Schéma: [iot-shield-schematic.pdf](iot-shield-schematic.pdf) (KiCad 7: `iot-shi
 | Hodiny | DS3231MZ na 0x68 + CR1220 | čas po štarte aj bez siete |
 | 1-Wire | J6 3V3 / DQ / GND, pull-up 4,7 k | GPIO4 (DS18B20 - ovládač v RoboOS ešte nie je) |
 | Qwiic / STEMMA QT | J7, I2C 3,3 V | `i2c scan` |
-| LED | zelená = 5 V, červená = GPIO23 (stav) | `gpio 23 hi` |
+| LED | červená D3 = 5 V (napájanie), červená D4 = GPIO23 (stav); D3 bola zelená, teraz Basic červená (bez poplatku JLCPCB za cievku) | `gpio 23 hi` |
 
 Záťaž (cievka relé, LED pás, ventil) zapoj medzi **V+** a **OUTx**. Vstupy: signál medzi
 **INx** a **COM** (COM je oddelený od zeme Pi).
@@ -39,8 +39,15 @@ Záťaž (cievka relé, LED pás, ventil) zapoj medzi **V+** a **OUTx**. Vstupy:
 - Prúd výstupov: polyfuse 2 A kryje Pi aj záťaže spolu.
 - Analógové vstupy len 0-3,3 V (rozsah ADC je +-4,096 V, ale vstup nesmie byť nad VDD).
 - Konektor J1 (2x20 dutinky, 8,5 mm) ide na **spodnú** stranu, všetko ostatné hore.
-- Čísla LCSC v `bom.csv` sú písané spamäti: **každé over** (hodnota, puzdro, sklad) v zozname
-  súčiastok JLCPCB pred objednaním. Svorkovnice: hocijaké s roztečou 3,5 mm, 2/5/5/6 pinov.
+  Vývody vývodových súčiastok zospodu skráť nakrátko (pod doskou je HDMI a jack Pi, stĺpiky 11 mm).
+- Montážne otvory podľa Pi 58 x 49 mm (H3/H4 boli o 0,5 mm vedľa, opravené pri kontrole pred objednávkou).
+- DS3231 (U4): do BT1 vlož batériu CR1220 - bez nej pin VBAT visí vo vzduchu (datasheet chce batériu alebo GND).
+- 1-Wire (J6, GPIO4 + pull-up 4,7k) je zatiaľ len hardvér: RoboOS ešte nemá ovládač 1-Wire / DS18B20.
+- `bom.csv` je skontrolovaný v BOM nástroji JLCPCB: D2 (SMBJ26CA), F1 (2 A, 30 V), J7 (Qwiic z boku),
+  L1 (5x5 mm), R11-R14 (1206), D3 a U4 (DS3231MZ+TRL C107410; C9867 bol DS1337)
+  sú opravené podľa lcsc.com / jlcpcb.com. **U3 (BME280), C40 a BT1 sa neosadzujú**: do J7 zapoj modul BME280
+  s konektorom Qwiic (doska U3 zohrieva); držiak CR1220 Keystone 3000 prispájkuj ručne (návrh JLCPCB nesedel).
+  J1 (spodok), J2-J6 = vývodové, ručne. Svorkovnice: hocijaké s roztečou 3,5 mm, 2/5/5/6 pinov.
 
 ## Routovanie
 

@@ -1,0 +1,32 @@
+Qty,Value,Refs,Footprint,Note
+1,100u 50V,C1,CP_Radial_D8.0mm_P3.50mm,
+1,47u 16V,C3,CP_Radial_D5.0mm_P2.00mm,
+1,100n,C50,C_Disc_D3.0mm_W1.6mm_P2.50mm,
+1,1N5822,D1,D_DO-201AD_P5.08mm_Vertical_KathodeUp,"reverse polarity protection, Schottky 3 A 40 V, standing"
+1,P6KE30CA,D2,D_DO-15_P3.81mm_Vertical_KathodeUp,"bidirectional TVS 600 W, standoff 25.6 V"
+1,red 3mm (power),D3,LED_D3.0mm,
+1,green 3mm (GPIO23),D4,LED_D3.0mm,
+6,1N4148,D11 D12 D13 D14 D31 D32,D_DO-35_SOD27_P2.54mm_Vertical_KathodeUp,
+2,1N5819,D23 D24,D_DO-41_SOD81_P3.81mm_Vertical_KathodeUp,
+1,PTC 2A 30V+ (RXEF200),F1,Fuse_Bourns_MF-RHT200,"radial PTC, 5.1 mm lead spacing, hold 2 A, >= 30 V (Littelfuse RXEF200, Bourns MF-R200)"
+1,RPi 40-pin socket,J1,PinSocket_2x20_P2.54mm_Vertical,"2x20 female, 8.5 mm (on the bottom side)"
+1,12-24V IN,J2,"TerminalBlock_Phoenix_PT-1,5-2-3.5-H_1x02_P3.50mm_Horizontal",
+1,"INPUTS 1-4, COM",J3,"TerminalBlock_Phoenix_PT-1,5-5-3.5-H_1x05_P3.50mm_Horizontal",
+1,OUT3 OUT4 V+,J4,"TerminalBlock_Phoenix_PT-1,5-3-3.5-H_1x03_P3.50mm_Horizontal",
+1,ANALOG 3V3 A0-A3 GND,J5,"TerminalBlock_Phoenix_PT-1,5-6-3.5-H_1x06_P3.50mm_Horizontal",
+1,RELAY 1: NO COM NC (pin 1 at the bottom),J8,"TerminalBlock_Phoenix_PT-1,5-3-3.5-H_1x03_P3.50mm_Horizontal",
+1,RELAY 2: NO COM NC (pin 1 at the bottom),J9,"TerminalBlock_Phoenix_PT-1,5-3-3.5-H_1x03_P3.50mm_Horizontal",
+1,DS3231 module,J10,PinSocket_1x05_P2.54mm_Vertical,"the small DS3231 'RTC for Raspberry Pi' board: + D C NC - (address 0x68, CR1220 on the module)"
+1,ADS1115 module,J11,PinSocket_1x10_P2.54mm_Vertical,the common blue ADS1115 board: VDD GND SCL SDA ADDR ALRT A0 A1 A2 A3 (ADDR = GND -> 0x48)
+2,SRD-05VDC-SL-C,K1 K2,Relay_SPDT_SANYOU_SRD_Series_Form_C,"5 V coil ~70 mA, contacts 10 A - here max 24 V / 5 A (terminal block, tracks)"
+2,BC337,Q1 Q2,TO-92_Inline_Wide,
+2,IRLZ44N,Q3 Q4,TO-220-3_Vertical,"logic-level N-MOSFET (IRLZ44N, IRLB8721, IRL540N)"
+7,1k,R1 R30 R31 R32 R33 R41 R42,R_Axial_DIN0207_L6.3mm_D2.5mm_P2.54mm_Vertical,
+1,330,R2,R_Axial_DIN0207_L6.3mm_D2.5mm_P2.54mm_Vertical,
+4,3.3k,R11 R12 R13 R14,R_Axial_DIN0207_L6.3mm_D2.5mm_P2.54mm_Vertical,
+5,10k,R15 R16 R17 R18 R50,R_Axial_DIN0207_L6.3mm_D2.5mm_P2.54mm_Vertical,
+2,100,R23 R24,R_Axial_DIN0207_L6.3mm_D2.5mm_P2.54mm_Vertical,
+2,100k,R27 R28,R_Axial_DIN0207_L6.3mm_D2.5mm_P2.54mm_Vertical,
+1,button 6x6,SW1,SW_PUSH_6mm,
+1,R-78B5.0-2.0,U1,Converter_DCDC_RECOM_R-78B-2.0_THT,"5 V 2 A switching 78xx replacement (RECOM R-78B5.0-2.0, TRACO TSR 2-2450, Mornsun K7805-2000R3)"
+4,PC817,U11 U12 U13 U14,DIP-4_W7.62mm,

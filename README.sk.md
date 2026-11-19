@@ -377,7 +377,7 @@ login robo MojeHeslo1         treba, keď sú používatelia ('users add'); "vie
 
 Párovanie zatiaľ nie je: spojenie nie je šifrované, používaj ho nablízku (heslo napísané tam ide
 vzduchom čitateľne). Kým je Bluetooth zapnutý, UART konzola beží na mini UARTe - rovnaké piny 8/10,
-rovnakých 115200; `bt off` ju vráti. Scan funguje na Pi 3B (19 zariadení na prvý pokus); časť s mobilom
+rovnakých 115200; `bt off` ju vráti. Scan funguje na Pi 3B (19 zariadení na prvý pokus) aj na Zero 2 W (12 zariadení); časť s mobilom
 je vyskúšaná v QEMU (`tools/qemu_bt_test.py` hrá radič aj mobil). Ďalej: Bluetooth klávesnica.
 
 ### Dátum a čas (NTP)
