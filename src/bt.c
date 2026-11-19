@@ -187,6 +187,13 @@ static const char *maker_name(int id)
     case 0x000F: return "Broadcom";
     case 0x0087: return "Garmin";
     case 0x0499: return "Ruuvi";
+    case 0x00C4: return "LG";
+    case 0x000D: return "TI";
+    case 0x0171: return "Amazon";
+    case 0x0002: return "Intel";
+    case 0x001D: return "Qualcomm";
+    case 0x0046: return "MediaTek";
+    case 0x0822: return "Adafruit";
     }
     return 0;
 }

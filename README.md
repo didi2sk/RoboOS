@@ -358,8 +358,9 @@ The list shows the address, signal, name and maker (Apple, Samsung, Xiaomi ...).
 LYWSD03MMC thermometers with the free ATC / pvvx firmware also show their temperature,
 humidity and battery. The chip needs its firmware from `/FIRMWARE/*.hcd` (in `sd/FIRMWARE`).
 While Bluetooth is on, the UART console runs on the mini UART - same pins 8/10, same 115200,
-nothing to change on the cable; `bt off` gives it back. Tested only in QEMU with a fake
-Bluetooth controller (`tools/qemu_bt_test.py`); the Zero 2 W BT_ON pin (GPIO42) is a guess.
+nothing to change on the cable; `bt off` gives it back. **Works on the Pi 3B** (19 devices found on
+the first try); the 3B+ and the Zero 2 W are not tried yet (the Zero 2 W BT_ON pin, GPIO42, is a guess).
+QEMU test with a fake Bluetooth controller: `tools/qemu_bt_test.py`.
 Next steps: a BLE device the phone can connect to (read sensors, switch pins).
 
 ### Date and time (NTP)

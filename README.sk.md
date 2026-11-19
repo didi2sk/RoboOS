@@ -358,8 +358,9 @@ Zoznam ukáže adresu, signál, meno a výrobcu (Apple, Samsung, Xiaomi ...). Te
 LYWSD03MMC s voľným firmvérom ATC / pvvx ukážu aj teplotu, vlhkosť a batériu. Čip potrebuje
 firmvér z `/FIRMWARE/*.hcd` (v `sd/FIRMWARE`). Kým je Bluetooth zapnutý, UART konzola beží na
 mini UARTe - rovnaké piny 8/10, rovnakých 115200, na kábli netreba nič meniť; `bt off` ju vráti.
-Vyskúšané len v QEMU s falošným Bluetooth radičom (`tools/qemu_bt_test.py`); pin BT_ON na Zero 2 W
-(GPIO42) je odhad. Ďalej: BLE zariadenie, na ktoré sa pripojí mobil (čítať senzory, prepínať piny).
+**Na Pi 3B funguje** (na prvý pokus našiel 19 zariadení);
+3B+ a Zero 2 W ešte nie sú vyskúšané (pin BT_ON na Zero 2 W, GPIO42, je odhad). Test v QEMU s falošným
+Bluetooth radičom: `tools/qemu_bt_test.py`. Ďalej: BLE zariadenie, na ktoré sa pripojí mobil (čítať senzory, prepínať piny).
 
 ### Dátum a čas (NTP)
 
