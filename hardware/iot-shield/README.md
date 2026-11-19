@@ -5,10 +5,12 @@
 A board for the 40-pin header of a Raspberry Pi 3 (HAT size, 65 x 56.5 mm) that turns
 it into a small IoT / automation controller for RoboOS.
 
-**Status: drawn, not manufactured, not tested. The board is placed but NOT routed yet**
-(see "Routing" below). Check everything before ordering.
+**Status: drawn and routed (Freerouting), not manufactured, not tested.** KiCad DRC: no clearance
+errors, every net connected (only silkscreen warnings). Check everything before ordering.
 
-![top side](board-top.png)
+| top | bottom (seen from below) |
+|---|---|
+| ![top side](board-top.png) | ![bottom side](board-bottom.png) |
 
 Schematic: [iot-shield-schematic.pdf](iot-shield-schematic.pdf) (KiCad 7: `iot-shield.kicad_sch`, `iot-shield.kicad_pcb`).
 
@@ -42,13 +44,19 @@ signal between **INx** and **COM** (COM is isolated from the Pi ground).
 
 ## Routing
 
-`gen_pcb.py` places the parts and puts GND planes on both layers; the tracks are not drawn
-yet. Two ways:
-1. by hand in KiCad 7 (open `iot-shield.kicad_pcb`, the ratsnest shows every connection), or
-2. Freerouting: `./make.sh /path/to/freerouting.jar` exports `build/board.dsn`, runs
-   Freerouting and reads the result back (`route.py`), then fills the planes and writes `build/drc.txt`.
+The tracks were made by [Freerouting](https://github.com/freerouting/freerouting) 1.9.0:
+`./make.sh /path/to/freerouting.jar` places the parts (`gen_pcb.py`), exports `build/board.dsn`,
+runs Freerouting (under `xvfb-run` when there is no screen; 250 passes take ~15 min), reads the
+session back (`route.py` has its own SES reader - KiCad 7's needs the editor), adds the GND planes
+on both sides, fills them and writes `build/drc.txt`. GND is routed as tracks too, so the board
+works even where the planes break into islands.
 
-Power nets (VIN, +5V, GND, SW, OUTx) are in the net class "Power" (0.8 mm tracks).
+Net classes: "Power" (VIN, +5V, SW, OUTx) 0.8 mm, "Ground" 0.4 mm, signals 0.25 mm; vias 0.8/0.4
+and 0.6/0.3 mm. Fits JLCPCB's standard 2-layer process.
+
+Ordering: `iot-shield-gerbers.zip` (Gerbers + drill) for the bare board; for assembly also
+`bom.csv` and `cpl.csv` (check the part rotations in JLCPCB's preview). J1 (40-pin socket) goes
+on the bottom side - solder it yourself or order bottom assembly.
 
 ## Rebuilding
 
@@ -60,5 +68,4 @@ sudo apt install kicad kicad-symbols kicad-footprints    # KiCad 7
 ```
 
 `check_net.py` compares the schematic's netlist with `circuit.py` (it must say "48 of 48").
-Change `circuit.py`, run `./make.sh`, then in KiCad use "Update PCB from Schematic" if you
-already routed by hand (the generator would place everything again).
+`./make.sh` without the jar rebuilds an UNROUTED board - give it the jar to route again.

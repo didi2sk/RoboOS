@@ -133,7 +133,8 @@ blocks = {
 
 # net classes for the board: track width, clearance
 net_classes = {
-    "Power": (0.8, 0.25, ["VIN_RAW", "VIN_F", "VIN", "GND", "+5V", "SW", "OUT1_D", "OUT2_D", "OUT3_D", "OUT4_D"]),
+    "Power": (0.8, 0.25, ["VIN_RAW", "VIN_F", "VIN", "+5V", "SW", "OUT1_D", "OUT2_D", "OUT3_D", "OUT4_D"]),
+    "Ground": (0.4, 0.2, ["GND"]),            # routed as tracks too, so it does not depend on the planes
     "Default": (0.25, 0.2, None),
 }
 

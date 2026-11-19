@@ -5,10 +5,12 @@
 Doska na 40-pinový konektor Raspberry Pi 3 (veľkosť HAT, 65 x 56,5 mm), z ktorej je malý
 IoT / automatizačný ovládač pre RoboOS.
 
-**Stav: nakreslená, nevyrobená, neotestovaná. Súčiastky sú rozmiestnené, ale spoje ešte NIE sú
-natiahnuté** (pozri "Routovanie"). Pred objednaním všetko skontroluj.
+**Stav: nakreslená a natiahnutá (Freerouting), nevyrobená, neotestovaná.** KiCad DRC: žiadne chyby
+vzdialeností, všetky siete spojené (len varovania potlače). Pred objednaním všetko skontroluj.
 
-![vrchná strana](board-top.png)
+| vrch | spodok (pohľad zdola) |
+|---|---|
+| ![vrchná strana](board-top.png) | ![spodná strana](board-bottom.png) |
 
 Schéma: [iot-shield-schematic.pdf](iot-shield-schematic.pdf) (KiCad 7: `iot-shield.kicad_sch`, `iot-shield.kicad_pcb`).
 
@@ -42,12 +44,19 @@ Záťaž (cievka relé, LED pás, ventil) zapoj medzi **V+** a **OUTx**. Vstupy:
 
 ## Routovanie
 
-`gen_pcb.py` rozmiestni súčiastky a dá GND plochy na obe strany; spoje ešte nie sú nakreslené. Dve cesty:
-1. ručne v KiCade 7 (otvor `iot-shield.kicad_pcb`, "gumičky" ukazujú každý spoj), alebo
-2. Freerouting: `./make.sh /cesta/k/freerouting.jar` vyexportuje `build/board.dsn`, spustí
-   Freerouting a načíta výsledok späť (`route.py`), potom vyleje plochy a zapíše `build/drc.txt`.
+Spoje natiahol [Freerouting](https://github.com/freerouting/freerouting) 1.9.0:
+`./make.sh /cesta/k/freerouting.jar` rozmiestni súčiastky (`gen_pcb.py`), vyexportuje `build/board.dsn`,
+spustí Freerouting (bez obrazovky cez `xvfb-run`; 250 prechodov trvá asi 15 min), načíta výsledok
+(`route.py` má vlastnú čítačku SES - tá v KiCade 7 potrebuje editor), pridá GND plochy na obe strany,
+vyleje ich a zapíše `build/drc.txt`. GND je natiahnutá aj spojmi, takže doska funguje, aj keď sa
+plochy rozpadnú na ostrovy.
 
-Napájacie siete (VIN, +5V, GND, SW, OUTx) sú v triede "Power" (spoje 0,8 mm).
+Triedy sietí: "Power" (VIN, +5V, SW, OUTx) 0,8 mm, "Ground" 0,4 mm, signály 0,25 mm; prechody 0,8/0,4
+a 0,6/0,3 mm. Vyhovuje štandardnému 2-vrstvovému procesu JLCPCB.
+
+Objednávka: `iot-shield-gerbers.zip` (Gerbery + vŕtanie) pre holú dosku; pre osadenie aj
+`bom.csv` a `cpl.csv` (otočenie súčiastok skontroluj v náhľade JLCPCB). J1 (40-pinová dutinka) je
+na spodnej strane - prispájkuj ju sám alebo objednaj osadenie zospodu.
 
 ## Opätovné vygenerovanie
 
@@ -59,3 +68,4 @@ sudo apt install kicad kicad-symbols kicad-footprints    # KiCad 7
 ```
 
 `check_net.py` porovná netlist schémy s `circuit.py` (musí napísať "48 of 48").
+`./make.sh` bez jar súboru vyrobí dosku BEZ spojov - na nové routovanie mu daj jar.
