@@ -119,7 +119,8 @@ static struct { u16 op; u8 n; u8 p[34]; } cq[CQ];
 static int cq_h, cq_t, credits = 1;
 static struct { u16 op; u8 st; u8 ret[8]; u32 seq; } done[8];   /* the last Command Completes (for a later 'wait') */
 static u32 done_seq;
-static int acl_credits = 4, acl_len = 27;
+static int acl_credits = 4, acl_len = 27;   /* LE pool (or the shared pool when the chip has none for LE) */
+static int br_credits = 4, le_pool;          /* BR/EDR pool; le_pool = the chip has separate LE buffers */
 
 /* io lock held */
 static int hci_queue(u16 op, const void *p, int n)
@@ -134,14 +135,16 @@ static int hci_queue(u16 op, const void *p, int n)
 
 /* ACL out (one L2CAP frame, fits one packet: ATT MTU 23) */
 #define AQ 16
-static struct { u8 n; u8 d[32]; } aq[AQ];
+static struct { u8 n; u8 br; u16 h; u8 d[32]; } aq[AQ];
 static int aq_h, aq_t;
 static int conn = -1;                      /* connection handle of the phone, -1 = none */
+static int kb_h = -1;                      /* connection handle of the classic keyboard, -1 = none */
 
-static int acl_queue(u16 cid, const u8 *d, int n)
+static int acl_queue_h(int h, int br, u16 cid, const u8 *d, int n)
 {
     int nx = (aq_h + 1) % AQ;
-    if (nx == aq_t || n + 4 > 32 || conn < 0) return -1;
+    if (nx == aq_t || n + 4 > 32 || h < 0) return -1;
+    aq[aq_h].h = (u16)h; aq[aq_h].br = (u8)br;
     u8 *b = aq[aq_h].d;
     b[0] = (u8)n; b[1] = (u8)(n >> 8); b[2] = (u8)cid; b[3] = (u8)(cid >> 8);
     memcpy(b + 4, d, (size_t)n);
@@ -149,6 +152,8 @@ static int acl_queue(u16 cid, const u8 *d, int n)
     aq_h = nx;
     return 0;
 }
+
+static int acl_queue(u16 cid, const u8 *d, int n) { return acl_queue_h(conn, 0, cid, d, n); }
 
 /* ======================= the devices around (scan) ======================= */
 
@@ -489,6 +494,278 @@ static void att(const u8 *p, int n)
 
 /* ======================= core 1: the UART, events, ACL ======================= */
 
+/* ======================= classic Bluetooth keyboard (HID host, core 1) ======================= */
+/*
+ * Pairing ('bt pair'): Create Connection -> Authentication Requested. The controller does the crypto;
+ * we answer its questions: Link Key Request (a stored key or none), IO Capability Request (we are
+ * "display only", so a keyboard gets Passkey Entry: we show 6 digits, they are typed on the keyboard),
+ * PIN Code Request (old keyboards: we show a PIN), Link Key Notification (kept, saved by core 0 to
+ * /BTKEYS.TXT). Then encryption, L2CAP channels PSM 0x11 (HID control) + 0x13 (HID interrupt),
+ * SET_PROTOCOL boot, and every input report on the interrupt channel goes to kbd.c like a USB one.
+ * A paired keyboard connects by itself when a key is pressed (page scan is on); we accept it,
+ * answer its Link Key Request and its L2CAP connection requests.
+ */
+#define NKEYS 4
+static struct { u8 addr[6]; u8 key[16]; u8 used; } keys[NKEYS];
+static volatile int keys_dirty;
+static u8 kb_addr[6], kb_target[6];
+static int kb_want;                        /* 1 = 'bt pair' / reconnect asked for kb_target */
+static int kb_we_called, kb_quiet;         /* we created the link; quiet = a silent reconnect try */
+static volatile int kb_state;              /* 0 none, 1 connecting, 2 linked, 3 encrypted, 4 ready, -1 failed */
+static volatile u32 kb_reports;
+static char kb_msg[80];
+static u64 kb_open_at;
+static struct l2ch { u16 psm, lcid, rcid; u8 used, cfg_in, cfg_out, open; } ch[2];   /* 0 control, 1 interrupt */
+static u8 sig_id = 1;
+
+static void kb_say(const char *m)
+{
+    con_color(COL_CYAN); kprintf("\n[BT] %s\n", m); con_color(COL_DEFAULT);
+    int i = 0; for (; m[i] && i < 79; i++) kb_msg[i] = m[i]; kb_msg[i] = 0;
+}
+
+static void kb_say_code(const char *code)             /* "on the keyboard type <code> and press Enter" */
+{
+    char m[80] = "on the keyboard type  ";
+    int k = 22;
+    for (int i = 0; code[i] && k < 40; i++) m[k++] = code[i];
+    for (const char *t = "  and press Enter"; *t; t++) m[k++] = *t;
+    m[k] = 0;
+    kb_say(m);
+}
+
+static int key_find(const u8 *a)
+{
+    for (int i = 0; i < NKEYS; i++) if (keys[i].used && !memcmp_n(keys[i].addr, a, 6)) return i;
+    return -1;
+}
+
+static void sig_send(u8 code, const u8 *d, int n)        /* L2CAP signaling, CID 1 */
+{
+    u8 b[28];
+    b[0] = code; b[1] = sig_id++; if (!sig_id) sig_id = 1;
+    b[2] = (u8)n; b[3] = 0;
+    memcpy(b + 4, d, (size_t)n);
+    acl_queue_h(kb_h, 1, 1, b, n + 4);
+}
+
+static void sig_answer(u8 code, u8 id, const u8 *d, int n)
+{
+    u8 b[28];
+    b[0] = code; b[1] = id; b[2] = (u8)n; b[3] = 0;
+    memcpy(b + 4, d, (size_t)n);
+    acl_queue_h(kb_h, 1, 1, b, n + 4);
+}
+
+static void ch_config(struct l2ch *c)                   /* our Configuration Request: MTU 672 */
+{
+    u8 d[8] = { (u8)c->rcid, (u8)(c->rcid >> 8), 0, 0, 0x01, 2, 0xA0, 0x02 };
+    sig_send(0x04, d, 8);
+}
+
+static void ch_connect(int i)
+{
+    struct l2ch *c = &ch[i];
+    memset(c, 0, sizeof(*c));
+    c->used = 1; c->psm = i ? 0x13 : 0x11; c->lcid = (u16)(0x40 + i);
+    u8 d[4] = { (u8)c->psm, 0, (u8)c->lcid, 0 };
+    sig_send(0x02, d, 4);
+}
+
+static void kb_reset(void)
+{
+    kb_h = -1; memset(ch, 0, sizeof(ch)); kb_open_at = 0; kb_we_called = 0;
+}
+
+static void ch_check(void)
+{
+    if (ch[0].open && !ch[1].used && kb_we_called) ch_connect(1);
+    if (ch[0].open && ch[1].open && kb_state != 4) {
+        u8 sp = 0x70;                                  /* HIDP SET_PROTOCOL boot */
+        acl_queue_h(kb_h, 1, ch[0].rcid, &sp, 1);
+        kb_state = 4;
+        char a[18], m[64] = "keyboard ready: ";
+        mac_str(a, kb_addr);
+        int k = 16; for (int i = 0; a[i]; i++) m[k++] = a[i]; m[k] = 0;
+        kb_say(m);
+    }
+}
+
+static void kb_l2cap(u16 cid, const u8 *d, int n)
+{
+    if (cid == 1) {                                    /* signaling: possibly several commands */
+        while (n >= 4) {
+            u8 code = d[0], id = d[1];
+            int l = d[2] | d[3] << 8;
+            const u8 *p = d + 4;
+            if (l > n - 4) return;
+            if (code == 0x02 && l >= 4) {              /* Connection Request: the keyboard opens HID channels */
+                u16 psm = (u16)(p[0] | p[1] << 8), scid = (u16)(p[2] | p[3] << 8);
+                int i = psm == 0x11 ? 0 : psm == 0x13 ? 1 : -1;
+                u8 r[8] = { 0, 0, p[2], p[3], 2, 0, 0, 0 };     /* default: PSM not supported */
+                if (i >= 0) {
+                    struct l2ch *c = &ch[i];
+                    memset(c, 0, sizeof(*c));
+                    c->used = 1; c->psm = psm; c->lcid = (u16)(0x40 + i); c->rcid = scid;
+                    r[0] = (u8)c->lcid; r[4] = 0;
+                    sig_answer(0x03, id, r, 8);
+                    ch_config(c);
+                } else sig_answer(0x03, id, r, 8);
+            } else if (code == 0x03 && l >= 8) {       /* Connection Response */
+                u16 dcid = (u16)(p[0] | p[1] << 8), scid = (u16)(p[2] | p[3] << 8), res = (u16)(p[4] | p[5] << 8);
+                for (int i = 0; i < 2; i++) if (ch[i].used && ch[i].lcid == scid) {
+                    if (res == 0) { ch[i].rcid = dcid; ch_config(&ch[i]); }
+                    else if (res != 1) { ch[i].used = 0; kb_say("the keyboard refused the HID channel"); }
+                }
+            } else if (code == 0x04 && l >= 4) {       /* Configuration Request: accept what it asks */
+                u16 dcid = (u16)(p[0] | p[1] << 8);
+                for (int i = 0; i < 2; i++) if (ch[i].used && ch[i].lcid == dcid) {
+                    u8 r[6] = { (u8)ch[i].rcid, (u8)(ch[i].rcid >> 8), 0, 0, 0, 0 };
+                    sig_answer(0x05, id, r, 6);
+                    ch[i].cfg_in = 1;
+                    if (ch[i].cfg_out) ch[i].open = 1;
+                }
+                ch_check();
+            } else if (code == 0x05 && l >= 6) {       /* Configuration Response */
+                u16 scid = (u16)(p[0] | p[1] << 8), res = (u16)(p[4] | p[5] << 8);
+                for (int i = 0; i < 2; i++) if (ch[i].used && ch[i].lcid == scid && res == 0) {
+                    ch[i].cfg_out = 1;
+                    if (ch[i].cfg_in) ch[i].open = 1;
+                }
+                ch_check();
+            } else if (code == 0x06 && l >= 4) {       /* Disconnection Request */
+                u16 dcid = (u16)(p[0] | p[1] << 8);
+                for (int i = 0; i < 2; i++) if (ch[i].lcid == dcid) ch[i].used = ch[i].open = 0;
+                sig_answer(0x07, id, p, 4);
+                if (kb_state == 4) kb_state = 3;
+            } else if (code == 0x08) {                 /* Echo Request */
+                sig_answer(0x09, id, p, l > 20 ? 20 : l);
+            } else if (code == 0x0A && l >= 2) {       /* Information Request: not supported */
+                u8 r[4] = { p[0], p[1], 1, 0 };
+                sig_answer(0x0B, id, r, 4);
+            } else if (code != 0x07 && code != 0x09 && code != 0x0B && code != 0x01) {
+                u8 r[2] = { 0, 0 };                    /* Command Reject: not understood */
+                sig_answer(0x01, id, r, 2);
+            }
+            d += 4 + l; n -= 4 + l;
+        }
+        return;
+    }
+    if (ch[1].used && cid == ch[1].lcid && n >= 9 && d[0] == 0xA1) {   /* DATA input report */
+        const u8 *r = n >= 10 && d[1] == 0x01 ? d + 2 : d + 1;          /* report mode (ID 1) / boot mode */
+        if (n == 9 || (n >= 10 && d[1] == 0x01)) { kbd_bt_report(r); kb_reports++; }
+    }
+}
+
+static void kb_create(const u8 *a)                      /* io lock held (core 0) or core 1 */
+{
+    u8 p[13];
+    memcpy(p, a, 6);
+    p[6] = 0x18; p[7] = 0xCC;                          /* DM1 DH1 DM3 DH3 DM5 DH5 */
+    p[8] = 0x01; p[9] = 0; p[10] = 0; p[11] = 0;       /* page scan R1, clock offset unknown */
+    p[12] = 0x01;                                      /* allow role switch */
+    memcpy(kb_target, a, 6);
+    kb_we_called = 1; kb_state = 1;
+    hci_queue(0x0405, p, 13);
+}
+
+static void kb_tick(u64 now)
+{
+    if (kb_open_at && now >= kb_open_at) {             /* encrypted, the keyboard opened nothing: we do */
+        kb_open_at = 0;
+        if (kb_h >= 0 && !ch[0].used) { kb_we_called = 1; ch_connect(0); }
+    }
+}
+
+/* the BR/EDR part of hci_event; returns 1 when the event was ours */
+static int kb_event(const u8 *e)
+{
+    const u8 *p = e + 2;
+    switch (e[0]) {
+    case 0x03:                                         /* Connection Complete */
+        if (p[9] != 1) return 1;                       /* link type: not ACL */
+        if (p[0]) {
+            if (!kb_quiet) { char a[18]; mac_str(a, p + 3); kprintf("\n[BT] could not connect to %s (error 0x%02x)\n", a, p[0]); }
+            kb_state = kb_quiet ? 0 : -1; kb_quiet = 0; kb_we_called = 0;
+            return 1;
+        }
+        kb_reset();
+        kb_h = (p[1] | p[2] << 8) & 0xFFF;
+        kb_we_called = !memcmp_n(p + 3, kb_target, 6) && kb_state == 1;
+        memcpy(kb_addr, p + 3, 6);
+        kb_state = 2; kb_quiet = 0;
+        { u8 h[2] = { p[1], p[2] }; hci_queue(0x0411, h, 2); }   /* Authentication Requested */
+        return 1;
+    case 0x04: {                                       /* Connection Request (a paired keyboard calls) */
+        u8 r[7];
+        memcpy(r, p, 6);
+        if (p[9] == 1 && kb_h < 0 && (key_find(p) >= 0 || (kb_want && !memcmp_n(p, kb_target, 6)))) {
+            r[6] = 0x00;                               /* accept, become master */
+            hci_queue(0x0409, r, 7);
+        } else { r[6] = 0x0F; hci_queue(0x040A, r, 7); }   /* reject: unknown device */
+        return 1;
+    }
+    case 0x06:                                         /* Authentication Complete */
+        if (((p[1] | p[2] << 8) & 0xFFF) != kb_h) return 1;
+        if (p[0]) { kprintf("\n[BT] pairing failed (error 0x%02x)\n", p[0]); kb_state = -1; u8 d[3] = { p[1], p[2], 0x05 }; hci_queue(0x0406, d, 3); return 1; }
+        { u8 d[3] = { p[1], p[2], 1 }; hci_queue(0x0413, d, 3); }   /* Set Connection Encryption */
+        return 1;
+    case 0x08:                                         /* Encryption Change */
+        if (((p[1] | p[2] << 8) & 0xFFF) != kb_h) return 1;
+        if (p[0] || !p[3]) { kprintf("\n[BT] encryption failed (error 0x%02x)\n", p[0]); kb_state = -1; return 1; }
+        kb_state = 3;
+        if (kb_we_called && !ch[0].used) ch_connect(0);
+        else if (!ch[0].used) kb_open_at = timer_us() + 1500000;
+        return 1;
+    case 0x16: {                                       /* PIN Code Request (keyboards without SSP) */
+        u8 r[23];
+        memset(r, 0, sizeof(r));
+        memcpy(r, p, 6);
+        u32 v = 0; rng_bytes(&v, 4); v = v % 9000 + 1000;
+        r[6] = 4;
+        for (int i = 3; i >= 0; i--) { r[7 + i] = (u8)('0' + v % 10); v /= 10; }
+        hci_queue(0x040D, r, 23);
+        char c[5] = { (char)r[7], (char)r[8], (char)r[9], (char)r[10], 0 };
+        kb_say_code(c);
+        return 1;
+    }
+    case 0x17: {                                       /* Link Key Request */
+        int k = key_find(p);
+        if (k >= 0) { u8 r[22]; memcpy(r, p, 6); memcpy(r + 6, keys[k].key, 16); hci_queue(0x040B, r, 22); }
+        else { u8 r[6]; memcpy(r, p, 6); hci_queue(0x040C, r, 6); }
+        return 1;
+    }
+    case 0x18: {                                       /* Link Key Notification: remember it */
+        int k = key_find(p);
+        if (k < 0) for (int i = 0; i < NKEYS && k < 0; i++) if (!keys[i].used) k = i;
+        if (k < 0) k = 0;
+        memcpy(keys[k].addr, p, 6); memcpy(keys[k].key, p + 6, 16); keys[k].used = 1;
+        keys_dirty = 1;
+        return 1;
+    }
+    case 0x31: {                                       /* IO Capability Request */
+        u8 r[9];
+        memcpy(r, p, 6);
+        r[6] = 0x00; r[7] = 0x00; r[8] = 0x05;         /* display only, no OOB, general bonding + MITM */
+        hci_queue(0x042B, r, 9);
+        return 1;
+    }
+    case 0x33: { u8 r[6]; memcpy(r, p, 6); hci_queue(0x042C, r, 6); return 1; }   /* User Confirmation: yes */
+    case 0x34: { u8 r[6]; memcpy(r, p, 6); hci_queue(0x042F, r, 6); return 1; }   /* Passkey Request: we have no keys */
+    case 0x3B: {                                       /* User Passkey Notification */
+        u32 v = (u32)(p[6] | p[7] << 8 | p[8] << 16 | (u32)p[9] << 24);
+        char c[7];
+        for (int i = 5; i >= 0; i--) { c[i] = (char)('0' + v % 10); v /= 10; }
+        c[6] = 0;
+        kb_say_code(c);
+        return 1;
+    }
+    case 0x36: case 0x32: case 0x3C:                   /* Simple Pairing Complete, IO Capability Response, keypress */
+        return 1;
+    }
+    return 0;
+}
+
 static u8 pk[1100];
 static int pk_n, pk_need;
 static u64 scan_restart, adv_again;
@@ -508,15 +785,31 @@ static void hci_event(const u8 *e)              /* e[0] code, e[1] length, e + 2
     }
     case 0x0F:                                     /* Command Status */
         credits = e[3];
+        if (e[2] && (e[4] | e[5] << 8) == 0x0405) {   /* Create Connection refused */
+            if (!kb_quiet) kprintf("\n[BT] could not start the connection (error 0x%02x)\n", e[2]);
+            kb_state = kb_quiet ? 0 : -1; kb_quiet = 0;
+        }
         return;
     case 0x13:                                     /* Number Of Completed Packets */
-        for (int i = 0; i < e[2]; i++) acl_credits += e[3 + 4 * i + 2] | e[3 + 4 * i + 3] << 8;
+        for (int i = 0; i < e[2]; i++) {
+            int h = (e[3 + 4 * i] | e[3 + 4 * i + 1] << 8) & 0xFFF, c = e[3 + 4 * i + 2] | e[3 + 4 * i + 3] << 8;
+            if (le_pool && h == kb_h) br_credits += c; else acl_credits += c;
+        }
         return;
     case 0x05:                                     /* Disconnection Complete */
+        if (((e[3] | e[4] << 8) & 0xFFF) == kb_h && kb_h >= 0) {
+            if (kb_state == 4) kb_say("keyboard disconnected (it connects again when you press a key)");
+            kb_reset(); if (kb_state > 0) kb_state = 0;
+            return;
+        }
         if (conn >= 0) { con_color(COL_CYAN); kprintf("\n[BT] phone disconnected\n"); con_color(COL_DEFAULT); }
         conn = -1; cccd[0] = 0; session_role = 0; session_user[0] = 0;
         aq_h = aq_t = 0; tx_h = tx_t = 0;
         adv_again = timer_us() + 200000;
+        return;
+    case 0x03: case 0x04: case 0x06: case 0x08: case 0x16: case 0x17: case 0x18:
+    case 0x31: case 0x32: case 0x33: case 0x34: case 0x36: case 0x3B: case 0x3C:
+        kb_event(e);
         return;
     case 0x02: case 0x22: case 0x2F:               /* classic inquiry results */
         inquiry_result(e);
@@ -544,6 +837,7 @@ static void hci_acl(const u8 *p, int n)        /* p = handle(2) len(2) data */
     int l2 = p[4] | p[5] << 8, cid = p[6] | p[7] << 8;
     const u8 *d = p + 8;
     if (l2 > n - 8) return;
+    if (((p[0] | p[1] << 8) & 0xFFF) == kb_h && kb_h >= 0) { kb_l2cap((u16)cid, d, l2); return; }
     if (cid == 4) att(d, l2);
     else if (cid == 6 && l2 >= 1 && d[0] == 0x01) {   /* SMP Pairing Request: not supported (no pairing yet) */
         u8 f[2] = { 0x05, 0x05 };
@@ -568,10 +862,10 @@ static void feed(u8 b)
 
 static void put_cmd(u16 op, const u8 *p, int n) { send_cmd(op, p, n); }
 
-static void put_acl(const u8 *d, int n)
+static void put_acl(int h, int br, const u8 *d, int n)
 {
     uart_bt_putc(2);
-    uart_bt_putc((u8)conn); uart_bt_putc((u8)(conn >> 8));   /* PB 00 BC 00 */
+    uart_bt_putc((u8)h); uart_bt_putc((u8)((h >> 8) | (br ? 0x20 : 0)));   /* PB 00 (LE) / 10 (BR/EDR start), BC 00 */
     uart_bt_putc((u8)n); uart_bt_putc((u8)(n >> 8));
     for (int i = 0; i < n; i++) uart_bt_putc(d[i]);
 }
@@ -597,11 +891,72 @@ void bt_poll(void)
         while (k < 23 && tx_t != tx_h) { nt[k++] = (u8)tx_ring[tx_t]; tx_t = (tx_t + 1) % (int)sizeof(tx_ring); }
         acl_queue(4, nt, k);
     }
-    if (conn < 0) aq_t = aq_h;
-    while (aq_t != aq_h && acl_credits > 0 && conn >= 0) { put_acl(aq[aq_t].d, aq[aq_t].n); acl_credits--; aq_t = (aq_t + 1) % AQ; }
+    while (aq_t != aq_h) {
+        int h = aq[aq_t].h, br = aq[aq_t].br;
+        if (h != conn && h != kb_h) { aq_t = (aq_t + 1) % AQ; continue; }   /* that link is gone */
+        int *cr = (br && le_pool) ? &br_credits : &acl_credits;
+        if (*cr <= 0) break;
+        put_acl(h, br, aq[aq_t].d, aq[aq_t].n);
+        (*cr)--;
+        aq_t = (aq_t + 1) % AQ;
+    }
+    kb_tick(now);
 }
 
 /* ======================= start / stop (core 0) ======================= */
+
+/* /BTKEYS.TXT: one paired device per line, "aa:bb:cc:dd:ee:ff <32 hex digits of the link key>" (core 0) */
+static int hexv(char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1; }
+
+static int parse_mac(const char *t, u8 *a)                /* "aa:bb:..." -> HCI order (little endian) */
+{
+    for (int k = 0; k < 6; k++) {
+        int h = hexv(t[3 * k]), l = hexv(t[3 * k + 1]);
+        if (h < 0 || l < 0 || (k < 5 && t[3 * k + 2] != ':')) return -1;
+        a[5 - k] = (u8)(h << 4 | l);
+    }
+    return 0;
+}
+
+static void keys_load(void)
+{
+    memset(keys, 0, sizeof(keys));
+    struct fat_file f;
+    static char b[512];
+    if (!fat_mounted() || fat_open("/BTKEYS.TXT", &f) || f.is_dir) return;
+    int n = fat_read(&f, b, sizeof(b) - 1), k = 0;
+    if (n <= 0) return;
+    b[n] = 0;
+    for (char *l = b; *l && k < NKEYS; ) {
+        char *e = l; while (*e && *e != '\n') e++;
+        if (e - l >= 17 + 1 + 32 && !parse_mac(l, keys[k].addr)) {
+            int ok = 1;
+            for (int i = 0; i < 16; i++) {
+                int h = hexv(l[18 + 2 * i]), q = hexv(l[19 + 2 * i]);
+                if (h < 0 || q < 0) { ok = 0; break; }
+                keys[k].key[i] = (u8)(h << 4 | q);
+            }
+            if (ok) keys[k++].used = 1;
+        }
+        l = *e ? e + 1 : e;
+    }
+}
+
+static void keys_save(void)
+{
+    static char b[512];
+    const char *h = "0123456789abcdef";
+    int n = 0;
+    io_lock();
+    for (int i = 0; i < NKEYS; i++) if (keys[i].used) {
+        mac_str(b + n, keys[i].addr); n += 17; b[n++] = ' ';
+        for (int j = 0; j < 16; j++) { b[n++] = h[keys[i].key[j] >> 4]; b[n++] = h[keys[i].key[j] & 15]; }
+        b[n++] = '\r'; b[n++] = '\n';
+    }
+    keys_dirty = 0;
+    io_unlock();
+    if (!fat_mounted() || fat_write_file("/BTKEYS.TXT", b, (u32)n)) kprintf("(the key was not saved: no SD card or write error)\n");
+}
 
 static int bt_start(void)
 {
@@ -640,13 +995,38 @@ static int bt_start(void)
     if (cmd(0x0C03, 0, 0, 0, 0, 2000)) { bt_power(0); uart_console_mini(0); return err("no answer after the firmware"); }
     u8 a[8];
     if (cmd(0x1009, 0, 0, a, 6, 1000) == 0) for (int i = 0; i < 6; i++) bt_addr[i] = a[5 - i];
-    u8 mask[8] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F, 0x00, 0x60 };   /* + LE meta (61), Extended Inquiry Result (62) */
+    static const u8 placeholder[6] = { 0x43, 0x45, 0xC0, 0x00, 0x1F, 0xAC };   /* BCM4345C0 default (every 3B+) */
+    if (!memcmp_n(bt_addr, placeholder, 6) || (bt_addr[0] == 0 && bt_addr[1] == 0)) {
+        u32 ser[2] = { 0, 0 };                     /* like Raspberry Pi OS: b8:27:eb + serial bytes ^ 0xaa */
+        mbox_prop(0x00010004, ser, 2);
+        u8 w[6] = { (u8)((ser[0] & 0xFF) ^ 0xAA), (u8)(((ser[0] >> 8) & 0xFF) ^ 0xAA), (u8)(((ser[0] >> 16) & 0xFF) ^ 0xAA), 0xEB, 0x27, 0xB8 };
+        if (cmd(0xFC01, w, 6, 0, 0, 1000) == 0 && cmd(0x1009, 0, 0, a, 6, 1000) == 0)
+            for (int i = 0; i < 6; i++) bt_addr[i] = a[5 - i];
+    }
+    u8 mask[8] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F };   /* all, incl. pairing events, LE meta, EIR */
     cmd(0x0C01, mask, 8, 0, 0, 1000);
     u8 im = 2;
     cmd(0x0C45, &im, 1, 0, 0, 1000);                /* inquiry results with RSSI or extended (names) */
-    if (cmd(0x2002, 0, 0, a, 3, 1000) == 0 && a[2]) { acl_len = a[0] | a[1] << 8; acl_credits = a[2]; }   /* LE buffers */
-    else if (cmd(0x1005, 0, 0, a, 7, 1000) == 0) { acl_len = a[0] | a[1] << 8; acl_credits = a[3] | a[4] << 8; }
+    u8 one = 1, page = 0x02;
+    cmd(0x0C56, &one, 1, 0, 0, 1000);               /* Secure Simple Pairing on */
+    u8 cod[3] = { 0x04, 0x01, 0x00 };               /* class of device: computer, desktop */
+    cmd(0x0C24, cod, 3, 0, 0, 1000);
+    u8 lp[4] = { 0, 0, 0x05, 0 };                   /* default link policy: role switch + sniff */
+    cmd(0x080F, lp + 2, 2, 0, 0, 1000);
+    {
+        static u8 ln[248];
+        memset(ln, 0, sizeof(ln));
+        int j = 0; for (const char *t = net_name(); *t && j < 32; t++) ln[j++] = (u8)*t;
+        cmd(0x0C13, ln, 248, 0, 0, 1000);           /* local name: what a keyboard / phone shows */
+    }
+    cmd(0x0C1A, &page, 1, 0, 0, 1000);              /* page scan: a paired keyboard can call us */
+    br_credits = 4;
+    if (cmd(0x1005, 0, 0, a, 7, 1000) == 0) { acl_len = a[0] | a[1] << 8; br_credits = a[3] | a[4] << 8; }
+    acl_credits = br_credits; le_pool = 0;
+    if (cmd(0x2002, 0, 0, a, 3, 1000) == 0 && a[2]) { acl_credits = a[2]; le_pool = 1; }   /* separate LE buffers */
     if (acl_credits > 8) acl_credits = 8;
+    if (br_credits > 8) br_credits = 8;
+    keys_load();
     /* advertising: flags + name; the scan response carries the Nordic UART Service UUID */
     int k = 0;
     for (const char *s = net_name(); *s && k < 22; s++) gap_name[k++] = *s;
@@ -668,6 +1048,10 @@ static int bt_start(void)
     io_lock();
     conn = -1; credits = 1; cq_h = cq_t = aq_h = aq_t = tx_h = tx_t = 0; pk_n = 0;
     scan_restart = timer_us() + 15000000; adv_again = 0;
+    kb_reset(); kb_state = 0; kb_want = 0;
+    for (int i = 0; i < NKEYS; i++) if (keys[i].used) {   /* try the paired keyboard once (it may be asleep) */
+        kb_quiet = 1; kb_create(keys[i].addr); break;
+    }
     bt_up = 1;
     bt_live = 1;                                   /* core 1 takes the UART from here */
     io_unlock();
@@ -682,6 +1066,7 @@ static void bt_stop(void)
     io_lock();
     bt_live = 0;
     conn = -1;
+    kb_reset(); kb_state = 0;
     io_unlock();
     cmd(0x0C03, 0, 0, 0, 0, 500);
     bt_power(0);
@@ -808,6 +1193,63 @@ void bt_cmd(int argc, char **argv)
         kprintf("Bluetooth %s at boot\n", on ? "switches on" : "stays off");
         return;
     }
+    if (argc > 1 && !strcmp(argv[1], "forget")) {
+        io_lock();
+        if (kb_h >= 0) { u8 d[3] = { (u8)kb_h, (u8)(kb_h >> 8), 0x13 }; hci_queue(0x0406, d, 3); }
+        memset(keys, 0, sizeof(keys));
+        io_unlock();
+        if (fat_mounted()) fat_remove("/BTKEYS.TXT");
+        kprintf("paired Bluetooth devices forgotten\n");
+        return;
+    }
+    if (argc > 1 && !strcmp(argv[1], "pair")) {
+        if (!bt_up && bt_start()) { kprintf("Bluetooth: %s\n", bt_err); return; }
+        u8 a[6];
+        if (argc > 2) {
+            if (parse_mac(argv[2], a)) { kprintf("usage: bt pair [aa:bb:cc:dd:ee:ff]\n"); return; }
+        } else {                                   /* look for a keyboard in pairing mode */
+            kprintf("put the keyboard into pairing mode; looking for it (10 s, Ctrl+C stops)...\n");
+            u64 t0 = timer_us();
+            u8 inq[5] = { 0x33, 0x8B, 0x9E, 8, 0 };
+            io_lock(); hci_queue(0x0401, inq, 5); io_unlock();
+            int found = -1;
+            while (timer_us() < t0 + 11000000 && found < 0) {
+                if (!io_core_active()) io_poll_all();
+                if (con_trygetc() == 3) return;
+                io_lock();
+                for (int i = 0; i < ndev; i++)
+                    if (devs[i].classic && devs[i].seen >= t0 && (devs[i].kbd == 1 || devs[i].kbd == 3)) { found = i; memcpy(a, devs[i].addr, 6); }
+                io_unlock();
+                delay_us(20000);
+            }
+            if (found < 0) { kprintf("no Bluetooth keyboard found (is it in pairing mode? 'bt scan 20' shows what is around)\n"); return; }
+            io_lock(); hci_queue(0x0402, 0, 0); io_unlock();   /* Inquiry Cancel */
+            delay_us(100000);
+        }
+        char m[18];
+        mac_str(m, a);
+        kprintf("pairing with %s ...\n", m);
+        io_lock();
+        kb_msg[0] = 0; kb_want = 1; kb_quiet = 0;
+        if (kb_h >= 0) { u8 d[3] = { (u8)kb_h, (u8)(kb_h >> 8), 0x13 }; hci_queue(0x0406, d, 3); }
+        int k = key_find(a);
+        if (k >= 0) keys[k].used = 0;              /* pair afresh */
+        kb_create(a);
+        io_unlock();
+        u64 t0 = timer_us();
+        while (timer_us() < t0 + 90000000) {
+            if (!io_core_active()) io_poll_all();
+            if (con_trygetc() == 3) { kprintf("stopped\n"); break; }
+            if (keys_dirty) keys_save();
+            if (kb_state == 4) { kprintf("paired - type on it; it connects by itself after a reboot ('bt auto on')\n"); break; }
+            if (kb_state < 0) break;
+            delay_us(20000);
+        }
+        if (keys_dirty) keys_save();
+        io_lock(); kb_want = 0; io_unlock();
+        if (kb_state != 4 && kb_state >= 0) kprintf("no keyboard yet (wake it, or 'bt pair' again)\n");
+        return;
+    }
     if (argc > 1 && (!strcmp(argv[1], "on") || !strcmp(argv[1], "scan") || !strcmp(argv[1], "sensors"))) {
         if (!bt_up && bt_start()) { kprintf("Bluetooth: %s\n", bt_err); return; }
         if (!strcmp(argv[1], "scan")) {
@@ -837,12 +1279,21 @@ void bt_cmd(int argc, char **argv)
         }
         return;
     }
-    if (argc > 1) { kprintf("usage: bt [on | scan [seconds] | sensors | off | auto on|off]\n"); return; }
+    if (argc > 1) { kprintf("usage: bt [on | scan [seconds] | sensors | pair [mac] | forget | off | auto on|off]\n"); return; }
     if (!bt_up) { kprintf("Bluetooth off ('bt on', 'bt scan'; 'bt auto on' = at boot; firmware in /FIRMWARE/*.hcd)\n"); return; }
     kprintf("Bluetooth on: chip %s, address %02x:%02x:%02x:%02x:%02x:%02x, visible as \"%s\"\n", bt_name,
             bt_addr[0], bt_addr[1], bt_addr[2], bt_addr[3], bt_addr[4], bt_addr[5], gap_name);
     if (conn >= 0) kprintf("  phone connected%s%s%s\n", session_user[0] ? " as " : "", session_user, cccd[0] ? "" : " (not listening yet)");
     else kprintf("  no phone connected (Nordic UART Service: Serial Bluetooth Terminal, nRF Toolbox, Bluefruit Connect)\n");
+    if (keys_dirty) keys_save();                   /* a keyboard paired again by itself */
+    {
+        char a[18];
+        int np = 0;
+        for (int i = 0; i < NKEYS; i++) np += keys[i].used;
+        if (kb_state == 4) { mac_str(a, kb_addr); kprintf("  keyboard %s connected (%u reports)\n", a, kb_reports); }
+        else if (np) kprintf("  %d paired device(s); the keyboard connects when you press a key ('bt forget' clears)\n", np);
+        else kprintf("  no Bluetooth keyboard paired ('bt pair' with the keyboard in pairing mode)\n");
+    }
     int th = 0;
     for (int i = 0; i < ndev; i++) th += devs[i].has_th;
     kprintf("  %d device(s) seen, %d thermometer(s) ('bt scan', 'bt sensors')\n", ndev, th);

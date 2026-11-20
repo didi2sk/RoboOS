@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.43**
+Aktuálna verzia: **0.44**
 
 ## Podporované dosky
 
@@ -352,6 +352,8 @@ WiFi čip je zároveň Bluetooth čip. Zapne sa, až keď ho zavoláš:
 bt on            zapnúť: počúva zariadenia okolo a mobil ho nájde
 bt scan          čo je okolo (bt scan 20 = počúvať 20 s)
 bt sensors       Bluetooth teplomery ako JSON
+bt pair          spárovať Bluetooth klávesnicu (klasický BT; bt pair aa:bb:cc:dd:ee:ff = konkrétnu)
+bt forget        zabudnúť spárovanú klávesnicu
 bt               stav (pripojený mobil, zariadenia, teplomery)
 bt off           vypnúť
 bt auto on|off   zapnúť pri štarte (/BT.TXT)
@@ -380,7 +382,15 @@ login robo MojeHeslo1         treba, keď sú používatelia ('users add'); "vie
 Párovanie zatiaľ nie je: spojenie nie je šifrované, používaj ho nablízku (heslo napísané tam ide
 vzduchom čitateľne). Kým je Bluetooth zapnutý, UART konzola beží na mini UARTe - rovnaké piny 8/10,
 rovnakých 115200; `bt off` ju vráti. Scan funguje na Pi 3B (19 zariadení na prvý pokus) aj na Zero 2 W (12 zariadení); časť s mobilom
-je vyskúšaná v QEMU (`tools/qemu_bt_test.py` hrá radič aj mobil). Ďalej: Bluetooth klávesnica (prvý krok vo 0.43: `bt scan` rozlíši BLE a klasické klávesnice).
+je vyskúšaná v QEMU (`tools/qemu_bt_test.py` hrá radič aj mobil). 
+**Klávesnica (0.44, klasický Bluetooth).** Prepni klávesnicu do režimu párovania (zvyčajne podržať Connect
+alebo Fn+C, kým nebliká LED) a napíš `bt pair`. RoboOS ju nájde, pripojí sa a ukáže číslo:
+`on the keyboard type 123456 and press Enter` - napíš ho **na Bluetooth klávesnici**. Potom píše do shellu
+ako USB klávesnica (US rozloženie, autorepeat). Kľúč sa uloží do `/BTKEYS.TXT`: po reštarte (s `bt auto on`)
+alebo keď klávesnica zaspala, stlač kláves a pripojí sa sama. `bt` ukáže stav, `bt forget` kľúč zmaže.
+BLE klávesnice zatiaľ nie. Čip na 3B+ má zástupnú Bluetooth adresu (43:45:c0:00:1f:ac, rovnakú na každej
+doske); od 0.44 mu RoboOS dá vlastnú (b8:27:eb + sériové číslo, ako Raspberry Pi OS). Vyskúšané v QEMU
+(`tools/qemu_btkbd_test.py` hrá radič aj klávesnicu) - na hardvéri ešte nie.
 
 ### Dátum a čas (NTP)
 
