@@ -268,6 +268,10 @@ void ip_poll(int notify)
     if (up && !netif_is_link_up(&nif)) netif_set_link_up(&nif);
     if (!up && netif_is_link_up(&nif)) netif_set_link_down(&nif);
     sys_check_timeouts();
+    if (upl.state == 3 && !upl.conn) {                   /* written, but the client is gone: still reboot if asked */
+        if (upl.reboot && upl.code == 200) api_reboot_later(500);
+        __atomic_store_n(&upl.state, 0, __ATOMIC_RELEASE);
+    }
     api_poll();
     ntp_tick();
     mqtt_poll(!ip4_addr_isany_val(*netif_ip4_addr(&nif)) && netif_is_link_up(&nif));
@@ -520,6 +524,7 @@ static void build_page(void)
 #define HTTP_REQ   2048
 struct http_conn {
     int used, len, done, closing;
+    int upload;                    /* the body goes to UPLOAD_BUF (update.c) */
     u8 idle;
     u64 since;
     struct tcp_pcb *pcb;
@@ -535,6 +540,11 @@ static u32 https_hits;
 static void conn_free(struct http_conn *c)
 {
     if (!c) return;
+    if (c->upload && upl.conn == c) {
+        upl.conn = 0;
+        if (upl.state == 1) { upl.state = 0; kprintf("\n[UPDATE] the upload broke off - nothing written\n"); }
+    }
+    c->upload = 0;
     if (c->tls) { tls_close(c->tls); c->tls = 0; }
     if (c->pin) { pbuf_free(c->pin); c->pin = 0; }
     c->used = 0;
@@ -572,6 +582,107 @@ static char *header(char *h, const char *name)
     return 0;
 }
 
+/* ---- uploads: POST /api/update, POST /api/file?path=... (update.c writes them on core 0) ---- */
+
+static void upload_feed(const u8 *d, int n)
+{
+    if (upl.state != 1) return;
+    u32 room = upl.need - upl.got;
+    if ((u32)n > room) n = (int)room;
+    memcpy(UPLOAD_BUF + upl.got, d, (size_t)n);
+    upl.got += (u32)n;
+    if (upl.got >= upl.need) { upl.t_rx = timer_us(); __atomic_store_n(&upl.state, 2, __ATOMIC_RELEASE); }   /* core 0 takes over */
+}
+
+static void upload_feed_pbuf(struct pbuf *p, int off)
+{
+    if (upl.state != 1 || off >= p->tot_len) return;
+    u32 n = (u32)(p->tot_len - off), room = upl.need - upl.got;
+    if (n > room) n = room;
+    pbuf_copy_partial(p, UPLOAD_BUF + upl.got, (u16_t)n, (u16_t)off);
+    upl.got += n;
+    if (upl.got >= upl.need) { upl.t_rx = timer_us(); __atomic_store_n(&upl.state, 2, __ATOMIC_RELEASE); }
+}
+
+static int qparam(char *q, const char *name, char *out, int max)   /* ?a=b&c=d, %XX decoded */
+{
+    int nl = (int)strlen(name);
+    for (char *p = q; p && *p; ) {
+        if (!strncmp(p, name, (size_t)nl) && p[nl] == '=') {
+            p += nl + 1;
+            int k = 0;
+            while (*p && *p != '&' && k < max - 1) {
+                if (*p == '%' && p[1] && p[2]) {
+                    int h = 0;
+                    for (int j = 1; j <= 2; j++) { char ch = p[j]; h = h * 16 + (ch >= '0' && ch <= '9' ? ch - '0' : (ch | 32) - 'a' + 10); }
+                    out[k++] = (char)h; p += 3;
+                } else out[k++] = *p++;
+            }
+            out[k] = 0;
+            return 1;
+        }
+        p = strchr(p, '&');
+        if (p) p++;
+    }
+    return 0;
+}
+
+/* 0 = receiving now; 1 = refused, the answer is in page */
+static int upload_begin(struct http_conn *c, const char *path, char *query, const char *auth, int role,
+                        const char *from, const char *body, int have, int need)
+{
+    int kind = !strcmp(path, "/api/update") ? 1 : !strcmp(path, "/api/file") ? 2 : 0;
+    const char *code = 0, *msg = 0;
+    plen = 0;
+    int a = kind ? api_admin_ok(auth, role, from) : 1;
+    if (!kind) code = "404 Not Found", msg = "unknown path";
+    else if (a == -1) code = "429 Too Many Requests", msg = "too many wrong logins from this address - wait a minute";
+    else if (a == -2) code = "403 Forbidden", msg = "API off: set a token on the board with 'http token <secret>'";
+    else if (a == 0) code = "401 Unauthorized", msg = "an admin login or Authorization: Bearer <token> is needed";
+    else if (need <= 0) code = "411 Length Required", msg = "send the file as the body (curl --data-binary @file)";
+    else if ((u32)need > UPLOAD_MAX) code = "413 Too Large", msg = "16 MB at most";
+    else if (upl.state) code = "409 Conflict", msg = "another upload is running";
+    char pth[64] = "";
+    if (!code && kind == 2 && (!query || !qparam(query, "path", pth, sizeof(pth)) || pth[0] != '/'))
+        code = "400 Bad Request", msg = "add ?path=/DIR/NAME.EXT";
+    if (code) {
+        add("HTTP/1.0 "); add(code); add("\r\nContent-Type: application/json\r\nConnection: close\r\n");
+        if (a == 0 && users_count()) add("WWW-Authenticate: Basic realm=\"RoboOS\", charset=\"UTF-8\"\r\n");
+        add("\r\n{\"ok\":false,\"error\":\""); add(msg); add("\"}\n");
+        return 1;
+    }
+    char rb[8] = "";
+    upl.kind = kind;
+    upl.reboot = kind == 1 && !(query && qparam(query, "reboot", rb, sizeof(rb)) && rb[0] == '0');
+    memcpy(upl.path, pth, sizeof(pth));
+    upl.need = (u32)need; upl.got = 0; upl.code = 0; upl.answer[0] = 0;
+    upl.conn = c;
+    c->upload = 1;
+    upl.t0 = timer_us();
+    upl.state = 1;
+    kprintf("\n[UPDATE] receiving %s, %d bytes from %s\n", kind == 1 ? "a kernel" : pth, need, from);
+    upload_feed((const u8 *)body, have);
+    return 0;
+}
+
+static err_t tls_pump(struct tcp_pcb *pcb, struct http_conn *c);
+
+/* core 1: the answer core 0 left in upl.answer goes out, then the connection closes */
+static err_t upload_send(struct tcp_pcb *pcb, struct http_conn *c)
+{
+    plen = 0;
+    add(upl.code == 200 ? "HTTP/1.0 200 OK" : upl.code == 400 ? "HTTP/1.0 400 Bad Request" : "HTTP/1.0 500 Internal Server Error");
+    add("\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n");
+    add(upl.answer); add("\n");
+    if (upl.reboot && upl.code == 200) api_reboot_later(1500);   /* after the answer went out */
+    c->upload = 0; upl.conn = 0;
+    __atomic_store_n(&upl.state, 0, __ATOMIC_RELEASE);
+    c->done = 1;
+    if (c->tls) { c->closing = 2; return tls_pump(pcb, c); }
+    send_text(pcb, page, plen);
+    return http_finish(pcb, c);
+}
+
 /* 1 = the answer is in page[0..plen) */
 static int http_try(struct tcp_pcb *pcb, struct http_conn *c)
 {
@@ -583,9 +694,12 @@ static int http_try(struct tcp_pcb *pcb, struct http_conn *c)
     char *body = end + 4;
     int have = c->len - (int)(body - c->req), need = 0;
     char *cl = header(c->req, "Content-Length");
-    if (cl) while (*cl >= '0' && *cl <= '9') need = need * 10 + (*cl++ - '0');
-    if (need > HTTP_REQ - (int)(body - c->req)) { plen = 0; add("HTTP/1.0 413 Too Large\r\nConnection: close\r\n\r\n"); return 1; }
-    if (have < need) return 0;
+    if (cl) while (*cl >= '0' && *cl <= '9' && need < 0x10000000) need = need * 10 + (*cl++ - '0');
+    int up_req = !strncmp(c->req, "POST /api/update", 16) || !strncmp(c->req, "PUT /api/update", 15)
+              || !strncmp(c->req, "POST /api/file", 14) || !strncmp(c->req, "PUT /api/file", 13);
+    if (!up_req && need > HTTP_REQ - (int)(body - c->req)) { plen = 0; add("HTTP/1.0 413 Too Large\r\nConnection: close\r\n\r\n"); return 1; }
+    if (!up_req && have < need) return 0;
+    if (have > need) have = need;
 
     /* "METHOD /path HTTP/1.x" */
     char *m = c->req, *path = strchr(m, ' ');
@@ -595,6 +709,7 @@ static int http_try(struct tcp_pcb *pcb, struct http_conn *c)
     if (sp) *sp = 0;
     char *q = strchr(path, '?');
     if (q) *q = 0;
+    char *query = q ? q + 1 : 0;
     char from[16];
     ip4addr_ntoa_r(ip_2_ip4(&pcb->remote_ip), from, sizeof(from));
 
@@ -647,6 +762,10 @@ static int http_try(struct tcp_pcb *pcb, struct http_conn *c)
             add("HTTP/1.0 204 No Content\r\nAccess-Control-Allow-Origin: *\r\n"
                 "Access-Control-Allow-Methods: GET, POST, PUT, OPTIONS\r\n"
                 "Access-Control-Allow-Headers: Authorization, Content-Type\r\nConnection: close\r\n\r\n");
+        } else if (up_req) {
+            char *auth = header(c->req + (sp ? (sp - c->req) + 1 : 0), "Authorization");
+            if (auth) { char *e = strstr(auth, "\r\n"); if (e) *e = 0; }
+            return upload_begin(c, path, query, auth, role, from, body, have, need);
         } else {
             char *auth = header(c->req + (sp ? (sp - c->req) + 1 : 0), "Authorization");
             if (auth) { char *e = strstr(auth, "\r\n"); if (e) *e = 0; }
@@ -665,7 +784,8 @@ static err_t http_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err
     (void)err;
     if (!p) return http_finish(pcb, c);
     tcp_recved(pcb, p->tot_len);
-    if (c && !c->done) {
+    if (c && c->upload) { upload_feed_pbuf(p, 0); c->idle = 0; }
+    else if (c && !c->done) {
         int n = p->tot_len;
         if (n > HTTP_REQ - c->len) n = HTTP_REQ - c->len;
         pbuf_copy_partial(p, c->req + c->len, (u16_t)n, 0);
@@ -678,6 +798,7 @@ static err_t http_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err
             pbuf_free(p);
             return http_finish(pcb, c);
         }
+        if (c->upload) upload_feed_pbuf(p, n);         /* the rest of this segment is body */
     }
     pbuf_free(p);
     return ERR_OK;
@@ -699,21 +820,28 @@ static err_t tls_pump(struct tcp_pcb *pcb, struct http_conn *c)
             if (len > room) len = room;
             if (len > 0xFFFF) len = 0xFFFF;
             if (len && tcp_write(pcb, b, (u16_t)len, TCP_WRITE_FLAG_COPY) == ERR_OK) { br_ssl_engine_sendrec_ack(e, len); progress = 1; }
-        } else if (c->closing) {                         /* close_notify is out */
+        } else if (c->closing == 1) {                    /* close_notify is out (2 = the answer still waits) */
             tcp_output(pcb);
             return http_finish(pcb, c);
         }
         if (st & BR_SSL_RECVAPP) {                       /* decrypted request bytes */
             size_t len;
             u8 *b = br_ssl_engine_recvapp_buf(e, &len);
-            int n = (int)len;
-            if (n > HTTP_REQ - c->len) n = HTTP_REQ - c->len;
-            memcpy(c->req + c->len, b, (size_t)n);
-            c->len += n;
-            c->req[c->len] = 0;
-            br_ssl_engine_recvapp_ack(e, len);
-            progress = 1;
-            if (!c->done && http_try(pcb, c)) c->done = 1, c->closing = 2;   /* 2 = answer waiting */
+            if (c->upload) {
+                upload_feed(b, (int)len);
+                br_ssl_engine_recvapp_ack(e, len);
+                progress = 1;
+            } else {
+                int n = (int)len;
+                if (n > HTTP_REQ - c->len) n = HTTP_REQ - c->len;
+                memcpy(c->req + c->len, b, (size_t)n);
+                c->len += n;
+                c->req[c->len] = 0;
+                if (!c->done && http_try(pcb, c)) c->done = 1, c->closing = 2;   /* 2 = answer waiting */
+                else if (c->upload && n < (int)len) upload_feed(b + n, (int)len - n);
+                br_ssl_engine_recvapp_ack(e, len);
+                progress = 1;
+            }
         }
         if ((st & BR_SSL_SENDAPP) && c->closing == 2) {  /* the answer, then close_notify */
             size_t len;
@@ -767,6 +895,12 @@ static err_t https_sent(void *arg, struct tcp_pcb *pcb, u16_t len)
 static err_t http_poll(void *arg, struct tcp_pcb *pcb)
 {
     struct http_conn *c = arg;
+    if (c && c->upload) {                                /* receiving / core 0 writing: no idle timeout */
+        if (upl.state == 3) return upload_send(pcb, c);
+        if (upl.state == 1 && ++c->idle >= 20) return http_finish(pcb, c);   /* 10 s without data */
+        if (upl.state == 2) c->idle = 0;
+        return c->tls ? tls_pump(pcb, c) : ERR_OK;
+    }
     if (c && ++c->idle >= 10) return http_finish(pcb, c);   /* 5 s quiet */
     if (c && c->tls) return tls_pump(pcb, c);
     return ERR_OK;
@@ -787,7 +921,7 @@ static struct http_conn *conn_new(struct tcp_pcb *pcb)
         conn_free(old);
         c = old;
     }
-    c->used = 1; c->len = 0; c->done = 0; c->closing = 0; c->idle = 0; c->req[0] = 0;
+    c->used = 1; c->len = 0; c->done = 0; c->closing = 0; c->idle = 0; c->req[0] = 0; c->upload = 0;
     c->since = timer_us(); c->pcb = pcb; c->tls = 0; c->pin = 0; c->pin_off = 0;
     return c;
 }

@@ -636,6 +636,7 @@ static const struct cmd cmds[] = {
     { "mkdir",  "<dir>",                "make a directory",                cmd_mkdir  },
     { "rm",     "[-f] <file|dir>",      "delete a file or an empty directory", cmd_rm },
     { "cat",    "<file>",               "print a text file",               cmd_cat    },
+    { "update", "[restore]",            "kernel / file updates over the network", cmd_update },
     { "edit",   "<file>",               "full-screen text editor",         cmd_edit   },
     { "run",    "<program>",            "run a .bin / .bas program",       cmd_run    },
     { "basic",  "[file]",               "BASIC interpreter",               cmd_basic  },

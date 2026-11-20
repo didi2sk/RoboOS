@@ -115,6 +115,7 @@ int con_trygetc(void)
     }
     sound_poll();
     api_sound_poll();                           /* a sound asked for over the JSON API */
+    upload_poll();                              /* a file / kernel that came over the network: to the card */
     return kbd_getc();
 }
 

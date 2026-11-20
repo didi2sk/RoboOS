@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.46**
+Aktuálna verzia: **0.47**
 
 ## Podporované dosky
 
@@ -473,6 +473,25 @@ volať aj webová stránka z inej adresy (CORS je povolený). Doska vypíše
 `[API] reboot asked by <adresa>` a `[API] wrong or missing token from <adresa>`.
 **HTTP nie je šifrované**: kto vidí do tvojej siete, prečíta aj token, takže API používaj
 len vo vlastnej sieti, nie z internetu. Piny 14/15 sú UART.
+
+### Aktualizácia cez sieť (kernel a súbory, 0.47)
+
+S `http on` a tokenom (`http token <tajne>`) alebo prihlásením admina sa nový kernel dostane do Pi
+bez vyberania karty:
+
+```
+curl --data-binary @kernel8.img -H "Authorization: Bearer <tajne>" http://<doska>/api/update
+curl --data-binary @ALARM.BIN -H "Authorization: Bearer <tajne>" "http://<doska>/api/file?path=/APPS/ALARM.BIN"
+```
+
+(`https://` a `curl -k`, keď je zapnuté HTTPS; `-u meno:heslo` pre prihlásenie používateľa.) Kernel sa
+najprv skontroluje: musí to byť kernel RoboOS (nesie značku `ROBOOS-KERNEL:<verzia>`), takže zlý súbor
+nikdy nenahradí bežiaci kernel. Starý kernel sa skopíruje do `KERNEL8.BAK`, nový sa zapíše do nových
+klastrov, položka v adresári sa prepne naň, prečíta sa späť a porovná - potom príde odpoveď
+`{"ok":true,"old":"0.46","new":"0.47",...}` a Pi sa reštartuje (`?reboot=0` = nereštartovať). Najviac 16 MB.
+`update` ukáže kernel na karte a zálohu, `update restore` vráti zálohu. Ak by nový kernel vôbec nenaštartoval,
+vyber kartu a premenuj `KERNEL8.BAK` na `kernel8.img`. Vyskúšané v QEMU (HTTP + HTTPS, zlý token, súbor,
+ktorý nie je kernel, restore, reštart) - na hardvéri ešte nie.
 
 ### Používatelia: prihlásenie na webovú stránku a API (voliteľné)
 

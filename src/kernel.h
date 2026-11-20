@@ -303,6 +303,25 @@ void users_failed(const char *from);
 void users_ok(const char *from);
 int  https_on(void);
 const char *os_version(void);
+
+/* update.c: files / kernels over the network (POST /api/update, /api/file) */
+struct upload {
+    volatile int state;            /* 0 idle, 1 receiving (core 1), 2 complete -> core 0 writes, 3 answer ready */
+    int kind;                      /* 1 kernel, 2 file */
+    int reboot, code;
+    u32 need, got;
+    char path[64];
+    char answer[384];              /* the JSON answer */
+    void *conn;                    /* ip.c http_conn, 0 = gone */
+    u64 t0, t_rx;                  /* start, all received (timer_us) */
+};
+extern struct upload upl;
+#define UPLOAD_BUF ((u8 *)0x10000000UL)   /* 16 MB, above the picture heap */
+#define UPLOAD_MAX (16u << 20)
+void upload_poll(void);            /* core 0 */
+void cmd_update(int argc, char **argv);
+int  api_admin_ok(const char *auth, int role, const char *from);   /* webapi.c: 1 ok, 0 no, -1 locked, -2 API off */
+void api_reboot_later(u32 ms);
 /* sockets for programs: handles 1..8, errors < 0 (sock_error); idle() polls the network */
 int  sock_tcp_connect(const char *host, int port, int (*idle)(void));
 int  sock_tcp_listen(int port);
