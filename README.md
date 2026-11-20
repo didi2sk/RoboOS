@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.42**
+Current version: **0.43**
 
 ## Supported boards
 
@@ -362,6 +362,9 @@ bt auto on|off   switch on at boot (/BT.TXT)
 and MQTT `roboos/<name>/ble/<mac>` = `{"temp":21.53,"hum":45.12,"batt":87,"rssi":-63,"name":"ATC_112233"}`
 (at most every 30 s), Home Assistant finds them by itself (temperature, humidity, battery).
 `bt scan` also shows names and makers of everything else (phones, TVs, headphones).
+Since 0.43 it also searches for classic Bluetooth devices (marked `BR`) and marks keyboards and mice:
+`[keyboard, BLE]` or `[keyboard, classic BT]` - so you can see which kind your keyboard is
+(cheap ones are often classic Bluetooth 3.0, which needs a different driver than BLE ones).
 
 **Phone.** The board shows up as its name (`rpi3-...`) with the Nordic UART Service. Connect with
 a terminal app - Android: *Serial Bluetooth Terminal* (Devices -> Bluetooth LE), iPhone / Android:
@@ -379,7 +382,7 @@ There is no pairing yet: the link is not encrypted, use it nearby (a password ty
 crosses the air readable). While Bluetooth is on, the UART console runs on the mini UART - same
 pins 8/10, same 115200; `bt off` gives it back. Scanning works on the Pi 3B (19 devices on the first
 try) and the Zero 2 W (12 devices); the phone part is tested in QEMU (`tools/qemu_bt_test.py` plays the controller and a phone).
-Next: a Bluetooth keyboard.
+Next: a Bluetooth keyboard (first step in 0.43: `bt scan` tells BLE and classic keyboards apart).
 
 ### Date and time (NTP)
 
