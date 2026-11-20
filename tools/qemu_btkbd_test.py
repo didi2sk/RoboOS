@@ -135,19 +135,23 @@ def on_cmd(op, p):
         cstatus(op); event(0x17, KB)                  # Link Key Request
     elif op == 0x040C:                                # no key: Secure Simple Pairing
         complete(op, 0, KB); event(0x31, KB)          # IO Capability Request
-    elif op == 0x040B:                                # stored key: authenticated
+    elif op == 0x040B:                                # stored key: authenticated, the keyboard encrypts
         complete(op, 0, KB); event(0x06, bytes([0]) + struct.pack("<H", H))
+        event(0x08, bytes([0]) + struct.pack("<H", H) + bytes([1]))
     elif op == 0x042B:
         complete(op, 0, KB)
         event(0x32, KB + bytes([0x02, 0, 0x05]))      # the keyboard: keyboard only
         event(0x3B, KB + struct.pack("<I", 123456))   # User Passkey Notification
         delays.append((time.time() + 0.5, "paired"))
     elif op == 0x0413: cstatus(op); event(0x08, bytes([0]) + struct.pack("<H", H) + bytes([1]))
-    elif op == 0x0409:                                # Accept Connection Request
+    elif op == 0x0409:                                # Accept Connection Request; the keyboard authenticates itself
         cstatus(op); event(0x03, bytes([0]) + struct.pack("<H", H) + KB + bytes([1, 0]))
+        auth_at_accept.append(len([o for o in ops if o == 0x0411]))
+        event(0x17, KB)                               # Link Key Request (from the keyboard's authentication)
     elif op in (0x0401, 0x0C03) or True: complete(op)
 
 delays = []
+auth_at_accept = []
 def run_delays():
     for t, what in list(delays):
         if time.time() >= t:
@@ -192,7 +196,7 @@ def kb_open(psm, ours):
     sig(0x02, ours, struct.pack("<HH", psm, ours))
     pump2(1, lambda: psm in kb_cid)
 for _ in range(20):
-    if 0x0413 in ops: break
+    if 0x040B in ops: break
     pump2(0.1)
 pump2(0.3)
 # record the board's cids from its Connection Responses
@@ -241,6 +245,8 @@ checks = [
     ("link key saved to /BTKEYS.TXT", "54:46:6b:00:00:10 101112131415161718191a1b1c1d1e1f" in text),
     ("reconnect accepted", 0x0409 in ops),
     ("stored key given back", reply == KB + KEY),
+    ("reconnect: no crossed authentication / encryption from the board",
+     ops.count(0x0411) == (auth_at_accept[0] if auth_at_accept else -1) and ops.count(0x0413) == 1),
     ("typed after the reconnect: echo kb2", "\nkb2\n" in text),
 ]
 ok = True

@@ -514,7 +514,7 @@ static int kb_we_called, kb_quiet;         /* we created the link; quiet = a sil
 static volatile int kb_state;              /* 0 none, 1 connecting, 2 linked, 3 encrypted, 4 ready, -1 failed */
 static volatile u32 kb_reports;
 static char kb_msg[80];
-static u64 kb_open_at;
+static u64 kb_open_at, kb_auth_at, kb_enc_at;   /* deferred steps when the keyboard called us */
 static struct l2ch { u16 psm, lcid, rcid; u8 used, cfg_in, cfg_out, open; } ch[2];   /* 0 control, 1 interrupt */
 static u8 sig_id = 1;
 
@@ -574,7 +574,7 @@ static void ch_connect(int i)
 
 static void kb_reset(void)
 {
-    kb_h = -1; memset(ch, 0, sizeof(ch)); kb_open_at = 0; kb_we_called = 0;
+    kb_h = -1; memset(ch, 0, sizeof(ch)); kb_open_at = kb_auth_at = kb_enc_at = 0; kb_we_called = 0;
 }
 
 static void ch_check(void)
@@ -583,7 +583,7 @@ static void ch_check(void)
     if (ch[0].open && ch[1].open && kb_state != 4) {
         u8 sp = 0x70;                                  /* HIDP SET_PROTOCOL boot */
         acl_queue_h(kb_h, 1, ch[0].rcid, &sp, 1);
-        kb_state = 4;
+        kb_state = 4; kb_quiet = 0;
         char a[18], m[64] = "keyboard ready: ";
         mac_str(a, kb_addr);
         int k = 16; for (int i = 0; a[i]; i++) m[k++] = a[i]; m[k] = 0;
@@ -671,6 +671,15 @@ static void kb_create(const u8 *a)                      /* io lock held (core 0)
 
 static void kb_tick(u64 now)
 {
+    /* the keyboard called us: it authenticates / encrypts by itself - only if it does not, we do */
+    if (kb_auth_at && now >= kb_auth_at) {
+        kb_auth_at = 0;
+        if (kb_h >= 0 && kb_state < 3) { u8 h[2] = { (u8)kb_h, (u8)(kb_h >> 8) }; hci_queue(0x0411, h, 2); }
+    }
+    if (kb_enc_at && now >= kb_enc_at) {
+        kb_enc_at = 0;
+        if (kb_h >= 0 && kb_state < 3) { u8 d[3] = { (u8)kb_h, (u8)(kb_h >> 8), 1 }; hci_queue(0x0413, d, 3); }
+    }
     if (kb_open_at && now >= kb_open_at) {             /* encrypted, the keyboard opened nothing: we do */
         kb_open_at = 0;
         if (kb_h >= 0 && !ch[0].used) { kb_we_called = 1; ch_connect(0); }
@@ -693,8 +702,9 @@ static int kb_event(const u8 *e)
         kb_h = (p[1] | p[2] << 8) & 0xFFF;
         kb_we_called = !memcmp_n(p + 3, kb_target, 6) && kb_state == 1;
         memcpy(kb_addr, p + 3, 6);
-        kb_state = 2; kb_quiet = 0;
-        { u8 h[2] = { p[1], p[2] }; hci_queue(0x0411, h, 2); }   /* Authentication Requested */
+        kb_state = 2;                                  /* kb_quiet stays: the boot-time try reports nothing */
+        if (kb_we_called) { u8 h[2] = { p[1], p[2] }; hci_queue(0x0411, h, 2); }   /* Authentication Requested */
+        else kb_auth_at = timer_us() + 2000000;     /* it called: it authenticates itself (both at once = error 0x05) */
         return 1;
     case 0x04: {                                       /* Connection Request (a paired keyboard calls) */
         u8 r[7];
@@ -707,13 +717,28 @@ static int kb_event(const u8 *e)
     }
     case 0x06:                                         /* Authentication Complete */
         if (((p[1] | p[2] << 8) & 0xFFF) != kb_h) return 1;
-        if (p[0]) { kprintf("\n[BT] pairing failed (error 0x%02x)\n", p[0]); kb_state = -1; u8 d[3] = { p[1], p[2], 0x05 }; hci_queue(0x0406, d, 3); return 1; }
-        { u8 d[3] = { p[1], p[2], 1 }; hci_queue(0x0413, d, 3); }   /* Set Connection Encryption */
+        if (p[0]) {
+            if (kb_state >= 3) return 1;               /* already encrypted: a crossed request, harmless */
+            if (kb_we_called) {
+                if (!kb_quiet) kprintf("\n[BT] pairing failed (error 0x%02x)\n", p[0]);
+                kb_state = kb_quiet ? 0 : -1;
+                u8 d[3] = { p[1], p[2], 0x05 }; hci_queue(0x0406, d, 3);
+            } else if (!kb_auth_at) kb_auth_at = timer_us() + 1000000;   /* its own try failed: we try once more */
+            return 1;
+        }
+        if (kb_we_called) { u8 d[3] = { p[1], p[2], 1 }; hci_queue(0x0413, d, 3); }   /* Set Connection Encryption */
+        else kb_enc_at = timer_us() + 1000000;       /* it usually switches encryption on itself */
         return 1;
     case 0x08:                                         /* Encryption Change */
         if (((p[1] | p[2] << 8) & 0xFFF) != kb_h) return 1;
-        if (p[0] || !p[3]) { kprintf("\n[BT] encryption failed (error 0x%02x)\n", p[0]); kb_state = -1; return 1; }
-        kb_state = 3;
+        if (p[0] || !p[3]) {
+            if (kb_we_called) {
+                if (!kb_quiet) kprintf("\n[BT] encryption failed (error 0x%02x)\n", p[0]);
+                kb_state = kb_quiet ? 0 : -1;
+            }
+            return 1;                                  /* the keyboard's own link: it tries again by itself */
+        }
+        kb_state = 3; kb_auth_at = kb_enc_at = 0;
         if (kb_we_called && !ch[0].used) ch_connect(0);
         else if (!ch[0].used) kb_open_at = timer_us() + 1500000;
         return 1;
@@ -799,7 +824,7 @@ static void hci_event(const u8 *e)              /* e[0] code, e[1] length, e + 2
     case 0x05:                                     /* Disconnection Complete */
         if (((e[3] | e[4] << 8) & 0xFFF) == kb_h && kb_h >= 0) {
             if (kb_state == 4) kb_say("keyboard disconnected (it connects again when you press a key)");
-            kb_reset(); if (kb_state > 0) kb_state = 0;
+            kb_reset(); kb_quiet = 0; if (kb_state > 0) kb_state = 0;
             return;
         }
         if (conn >= 0) { con_color(COL_CYAN); kprintf("\n[BT] phone disconnected\n"); con_color(COL_DEFAULT); }

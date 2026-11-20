@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.44**
+Current version: **0.45**
 
 ## Supported boards
 
@@ -393,7 +393,9 @@ types into the shell like a USB keyboard (US layout, autorepeat). The link key i
 connects by itself. `bt` shows the state, `bt forget` deletes the key. BLE keyboards are not supported
 yet. The 3B+ chip comes with a placeholder Bluetooth address (43:45:c0:00:1f:ac, the same on every
 board); since 0.44 RoboOS gives it its own (b8:27:eb + serial number, like Raspberry Pi OS).
-Tested in QEMU (`tools/qemu_btkbd_test.py` plays the controller and a keyboard) - not yet on hardware.
+**Works on the Pi 3B+** with a cheap classic BT keyboard (pairing, typing, reconnect after a reboot);
+0.45 lets the keyboard authenticate by itself when it calls (0.44 crossed it: error 0x05, one retry).
+QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
 
