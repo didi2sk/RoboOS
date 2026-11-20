@@ -1083,7 +1083,9 @@ static int bt_start(void)
     ad[n++] = (u8)(k + 1); ad[n++] = 0x09; memcpy(ad + n, gap_name, (size_t)k); n += k;
     ad[0] = (u8)(n - 1);
     sr[0] = 18; sr[1] = 17; sr[2] = 0x07; memcpy(sr + 3, U_NUS, 16);
-    u8 sp[7] = { 1, 0x60, 0, 0x30, 0, 0, 0 };
+    /* background scan: 30 ms every 300 ms (10 %): the radio is shared with WiFi, a 50 % scan (60/30 ms)
+     * starved it on the 3B+ - the WPA handshake failed until the 3rd try. 'bt scan' listens at 50 %. */
+    u8 sp[7] = { 1, 0xE0, 0x01, 0x30, 0, 0, 0 };
     int r = cmd(0x2006, ap, 15, 0, 0, 1000) | cmd(0x2008, ad, 32, 0, 0, 1000) | cmd(0x2009, sr, 32, 0, 0, 1000)
           | cmd(0x200A, adv_on, 1, 0, 0, 1000) | cmd(0x200B, sp, 7, 0, 0, 1000) | cmd(0x200C, sc_on, 2, 0, 0, 1000);
     if (r) kprintf("  (advertising / scanning: the chip said %d)\n", r);
@@ -1305,12 +1307,19 @@ void bt_cmd(int argc, char **argv)
             io_lock();
             hci_queue(0x0401, inq, 5);
             io_unlock();
+            static const u8 fast[7] = { 1, 0x60, 0, 0x30, 0, 0, 0 }, slow[7] = { 1, 0xE0, 0x01, 0x30, 0, 0, 0 };
+            io_lock();
+            hci_queue(0x200C, sc_off, 2); hci_queue(0x200B, fast, 7); hci_queue(0x200C, sc_on, 2);
+            io_unlock();
             kprintf("listening %d s (Ctrl+C stops)...\n", (int)s);
             while (timer_us() < t0 + s * 1000000) {
                 if (!io_core_active()) io_poll_all();   /* no I/O core: poll here */
                 if (con_trygetc() == 3) break;
                 delay_us(2000);
             }
+            io_lock();
+            hci_queue(0x200C, sc_off, 2); hci_queue(0x200B, slow, 7); hci_queue(0x200C, sc_on, 2);   /* back to 10 % */
+            io_unlock();
             list(t0);
         } else if (!strcmp(argv[1], "sensors")) {
             char b[1024];

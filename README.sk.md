@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.45**
+Aktuálna verzia: **0.46**
 
 ## Podporované dosky
 
@@ -393,7 +393,10 @@ doske); od 0.44 mu RoboOS dá vlastnú (b8:27:eb + sériové číslo, ako Raspbe
 klasickou BT klávesnicou (párovanie, písanie, pripojenie po reštarte); 0.45 nechá klávesnicu, nech sa pri
 pripájaní overí sama (0.44 to krížila: chyba 0x05, jeden pokus navyše). 0.45 tiež nahráva firmvér Bluetoothu rýchlosťou
 921600 baudov (8x rýchlejšie: `bt auto on` už nepredĺži boot o ~6 s) a pripojenie WiFi pri štarte robí I/O jadro,
-takže WPA handshake routera dostane odpoveď hneď (predtým sa 3B+ často pripojila až na pokus o 20 s neskôr). QEMU test: `tools/qemu_btkbd_test.py`.
+takže WPA handshake routera dostane odpoveď hneď (predtým sa 3B+ často pripojila až na pokus o 20 s neskôr).
+0.46: Bluetooth na pozadí počúva len 10 % času (30 ms z 300 ms, `bt scan` 50 %) - WiFi a Bluetooth zdieľajú
+jedno rádio a 50 % hľadanie na 3B+ kazilo WPA handshake až do 3. pokusu; WiFi skúša znova po 10 s (potom 30 s,
+60 s) a vypíše, prečo predošlý pokus zlyhal. QEMU test: `tools/qemu_btkbd_test.py`.
 
 ### Dátum a čas (NTP)
 

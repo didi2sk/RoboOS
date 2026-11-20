@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.45**
+Current version: **0.46**
 
 ## Supported boards
 
@@ -398,6 +398,9 @@ board); since 0.44 RoboOS gives it its own (b8:27:eb + serial number, like Raspb
 0.45 also loads the Bluetooth firmware at 921600 baud (8x faster: `bt auto on` no longer adds ~6 s to
 the boot) and leaves the WiFi join at boot to the I/O core, so the router's WPA handshake is answered
 at once (before, the 3B+ often joined only on the retry 20 s later).
+0.46: Bluetooth listens in the background only 10 % of the time (30 ms every 300 ms, `bt scan` 50 %) - WiFi
+and Bluetooth share one radio, and the 50 % scan made the WPA handshake fail until the 3rd try on the 3B+;
+WiFi retries come after 10 s (then 30 s, 60 s) and say why the last try failed.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)

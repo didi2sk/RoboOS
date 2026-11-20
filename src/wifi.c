@@ -1124,9 +1124,21 @@ int wifi_recv(void *buf, int max, int want_data)
             memcpy(ss, j_ssid, sizeof(ss));
             memcpy(pw, j_pass, sizeof(pw));
             if (j_first) j_first = 0;                     /* the boot-time join, done here where the handshake gets answered */
-            else { j_tries++; con_color(COL_YELLOW); kprintf("\n[NET] WiFi: joining %s again (try %d)\n", ss, j_tries); con_color(COL_DEFAULT); }
+            else {
+                j_tries++;
+                con_color(COL_YELLOW); kprintf("\n[NET] WiFi: joining %s again (try %d)\n", ss, j_tries); con_color(COL_DEFAULT);
+                /* why the last try did not join - for a photo of the screen */
+                con_color(COL_GRAY);
+                if (j_fail == 4) kprintf("  last try: network not found\n");
+                else if (!j_ssid_ok && !j_link) kprintf("  last try: no association (status %d)\n", j_fail ? j_fail - 1 : -1);
+                else if (host_sup) kprintf("  last try: associated, WPA msg1 %d msg3 %d, keys %d, sent %d (failed %d)%s%s\n",
+                                           d_m1, d_m3, d_keys, d_sent, d_sendfail, sup_err ? ", " : "", sup_err ? sup_err : "");
+                else kprintf("  last try: associated, no keys from the firmware supplicant\n");
+                if (d_lost_type) kprintf("  link lost: type %d, reason %d\n", d_lost_type, d_lost_reason);
+                con_color(COL_DEFAULT);
+            }
             if (join_send(ss, pw[0] ? pw : 0)) kprintf("[NET] WiFi join: %s\n", werr);
-            j_next_try = timer_us() + (j_tries < 3 ? 20000000ULL : 60000000ULL);
+            j_next_try = timer_us() + (j_tries < 3 ? 10000000ULL : j_tries < 6 ? 30000000ULL : 60000000ULL);
         }
     }
     if (wifi_joined() && !j_told) {                       /* tell once: connected */
