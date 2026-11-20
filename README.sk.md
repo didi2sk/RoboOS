@@ -391,7 +391,9 @@ alebo keď klávesnica zaspala, stlač kláves a pripojí sa sama. `bt` ukáže 
 BLE klávesnice zatiaľ nie. Čip na 3B+ má zástupnú Bluetooth adresu (43:45:c0:00:1f:ac, rovnakú na každej
 doske); od 0.44 mu RoboOS dá vlastnú (b8:27:eb + sériové číslo, ako Raspberry Pi OS). **Funguje na Pi 3B+** s lacnou
 klasickou BT klávesnicou (párovanie, písanie, pripojenie po reštarte); 0.45 nechá klávesnicu, nech sa pri
-pripájaní overí sama (0.44 to krížila: chyba 0x05, jeden pokus navyše). QEMU test: `tools/qemu_btkbd_test.py`.
+pripájaní overí sama (0.44 to krížila: chyba 0x05, jeden pokus navyše). 0.45 tiež nahráva firmvér Bluetoothu rýchlosťou
+921600 baudov (8x rýchlejšie: `bt auto on` už nepredĺži boot o ~6 s) a pripojenie WiFi pri štarte robí I/O jadro,
+takže WPA handshake routera dostane odpoveď hneď (predtým sa 3B+ často pripojila až na pokus o 20 s neskôr). QEMU test: `tools/qemu_btkbd_test.py`.
 
 ### Dátum a čas (NTP)
 

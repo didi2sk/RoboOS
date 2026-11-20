@@ -94,21 +94,38 @@ static int load_firmware(const char *name)
     struct fat_file f;
     if (fat_open(path, &f) || f.is_dir) { char m[64] = "missing "; int j = 8; for (int i = 0; path[i] && j < 62; i++) m[j++] = path[i]; m[j] = 0; return err(m); }
     kprintf("  firmware %s (%u bytes)...\n", path, f.size);
-    if (cmd(0xFC2E, 0, 0, 0, 0, 1000)) return err("'download minidriver' got no answer");
+    /* 115200 baud would take ~6 s for the 3B+ file: ask the chip for 921600 (BCM vendor command, like
+     * Linux btbcm), check it answers there, else go back. After the download it restarts at 115200. */
+    u8 br[6] = { 0, 0, 0x00, 0x10, 0x0E, 0x00 };   /* 921600 */
+    int fast = 0;
+    if (cmd(0xFC18, br, 6, 0, 0, 500) == 0) {
+        uart_bt_baud(921600);
+        delay_us(20000);
+        while (uart_bt_getc(1000) >= 0) continue;
+        if (cmd(0x1001, 0, 0, 0, 0, 300) == 0) fast = 1;     /* Read Local Version at the new speed */
+        else {
+            uart_bt_baud(115200);
+            delay_us(20000);
+            while (uart_bt_getc(1000) >= 0) continue;
+            cmd(0x0C03, 0, 0, 0, 0, 1000);
+        }
+    }
+    if (cmd(0xFC2E, 0, 0, 0, 0, 1000)) { if (fast) uart_bt_baud(115200); return err("'download minidriver' got no answer"); }
     delay_us(50000);
     static u8 rec[260];
     int n = 0;
     while (f.pos < f.size) {
-        if (fat_read(&f, rec, 3) != 3) return err("firmware file cut short");
+        if (fat_read(&f, rec, 3) != 3) { if (fast) uart_bt_baud(115200); return err("firmware file cut short"); }
         u16 op = (u16)(rec[0] | rec[1] << 8);
         int l = rec[2];
         if (l && fat_read(&f, rec + 3, l) != l) return err("firmware file cut short");
         int st = cmd(op, rec + 3, l, 0, 0, 1000);
-        if (st) return err(st < 0 ? "no answer while loading the firmware" : "the chip refused a firmware record");
+        if (st) { if (fast) uart_bt_baud(115200); return err(st < 0 ? "no answer while loading the firmware" : "the chip refused a firmware record"); }
         n++;
     }
     delay_us(250000);
-    kprintf("  %d records loaded\n", n);
+    if (fast) { uart_bt_baud(115200); delay_us(10000); while (uart_bt_getc(1000) >= 0) continue; }   /* the new firmware runs at 115200 */
+    kprintf("  %d records loaded%s\n", n, fast ? " (921600 baud)" : "");
     return 0;
 }
 

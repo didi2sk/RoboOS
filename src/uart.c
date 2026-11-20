@@ -122,6 +122,19 @@ void uart_bt_init(int flow)
     mmio_write(UART0_CR, 0x301 | (flow ? (3u << 14) : 0));   /* + CTSEN / RTSEN */
 }
 
+/* change the speed (48 MHz UART clock): 115200 -> 26 + 3/64, 921600 -> 3 + 16/64 */
+void uart_bt_baud(u32 baud)
+{
+    while (mmio_read(UART0_FR) & 0x08) ;     /* BUSY: the last byte is out */
+    u32 cr = mmio_read(UART0_CR);
+    mmio_write(UART0_CR, 0);
+    u32 div64 = (48000000u * 4u + baud / 2) / baud;   /* 64 * 48e6 / (16 * baud) */
+    mmio_write(UART0_IBRD, div64 >> 6);
+    mmio_write(UART0_FBRD, div64 & 63);
+    mmio_write(UART0_LCRH, 0x7 << 4);        /* LCRH write latches the divisor */
+    mmio_write(UART0_CR, cr);
+}
+
 void uart_bt_putc(u8 c)
 {
     while (mmio_read(UART0_FR) & 0x20) ;

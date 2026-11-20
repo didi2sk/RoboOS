@@ -395,6 +395,9 @@ yet. The 3B+ chip comes with a placeholder Bluetooth address (43:45:c0:00:1f:ac,
 board); since 0.44 RoboOS gives it its own (b8:27:eb + serial number, like Raspberry Pi OS).
 **Works on the Pi 3B+** with a cheap classic BT keyboard (pairing, typing, reconnect after a reboot);
 0.45 lets the keyboard authenticate by itself when it calls (0.44 crossed it: error 0x05, one retry).
+0.45 also loads the Bluetooth firmware at 921600 baud (8x faster: `bt auto on` no longer adds ~6 s to
+the boot) and leaves the WiFi join at boot to the I/O core, so the router's WPA handshake is answered
+at once (before, the 3B+ often joined only on the retry 20 s later).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)

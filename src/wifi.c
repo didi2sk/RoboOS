@@ -712,7 +712,7 @@ static void add_bss(const u8 *p, int len)
 static volatile int j_ssid_ok, j_link, j_keyed, j_fail, j_need_key, j_told;
 static char j_ssid[33], j_pass[64];
 static int cfg_band;
-static int j_want, j_tries, pmk_ok;                       /* j_want: keep re-joining j_ssid (until 'wifi leave') */
+static int j_want, j_tries, pmk_ok, j_first;                       /* j_want: keep re-joining j_ssid (until 'wifi leave') */
 static u64 j_next_try;
 static int join_send(const char *ssid, const char *pass);                                      /* 0 auto, 1 = 5 GHz only, 2 = 2.4 GHz only (WLC_SET_BAND) */
 
@@ -1123,8 +1123,8 @@ int wifi_recv(void *buf, int max, int want_data)
             char ss[33], pw[64];
             memcpy(ss, j_ssid, sizeof(ss));
             memcpy(pw, j_pass, sizeof(pw));
-            j_tries++;
-            con_color(COL_YELLOW); kprintf("\n[NET] WiFi: joining %s again (try %d)\n", ss, j_tries); con_color(COL_DEFAULT);
+            if (j_first) j_first = 0;                     /* the boot-time join, done here where the handshake gets answered */
+            else { j_tries++; con_color(COL_YELLOW); kprintf("\n[NET] WiFi: joining %s again (try %d)\n", ss, j_tries); con_color(COL_DEFAULT); }
             if (join_send(ss, pw[0] ? pw : 0)) kprintf("[NET] WiFi join: %s\n", werr);
             j_next_try = timer_us() + (j_tries < 3 ? 20000000ULL : 60000000ULL);
         }
@@ -1290,8 +1290,15 @@ void wifi_boot(void)
 {
     if (!load_cfg()) return;
     if (wifi_start()) { kprintf("WiFi: %s%s%s\n", werr, missing[0] ? " " : "", missing); return; }
-    if (join_send(cfg_ssid, cfg_psk[0] ? cfg_psk : 0)) kprintf("WiFi join: %s\n", werr);
-    else kprintf("WiFi: joining %s (in the background)\n", cfg_ssid);
+    /* the join itself is left to the I/O core (wifi_recv): sent from here, during the boot, nobody answered
+     * the router's WPA handshake until core 1 ran - it gave up and the join waited 20 s for the retry */
+    int sl = (int)strlen(cfg_ssid), pl = (int)strlen(cfg_psk);
+    if (sl < 1 || sl > 32 || (pl && (pl < 8 || pl > 63))) { kprintf("WiFi: bad name or password in /WIFI.TXT\n"); return; }
+    memset(j_ssid, 0, sizeof(j_ssid)); memcpy(j_ssid, cfg_ssid, (size_t)sl);
+    memset(j_pass, 0, sizeof(j_pass)); memcpy(j_pass, cfg_psk, (size_t)pl);
+    j_first = 1; j_tries = 0; j_next_try = 0;
+    j_want = 1;
+    kprintf("WiFi: joining %s (in the background)\n", cfg_ssid);
 }
 
 static void wpa_diag(void)
