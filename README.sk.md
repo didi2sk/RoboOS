@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.42**
+Aktuálna verzia: **0.43**
 
 ## Podporované dosky
 
@@ -361,7 +361,9 @@ bt auto on|off   zapnúť pri štarte (/BT.TXT)
 čítajú stále, kým je Bluetooth zapnutý: `bt sensors`, `GET /api/ble` a MQTT `roboos/<meno>/ble/<mac>` =
 `{"temp":21.53,"hum":45.12,"batt":87,"rssi":-63,"name":"ATC_112233"}` (najviac raz za 30 s), Home
 Assistant ich nájde sám (teplota, vlhkosť, batéria). `bt scan` ukáže aj mená a výrobcov všetkého
-ostatného (mobily, TV, slúchadlá).
+ostatného (mobily, TV, slúchadlá). Od 0.43 hľadá aj klasické Bluetooth zariadenia (označené `BR`)
+a označí klávesnice a myši: `[keyboard, BLE]` alebo `[keyboard, classic BT]` - tak zistíš, akú máš
+klávesnicu (lacné bývajú klasický Bluetooth 3.0, ten potrebuje iný ovládač ako BLE).
 
 **Mobil.** Doska sa ukáže pod svojím menom (`rpi3-...`) so službou Nordic UART. Pripoj sa terminálovou
 aplikáciou - Android: *Serial Bluetooth Terminal* (Devices -> Bluetooth LE), iPhone / Android:
@@ -378,7 +380,7 @@ login robo MojeHeslo1         treba, keď sú používatelia ('users add'); "vie
 Párovanie zatiaľ nie je: spojenie nie je šifrované, používaj ho nablízku (heslo napísané tam ide
 vzduchom čitateľne). Kým je Bluetooth zapnutý, UART konzola beží na mini UARTe - rovnaké piny 8/10,
 rovnakých 115200; `bt off` ju vráti. Scan funguje na Pi 3B (19 zariadení na prvý pokus) aj na Zero 2 W (12 zariadení); časť s mobilom
-je vyskúšaná v QEMU (`tools/qemu_bt_test.py` hrá radič aj mobil). Ďalej: Bluetooth klávesnica.
+je vyskúšaná v QEMU (`tools/qemu_bt_test.py` hrá radič aj mobil). Ďalej: Bluetooth klávesnica (prvý krok vo 0.43: `bt scan` rozlíši BLE a klasické klávesnice).
 
 ### Dátum a čas (NTP)
 

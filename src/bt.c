@@ -155,6 +155,8 @@ static int acl_queue(u16 cid, const u8 *d, int n)
 #define MAXDEV 40
 static struct dev {
     u8 addr[6], type, has_th, disc;
+    u8 classic, kbd;                       /* classic = BR/EDR (inquiry); kbd 1 keyboard, 2 mouse, 3 combo, 4 other HID */
+    u32 cod;                               /* class of device (classic) */
     int rssi, maker, temp, hum, batt;      /* temp 0.01 C, hum 0.01 %, batt % */
     u32 seq, sent_seq;                     /* new thermometer data / what MQTT sent */
     u64 seen, sent_at;
@@ -188,6 +190,12 @@ static void adv_data(struct dev *d, const u8 *p, int n)
             for (; k < vl && k < 29; k++) d->name[k] = (v[k] >= 32 && v[k] < 127) ? (char)v[k] : '?';
             d->name[k] = 0;
         } else if (t == 0xFF && vl >= 2) d->maker = v[0] | v[1] << 8;
+        else if (t == 0x19 && vl >= 2) {                                   /* Appearance: 0x03C0 HID group */
+            int ap = v[0] | v[1] << 8;
+            if ((ap & 0xFFC0) == 0x03C0) d->kbd = ap == 0x03C1 ? 1 : ap == 0x03C2 ? 2 : 4;
+        } else if ((t == 0x02 || t == 0x03) && !d->kbd) {                  /* 16-bit service UUIDs: 0x1812 = HID */
+            for (int k = 0; k + 1 < vl; k += 2) if ((v[k] | v[k + 1] << 8) == 0x1812) d->kbd = 4;
+        }
         else if (t == 0x16 && vl >= 2 && (v[0] | v[1] << 8) == 0x181A) {   /* Environmental Sensing service data */
             const u8 *s = v + 2;
             int sl = vl - 2, ok = 0;
@@ -202,6 +210,17 @@ static void adv_data(struct dev *d, const u8 *p, int n)
     }
 }
 
+static struct dev *dev_for(const u8 *a)
+{
+    struct dev *d = 0;
+    for (int i = 0; i < ndev; i++) if (!memcmp_n(devs[i].addr, a, 6)) return &devs[i];
+    if (ndev < MAXDEV) d = &devs[ndev++];
+    else for (int i = 0; i < MAXDEV; i++) if (!devs[i].has_th && (!d || devs[i].seen < d->seen)) d = &devs[i];
+    if (!d) return 0;
+    memset(d, 0, sizeof(*d)); memcpy(d->addr, a, 6); d->maker = -1;
+    return d;
+}
+
 static void adv_report(const u8 *e)            /* LE Meta 0x02, e = event (code, len, params) */
 {
     int num = e[3];
@@ -212,20 +231,39 @@ static void adv_report(const u8 *e)            /* LE Meta 0x02, e = event (code,
         int dl = p[8];
         if (p + 9 + dl + 1 > end) break;
         int rssi = (signed char)p[9 + dl];
-        struct dev *d = 0;
-        for (int i = 0; i < ndev; i++) if (!memcmp_n(devs[i].addr, a, 6)) d = &devs[i];
-        if (!d) {
-            if (ndev < MAXDEV) d = &devs[ndev++];
-            else {                                 /* full: replace the oldest that is no thermometer */
-                for (int i = 0; i < MAXDEV; i++) if (!devs[i].has_th && (!d || devs[i].seen < d->seen)) d = &devs[i];
-                if (!d) { p += 10 + dl; continue; }
-            }
-            memset(d, 0, sizeof(*d)); memcpy(d->addr, a, 6); d->type = type; d->maker = -1;
-        }
+        int fresh = ndev;
+        struct dev *d = dev_for(a);                /* full: replaces the oldest that is no thermometer */
+        if (!d) { p += 10 + dl; continue; }
+        if (ndev != fresh || !d->seen) d->type = type;
         d->rssi = rssi;
         d->seen = timer_us();
         adv_data(d, p + 9, dl);
         p += 10 + dl;
+    }
+}
+
+/* classic Bluetooth (BR/EDR) inquiry: e = event (code, len, params); 0x02 plain, 0x22 with RSSI, 0x2F extended */
+static void inquiry_result(const u8 *e)
+{
+    int num = e[2];
+    const u8 *p = e + 3, *end = e + 2 + e[1];
+    for (int r = 0; r < num; r++) {
+        const u8 *a, *c;
+        int rssi = -127;
+        if (e[0] == 0x02) { if (e + 3 + 14 * num > end) return; a = e + 3 + 6 * r; c = e + 3 + 9 * num + 3 * r; }
+        else if (e[0] == 0x22) { if (p + 14 > end) return; a = p; c = p + 8; rssi = (signed char)p[13]; p += 14; }
+        else { if (e + 3 + 14 > end) return; a = e + 3; c = e + 3 + 8; rssi = (signed char)e[3 + 13]; num = 1; }
+        struct dev *d = dev_for(a);
+        if (!d) continue;
+        d->classic = 1;
+        d->cod = (u32)(c[0] | c[1] << 8 | c[2] << 16);
+        if (((d->cod >> 8) & 0x1F) == 0x05) {                      /* major class peripheral: keyboard / mouse */
+            int m = (d->cod >> 6) & 3;
+            d->kbd = m == 1 ? 1 : m == 2 ? 2 : m == 3 ? 3 : 4;
+        }
+        if (rssi != -127) d->rssi = rssi;
+        d->seen = timer_us();
+        if (e[0] == 0x2F) adv_data(d, e + 3 + 14, (int)(end - (e + 3 + 14)));   /* EIR: same format as advertising data */
     }
 }
 
@@ -480,6 +518,11 @@ static void hci_event(const u8 *e)              /* e[0] code, e[1] length, e + 2
         aq_h = aq_t = 0; tx_h = tx_t = 0;
         adv_again = timer_us() + 200000;
         return;
+    case 0x02: case 0x22: case 0x2F:               /* classic inquiry results */
+        inquiry_result(e);
+        return;
+    case 0x01:                                     /* Inquiry Complete */
+        return;
     case 0x3E:
         if (e[2] == 0x02) adv_report(e);
         else if ((e[2] == 0x01 || e[2] == 0x0A) && e[3] == 0) {   /* (Enhanced) Connection Complete */
@@ -597,8 +640,10 @@ static int bt_start(void)
     if (cmd(0x0C03, 0, 0, 0, 0, 2000)) { bt_power(0); uart_console_mini(0); return err("no answer after the firmware"); }
     u8 a[8];
     if (cmd(0x1009, 0, 0, a, 6, 1000) == 0) for (int i = 0; i < 6; i++) bt_addr[i] = a[5 - i];
-    u8 mask[8] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F, 0x00, 0x20 };
+    u8 mask[8] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F, 0x00, 0x60 };   /* + LE meta (61), Extended Inquiry Result (62) */
     cmd(0x0C01, mask, 8, 0, 0, 1000);
+    u8 im = 2;
+    cmd(0x0C45, &im, 1, 0, 0, 1000);                /* inquiry results with RSSI or extended (names) */
     if (cmd(0x2002, 0, 0, a, 3, 1000) == 0 && a[2]) { acl_len = a[0] | a[1] << 8; acl_credits = a[2]; }   /* LE buffers */
     else if (cmd(0x1005, 0, 0, a, 7, 1000) == 0) { acl_len = a[0] | a[1] << 8; acl_credits = a[3] | a[4] << 8; }
     if (acl_credits > 8) acl_credits = 8;
@@ -724,12 +769,16 @@ static void list(u64 since)
         if (d->seen < since) continue;
         char a[18];
         mac_str(a, d->addr);
-        kprintf("  %s %s %4d dBm  %-22s", a, d->type & 1 ? "rnd" : "pub", d->rssi, d->name[0] ? d->name : "-");
+        kprintf("  %s %s %4d dBm  %-22s", a, d->classic ? "BR " : d->type & 1 ? "rnd" : "pub", d->rssi, d->name[0] ? d->name : "-");
         if (d->maker >= 0) { const char *m = maker_name(d->maker); if (m) kprintf(" %s", m); else kprintf(" maker %04x", (u32)d->maker); }
         if (d->has_th) {
             int t = d->temp < 0 ? -d->temp : d->temp;
             kprintf("  %s%d.%d C %d.%d %% batt %d %%", d->temp < 0 ? "-" : "", t / 100, t % 100 / 10, d->hum / 100, d->hum % 100 / 10, d->batt);
         }
+        if (d->kbd) {
+            static const char *k[] = { "", "keyboard", "mouse", "keyboard+mouse", "HID device" };
+            kprintf("  [%s, %s]", k[d->kbd], d->classic ? "classic BT" : "BLE");
+        } else if (d->classic && d->cod) kprintf("  class %06x", d->cod);
         kprintf("\n");
         shown++;
     }
@@ -767,6 +816,11 @@ void bt_cmd(int argc, char **argv)
             if (s < 1) s = 1;
             if (s > 120) s = 120;
             u64 t0 = timer_us();
+            u64 il = s * 100 / 128;                /* classic inquiry too, in units of 1.28 s (max 0x30) */
+            u8 inq[5] = { 0x33, 0x8B, 0x9E, (u8)(il < 1 ? 1 : il > 0x30 ? 0x30 : il), 0 };   /* GIAC */
+            io_lock();
+            hci_queue(0x0401, inq, 5);
+            io_unlock();
             kprintf("listening %d s (Ctrl+C stops)...\n", (int)s);
             while (timer_us() < t0 + s * 1000000) {
                 if (!io_core_active()) io_poll_all();   /* no I/O core: poll here */

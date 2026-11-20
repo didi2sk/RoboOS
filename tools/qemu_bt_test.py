@@ -60,6 +60,7 @@ def adv(addr, addr_type, data, rssi):
 thermo = bytes.fromhex("a4c138112233")
 pvvx = struct.pack("<H", 0x181A) + bytes(reversed(thermo)) + struct.pack("<hHHBBB", 2153, 4512, 2950, 87, 7, 0)
 reports = [(bytes.fromhex("c0ffee000001"), 1, ad(0x01, b"\x06") + ad(0x09, b"RoboOS-test"), -48),
+           (bytes.fromhex("d00d00000002"), 1, ad(0x19, struct.pack("<H", 0x03C1)) + ad(0x03, struct.pack("<H", 0x1812)) + ad(0x09, b"BLE-Keys"), -55),
            (bytes.fromhex("7a1122334455"), 1, ad(0xFF, b"\x4c\x00\x10\x05\x01\x18\x00\x00\x00"), -71),
            (thermo, 0, ad(0x16, pvvx) + ad(0x09, b"ATC_112233"), -63)]
 
@@ -69,6 +70,7 @@ def acl(cid, payload):
     a.sendall(bytes([2]) + struct.pack("<HH", HANDLE, len(l2)) + l2)
 
 ops, records, adv_cmds, scanning, sent_adv = [], 0, 0, False, 0
+inquiries = []
 att_in = []                       # ATT PDUs from the board
 notif = b""
 buf = b""
@@ -89,6 +91,13 @@ def pump(seconds, until=None):
                 elif op == 0x1009: complete(op, 0, bytes(reversed(bytes.fromhex("b827eb112233"))))
                 elif op == 0x2002: complete(op, 0, struct.pack("<HB", 27, 8))
                 elif op == 0x200C: scanning = p[0] == 1; complete(op)
+                elif op == 0x0401:                     # classic inquiry: Command Status, one keyboard (EIR), done
+                    event(0x0F, bytes([0, 1]) + struct.pack("<H", op))
+                    kb = bytes(reversed(bytes.fromhex("aabbcc010203")))
+                    eir = (ad(0x09, b"BT3.0 Keyboard") + bytes(240))[:240]
+                    event(0x2F, bytes([1]) + kb + bytes([1, 0]) + bytes([0x40, 0x05, 0x00]) + struct.pack("<H", 0) + struct.pack("b", -60) + eir)
+                    event(0x01, bytes([0]))
+                    inquiries.append(p)
                 else:
                     if op in (0xFC4C, 0xFC4E): records += 1
                     if op == 0x200A: adv_cmds += 1
@@ -106,8 +115,8 @@ def pump(seconds, until=None):
                     if pdu[0] == 0x1B: notif += pdu[3:]
             else:
                 buf = buf[1:]
-        if scanning and sent_adv < 9:
-            adv(*reports[sent_adv % 3]); sent_adv += 1
+        if scanning and sent_adv < 12:
+            adv(*reports[sent_adv % len(reports)]); sent_adv += 1
         if until and until(): return True
     return False
 
@@ -157,6 +166,9 @@ checks = [
     ("firmware records + HCI set-up", records > 50 and all(o in ops for o in (0x0C03, 0x0C14, 0x2002, 0x2006, 0x2008, 0x2009, 0x200B))),
     ("console: scan lists the thermometer", "ATC_112233" in text and "21.5 C 45.1 %" in text),
     ("console: bt sensors JSON", '"temp":21.53' in text),
+    ("classic inquiry sent (GIAC)", bool(inquiries) and inquiries[0][:3] == bytes([0x33, 0x8B, 0x9E])),
+    ("console: classic keyboard found", "BT3.0 Keyboard" in text and "[keyboard, classic BT]" in text),
+    ("console: BLE keyboard found", "BLE-Keys" in text and "[keyboard, BLE]" in text),
     ("ATT MTU 23", mtu[:1] == b"\x03" and mtu[1:3] == b"\x17\x00"),
     ("GAP service found", groups[:1] == b"\x11" and groups[2:8] == b"\x01\x00\x03\x00\x00\x18"),
     ("Nordic UART service found", groups2[:1] == b"\x11" and groups2[1] == 20 and groups2[-2:] == bytes.fromhex("406e")),
