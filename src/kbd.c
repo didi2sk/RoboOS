@@ -169,6 +169,14 @@ static void handle_report(const u8 *r)
     memcpy(prev, r, 8);
 }
 
+/* a boot-protocol report (8 bytes) from a Bluetooth keyboard (bt.c, core 1) */
+void kbd_bt_report(const u8 *r)
+{
+    u8 b[8];
+    memcpy(b, r, 8);
+    handle_report(b);
+}
+
 /*
  * The read method is picked at runtime: until the keyboard sends the first
  * report with a key pressed, interrupt IN and GET_REPORT alternate. Whichever
@@ -192,9 +200,12 @@ void kbd_poll(void)
 {
     u8 r[16];
     int n, use_int;
-    if (!kd) return;
-
     u64 now = timer_us();
+    if (!kd) {                                               /* no USB keyboard: autorepeat for a Bluetooth one */
+        if (rep_key && now >= rep_next) { emit(rep_key, rep_mods); rep_next = now + 50000; }
+        return;
+    }
+
     /* nobody polled for a while (a long command, decoding a picture): the key may
      * have been let go meanwhile - repeat only after a fresh report says it is held */
     if (rep_key && now - last_poll > 100000 && rep_next < now + 50000) rep_next = now + 50000;

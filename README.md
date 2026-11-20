@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.43**
+Current version: **0.44**
 
 ## Supported boards
 
@@ -352,6 +352,8 @@ The WiFi chip is a Bluetooth chip too. It is switched on only when you ask:
 bt on            switch on: listens to the devices around and can be found by a phone
 bt scan          what is around (bt scan 20 = listen 20 s)
 bt sensors       Bluetooth thermometers as JSON
+bt pair          pair a Bluetooth keyboard (classic BT; bt pair aa:bb:cc:dd:ee:ff = that one)
+bt forget        forget the paired keyboard
 bt               status (connected phone, devices, thermometers)
 bt off           switch off
 bt auto on|off   switch on at boot (/BT.TXT)
@@ -382,7 +384,16 @@ There is no pairing yet: the link is not encrypted, use it nearby (a password ty
 crosses the air readable). While Bluetooth is on, the UART console runs on the mini UART - same
 pins 8/10, same 115200; `bt off` gives it back. Scanning works on the Pi 3B (19 devices on the first
 try) and the Zero 2 W (12 devices); the phone part is tested in QEMU (`tools/qemu_bt_test.py` plays the controller and a phone).
-Next: a Bluetooth keyboard (first step in 0.43: `bt scan` tells BLE and classic keyboards apart).
+
+**Keyboard (0.44, classic Bluetooth).** Put the keyboard into pairing mode (usually hold Connect or
+Fn+C until its LED blinks) and type `bt pair`. RoboOS finds it, connects and shows a number:
+`on the keyboard type 123456 and press Enter` - type it **on the Bluetooth keyboard**. Then it
+types into the shell like a USB keyboard (US layout, autorepeat). The link key is saved in
+`/BTKEYS.TXT`: after a reboot (with `bt auto on`) or when the keyboard slept, press a key and it
+connects by itself. `bt` shows the state, `bt forget` deletes the key. BLE keyboards are not supported
+yet. The 3B+ chip comes with a placeholder Bluetooth address (43:45:c0:00:1f:ac, the same on every
+board); since 0.44 RoboOS gives it its own (b8:27:eb + serial number, like Raspberry Pi OS).
+Tested in QEMU (`tools/qemu_btkbd_test.py` plays the controller and a keyboard) - not yet on hardware.
 
 ### Date and time (NTP)
 
@@ -730,7 +741,7 @@ If you connect after boot, press Enter.
 | `http token [<secret>\|off]` | JSON API token (Bearer), see the JSON API section |
 | `http tls on\|off\|new` | HTTPS on port 443 (the API then only there), new certificate |
 | `wifi [scan\|join <net> [pw]\|band 2\|5\|auto\|leave\|forget]` | WiFi: networks, join (saved), status |
-| `bt [on\|scan [s]\|sensors\|off\|auto on\|off]` | Bluetooth LE: devices, thermometers, phone (only when asked) |
+| `bt [on\|scan [s]\|sensors\|pair [mac]\|forget\|off\|auto on\|off]` | Bluetooth: devices, thermometers, phone, keyboard (only when asked) |
 | `sensors [scan]`, `i2c scan\|read\|write` | I2C sensors (BME280, ADS1115, DS3231) |
 | `mqtt [broker\|user\|pub\|interval\|off]` | MQTT client (IoT) |
 | `users [add\|passwd\|del\|console on\|off]`, `logout` | logins for the web page + API (optional) |

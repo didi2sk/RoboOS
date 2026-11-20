@@ -83,6 +83,7 @@ int  smp_wait(int core, u32 ms);        /* -1 = gave up */
 int  smp_workers(void);
 int  smp_worker_ok(int core);
 void kbd_poll(void);
+void kbd_bt_report(const u8 *r);     /* 8-byte boot report from a Bluetooth keyboard */
 void usb_hotplug(void);
 
 /* mmu.c */
