@@ -46,9 +46,13 @@ static void load(void)
         if (!strncmp(l, "url ", 4) && e - l - 4 < (int)sizeof(url) && e - l > 4) memcpy(url, l + 4, (size_t)(e - l - 4 + 1));   /* tests / a proxy */
         const char *kv = 0;
         if (!strncmp(l, "key", 3) && (l[3] == ' ' || l[3] == '=')) { kv = l + 3; while (*kv == ' ' || *kv == '=') kv++; }
+        if (!kv) {                                        /* the bare key, or API_KEY=sk-..., "sk-..." etc. */
+            const char *sk = strstr(l, "sk-ant-");
+            if (sk && strncmp(l, "url", 3) && strncmp(l, "model", 5)) kv = sk;
+        }
         if (kv && !strncmp(kv, "sk-", 3)) {               /* typed in by hand on a PC: plain text - scrambled below */
             int k = 0;
-            while (kv[k] && kv[k] != ' ' && kv[k] != '\t' && k < (int)sizeof(key) - 1) { key[k] = kv[k]; k++; }
+            while (kv[k] && kv[k] != ' ' && kv[k] != '\t' && kv[k] != '"' && kv[k] != '\'' && k < (int)sizeof(key) - 1) { key[k] = kv[k]; k++; }
             key[k] = 0;
             plain = 1;
         } else if (kv) {                                  /* hex of key ^ scramble */
