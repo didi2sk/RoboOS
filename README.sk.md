@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.77**
+Aktuálna verzia: **0.78**
 
 ## Podporované dosky
 
@@ -454,6 +454,8 @@ nový ovládač SPI0 `src/spi.c`.
 0.76: `dcf` ukazuje, ako dlho trvala každá úroveň (tabuľka + posledných 12 úsekov) - rozlíši signál od šumu.
 0.77: dekodér DCF77 odolný voči šumu: zachytí sekundový rytmus a posudzuje každú sekundu ako celok (špičky už
 neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny aj so zlými minútami medzi nimi.
+0.78: DCF77 so slabým / zarušeným signálom: začiatok minúty sa nájde sám a bity sa sčítavajú cez viac minút
+(hodina a dátum ostávajú, minúta rastie o 1), takže čas príde, aj keď má každá minúta chyby.
 
 ### Dátum a čas (NTP)
 

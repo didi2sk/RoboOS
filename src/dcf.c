@@ -65,6 +65,23 @@ static u64 decode(const u8 *b, int *cest)
     return clock_make(2000 + y, mo, d, h, mi, 0) - (u64)(b[17] ? 7200 : 3600);
 }
 
+/* a sure time t (UTC) for the minute that started at t_us: set the clock */
+static void set_from(u64 t, u64 t_us)
+{
+    synced_ok = 1;
+    if (set_at && timer_us() - set_at < 30000000) return;        /* both decoders agreed on this minute */
+    u64 now_t = t + (timer_us() - t_us) / 1000000;
+    if (clock_how() == 1 && clock_synced_ago() < 7200) return;   /* NTP is fresh: only compare */
+#ifndef DCF_HOST_TEST
+    clock_set_time(now_t, 4);
+    if (!set_at || timer_us() - set_at > 3600ULL * 1000000) rtc_write(now_t);   /* battery clock: hourly */
+#else
+    clock_set_time(now_t, 4);
+#endif
+    set_at = timer_us();
+    n_set++;
+}
+
 static void minute_mark(u64 t_us)
 {
     int n = nbits;
@@ -86,17 +103,7 @@ static void minute_mark(u64 t_us)
     int agree = prev_frame && mins >= 1 && mins <= 30 && t == prev_frame + 60 * mins;
     prev_frame = t; prev_at = t_us;
     if (!agree) return;
-    synced_ok = 1;
-    u64 now_t = t + (timer_us() - t_us) / 1000000;
-    if (clock_how() == 1 && clock_synced_ago() < 7200) return;   /* NTP is fresh: only compare */
-#ifndef DCF_HOST_TEST
-    clock_set_time(now_t, 4);
-    if (!set_at || timer_us() - set_at > 3600ULL * 1000000) rtc_write(now_t);   /* battery clock: hourly */
-#else
-    clock_set_time(now_t, 4);
-#endif
-    set_at = timer_us();
-    n_set++;
+    set_from(t, t_us);
 }
 
 /* one clean level change: level lv starts at time t (us) */
@@ -132,6 +139,91 @@ static u32 seconds_seen;
 static volatile u32 n_secs;
 static volatile u8 sec_w0[8], sec_w1[8]; static volatile u32 sec_n;   /* last seconds: % pulse level */
 static u64 mark_due;                                    /* the minute starts then (after a missing pulse) */
+
+/* ---- 0.78: minute lock + soft decoding over several minutes ----
+ * At ~25 % lock quality (owner, 3B+ next to the monitor) nearly every minute had a wrong bit. But the
+ * minute mark comes at the same place every 60 judged seconds, the hour / date / CET bits stay the same and
+ * the minute only goes up by one: so every second's "how much like a 1" (w1 - 50) is summed over minutes.
+ *   mavg[60]  pulse presence per second of the minute -> the lowest one is second 59 (minute lock)
+ *   msc[60]   score of every possible minute value, shifted by one each minute (the minute goes +1)
+ *   hsc[24]   the same for the hour (shifted when the minute wraps to 0)
+ *   dacc[23]  soft sum of bits 36-58 (date), cacc[2] bits 17/18 (CEST/CET)
+ * A result is used when the best minute and hour clearly beat the second best, the date bits are sure
+ * and their parity is right, and the next minute's result is exactly 60 s later. */
+static u32 sec_idx;                                     /* judged seconds since the lock */
+static u8 ring_w1[60];                                  /* w1 of the last 60 judged seconds */
+static u32 mavg[60];                                    /* x16, w0 per second-of-minute */
+static volatile int mlock_k = -1, mlock_c;              /* second 59 = sec_idx % 60 == mlock_k; contrast */
+static u8 pend_soft[59]; static int pend_have;
+static long msc[60], hsc[24], dacc[23], cacc[2];
+static volatile int soft_n, soft_mm = -1, soft_hh = -1, soft_mmargin, soft_hmargin, soft_dok;
+static u64 prev_soft, prev_soft_at;
+static volatile u32 n_soft;
+
+static void minute_lock_update(u32 k, u32 w0)
+{
+    mavg[k] = mavg[k] - mavg[k] / 4 + w0 * 4;           /* x16 steady state, ~4 minutes memory */
+    int lo = 0; for (int i = 1; i < 60; i++) if (mavg[i] < mavg[lo]) lo = i;
+    u32 rest = 0; for (int i = 0; i < 60; i++) if (i != lo) rest += mavg[i];
+    rest /= 59;
+    mlock_c = (int)(rest > mavg[lo] ? (rest - mavg[lo]) / 16 : 0);
+    if (mavg[lo] / 16 < 45 && mlock_c >= 25) mlock_k = lo;
+    else if (mlock_c < 12) mlock_k = -1;
+}
+
+static int pbit(int v, int n, int j)                    /* bit j of the BCD code of v (n bits) */
+{
+    static const int w[8] = { 1, 2, 4, 8, 10, 20, 40, 80 };
+    int b[8] = { 0 }, x = v;
+    for (int i = n - 1; i >= 0; i--) if (x >= w[i]) { b[i] = 1; x -= w[i]; }
+    if (j < n) return b[j];
+    int par = 0; for (int i = 0; i < n; i++) par ^= b[i];
+    return par;                                         /* j == n: the even parity bit */
+}
+
+static long corr(const int *sv, int from, int v, int n)  /* how well the n bits + parity at from fit v */
+{
+    long c = 0;
+    for (int j = 0; j <= n; j++) c += pbit(v, n, j) ? sv[from + j] : -sv[from + j];
+    return c;
+}
+
+static void soft_minute(const u8 *w1s, u64 t_us)
+{
+    int sv[59];
+    for (int i = 0; i < 59; i++) sv[i] = (int)w1s[i] - 50;
+    long nm[60];
+    for (int m = 0; m < 60; m++) nm[m] = msc[(m + 59) % 60] * 7 / 8 + corr(sv, 21, m, 7);
+    for (int m = 0; m < 60; m++) msc[m] = nm[m];
+    int bm = 0; for (int m = 1; m < 60; m++) if (msc[m] > msc[bm]) bm = m;
+    if (bm == 0) { long nh[24]; for (int h = 0; h < 24; h++) nh[h] = hsc[(h + 23) % 24]; for (int h = 0; h < 24; h++) hsc[h] = nh[h]; }
+    for (int h = 0; h < 24; h++) hsc[h] = hsc[h] * 7 / 8 + corr(sv, 29, h, 6);
+    int bh = 0; for (int h = 1; h < 24; h++) if (hsc[h] > hsc[bh]) bh = h;
+    if (bm == 0 && bh == 0) for (int i = 0; i < 23; i++) dacc[i] = 0;   /* midnight: a new date */
+    for (int i = 0; i < 23; i++) dacc[i] = dacc[i] * 7 / 8 + sv[36 + i];
+    cacc[0] = cacc[0] * 7 / 8 + sv[17]; cacc[1] = cacc[1] * 7 / 8 + sv[18];
+    soft_n++;
+    long m2 = -1000000, h2 = -1000000;
+    for (int m = 0; m < 60; m++) if (m != bm && msc[m] > m2) m2 = msc[m];
+    for (int h = 0; h < 24; h++) if (h != bh && hsc[h] > h2) h2 = hsc[h];
+    soft_mm = bm; soft_hh = bh;
+    soft_mmargin = (int)(msc[bm] - m2); soft_hmargin = (int)(hsc[bh] - h2);
+    u8 db[59]; int sure = 1;
+    for (int i = 0; i < 23; i++) { db[36 + i] = dacc[i] > 0; if ((dacc[i] < 0 ? -dacc[i] : dacc[i]) < 60) sure = 0; }
+    soft_dok = sure && even(db, 36, 58);
+    if (soft_mmargin < 80 || soft_hmargin < 80 || !soft_dok || cacc[0] == cacc[1]) return;
+    int d = bcd(db, 36, 6), wd = bcd(db, 42, 3), mo = bcd(db, 45, 5), y = bcd(db, 50, 8);
+    if (d < 1 || d > 31 || wd < 1 || wd > 7 || mo < 1 || mo > 12 || y > 99) { soft_dok = 0; return; }
+    int cest = cacc[0] > cacc[1];
+    u64 t = clock_make(2000 + y, mo, d, bh, bm, 0) - (u64)(cest ? 7200 : 3600);
+    u64 mins = prev_soft ? (t_us - prev_soft_at + 30000000) / 60000000 : 0;
+    int agree = prev_soft && mins >= 1 && mins <= 30 && t == prev_soft + 60 * mins;
+    prev_soft = t; prev_soft_at = t_us;
+    if (!agree) return;
+    n_soft++;
+    last_time = t; last_time_at = t_us; last_cest = cest;
+    set_from(t, t_us);
+}
 
 static void find_phase(void)
 {
@@ -174,6 +266,21 @@ static void judge_second(u64 s0)
     sec_w0[sec_n & 7] = (u8)w0; sec_w1[sec_n & 7] = (u8)w1; sec_n++;
     n_secs++;
     u64 start_us = t_base + s0 * 10000;
+    u32 k = sec_idx % 60;
+    ring_w1[k] = (u8)w1;
+    minute_lock_update(k, w0);
+    sec_idx++;
+    if (mlock_k >= 0) {                                 /* 0.78: we know which second is 59 */
+        if ((int)k == mlock_k) {
+            for (int i = 0; i < 59; i++) { pend_soft[i] = ring_w1[(k + 1 + (u32)i) % 60]; bits[i] = pend_soft[i] > 50; }
+            nbits = 59; pend_have = 1;
+            mark_due = start_us + 1000000;
+            return;
+        }
+        if (w0 < 60) { n_bad++; last_err = "weak / noisy second"; }
+        n_pulses++;
+        return;                                         /* the bits are taken from ring_w1 at second 59 */
+    }
     /* once a minute had exactly 59 bits we know where second 59 is: a noisy second elsewhere is not
      * taken for the minute mark, and second 59 is one even if a spike looks a bit like a pulse */
     int mark = pos_known ? (nbits >= 59 && w0 < 60) : (w0 < 35);
@@ -205,7 +312,12 @@ static void phase_sample(int lv, u64 t)
         slot_now = slot;
     }
     slot_hi += (u32)lv; slot_n++;
-    if (mark_due && t >= mark_due) { u64 m = mark_due; mark_due = 0; minute_mark(m); }
+    if (mark_due && t >= mark_due) {
+        u64 m = mark_due; mark_due = 0;
+        int soft = pend_have; pend_have = 0;
+        minute_mark(m);
+        if (soft) soft_minute(pend_soft, m);
+    }
 }
 
 static void dcf_reset_state(void)
@@ -215,6 +327,11 @@ static void dcf_reset_state(void)
     for (int i = 0; i < 7; i++) hist[0][i] = hist[1][i] = 0;
     t_base = 0; slot_now = (u64)-1; slot_hi = slot_n = 0; seconds_seen = 0; mark_due = 0;
     phase = -1; lock_pol = -1; lock_q = 0; pos_known = 0;
+    sec_idx = 0; mlock_k = -1; mlock_c = 0; pend_have = 0; soft_n = 0; soft_mm = soft_hh = -1; prev_soft = 0;
+    for (int i = 0; i < 60; i++) { mavg[i] = 50 * 16; msc[i] = 0; }
+    for (int i = 0; i < 24; i++) hsc[i] = 0;
+    for (int i = 0; i < 23; i++) dacc[i] = 0;
+    cacc[0] = cacc[1] = 0;
     for (int i = 0; i < 100; i++) avg[i] = 0;
 }
 
@@ -328,6 +445,9 @@ static void status(void)
         for (u32 i = 0; i < k; i++) { u32 j = (sec_n - k + i) & 7; kprintf(" %u/%u", (u32)sec_w0[j], (u32)sec_w1[j]); }
         kprintf("\n  (a pulse = first > 60; second > 50 = bit 1; no pulse = the minute mark)\n");
     }
+    if (mlock_k >= 0) kprintf("  minute found (contrast %d%%), %u minutes summed: best %02d:%02d (sure: minute %d, hour %d, date %s)\n",
+                              mlock_c, (u32)soft_n, soft_hh, soft_mm, soft_mmargin, soft_hmargin, soft_dok ? "yes" : "not yet");
+    else kprintf("  minute start not found yet (contrast %d%%, needs 25%%; takes 2-4 minutes)\n", mlock_c);
     kprintf("  bits this minute: %d\n", nbits > 59 ? 59 : nbits);
     if (bitstr[0]) kprintf("  last minute: %s\n", bitstr);
     if (last_time) {

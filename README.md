@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.77**
+Current version: **0.78**
 
 ## Supported boards
 
@@ -458,6 +458,8 @@ new SPI0 driver `src/spi.c`.
 0.76: `dcf` shows how long each level lasted (a table + the last 12 periods) to tell a real signal from noise.
 0.77: noise-tolerant DCF77 decoder: it locks onto the 1 s rhythm and judges each second as a whole (spikes no
 longer break pulses); two good minutes that fit together set the clock even with bad minutes in between.
+0.78: DCF77 with a weak / noisy signal: the minute start is found by itself and the bits are summed over
+several minutes (hour and date stay, the minute goes +1), so the time comes even when every minute has errors.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)

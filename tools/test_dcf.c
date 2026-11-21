@@ -14,7 +14,8 @@ static long dfc(int y, int m, int d) { y -= m <= 2; long era = (y >= 0 ? y : y -
     unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1; unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; return era * 146097 + (long)doe - 719468; }
 static u64 clock_make(int y, int mo, int d, int h, int mi, int s) { return (u64)dfc(y, mo, d) * 86400 + h * 3600 + mi * 60 + s; }
 static u64 set_t, set_count; static int set_by, how;
-static void clock_set_time(u64 t, int by) { set_t = t; set_by = by; set_count++; }
+static int show_sets;
+static void clock_set_time(u64 t, int by) { set_t = t; set_by = by; set_count++; if (show_sets) printf("    set %llu = %02llu:%02llu:%02llu UTC\n", (unsigned long long)t, (unsigned long long)(t / 3600 % 24), (unsigned long long)(t / 60 % 60), (unsigned long long)(t % 60)); }
 static int clock_how(void) { return how; }
 static u64 clock_synced_ago(void) { return 10; }
 #define DCF_HOST_TEST
@@ -103,6 +104,22 @@ int main(void)
     printf("  level changes %u, lock %d%%, minutes ok %u bad %u\n", n_edges, lock_q, n_frames, n_bad_frames);
     want = clock_make(2026, 11, 22, 8, 14, 0);
     check("time = 08:14 UTC despite the noise", set_count && set_t + 1 >= want && set_t <= want + 1);
+
+    printf("very heavy interference (8 per mille: every minute has errors) - summed over minutes:\n");
+    reset_all(); now_us += 5000000; noise_pml = 8; set_count = 0; set_t = 0; show_sets = 1;
+    run(0, 3000);
+    { int okm = 0; u64 last_set = 0;
+      for (int m = 0; m < 14; m++) {
+          int mi = 50 + m, h = 23, d = 21, wd = 6; if (mi >= 60) { mi -= 60; h = 0; d = 22; wd = 7; }
+          minute(2026, 11, d, wd, h, mi, 0, 1, 0, -1);
+          if (set_count && set_t != last_set) { last_set = set_t; okm++; }
+      }
+      run(1, 100); noise_pml = 0; show_sets = 0;
+      printf("  minutes ok %u bad %u, soft results %u, clock set %llu times, minute lock contrast %d%%\n",
+             n_frames, n_bad_frames, n_soft, (unsigned long long)set_count, mlock_c);
+      /* the last minute sent says 00:03 local on the 22nd (CET) = 23:03 UTC on the 21st */
+      u64 w = clock_make(2026, 11, 21, 23, 3, 0);
+      check("clock set to the right time (across midnight)", set_count && set_t + 1 >= w && set_t <= w + 1); }
 
     printf("noise only:\n");
     reset_all(); now_us += 5000000;
