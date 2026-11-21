@@ -113,6 +113,41 @@ int i2c_write_reg(u8 addr, u8 reg, const void *data, int n)
     return i2c_write(addr, b, n + 1);
 }
 
+/* write WITHOUT looking at the ACK bits, bit-banged on GPIO2/3 (~90 kHz): for displays that never
+ * acknowledge (2.42" SSD1309 OLED boards with the D2 jumper open - ESP / Arduino software I2C ignores
+ * ACK, but the BSC stops at a missing address ACK). Open drain: low = output 0, high = input (the Pi's
+ * 1.8k pull-ups). The pins go back to ALT0 (BSC1) afterwards. */
+static void bb(int pin, int hi) { if (hi) gpio_func(pin, 0); else { gpio_set(pin, 0); gpio_func(pin, 1); } }
+static void bb_byte(u8 v)
+{
+    for (int i = 7; i >= 0; i--) { bb(2, (v >> i) & 1); delay_us(3); bb(3, 1); delay_us(5); bb(3, 0); delay_us(2); }
+    bb(2, 1); delay_us(3); bb(3, 1); delay_us(5); bb(3, 0); delay_us(2);          /* the ACK clock: not read */
+}
+int i2c_write_noack(u8 addr, const void *buf, int n)
+{
+    const u8 *b = buf;
+    i2c_init();
+    lk();
+    bb(2, 1); bb(3, 1); delay_us(5);
+    bb(2, 0); delay_us(5); bb(3, 0); delay_us(3);                                 /* START */
+    bb_byte((u8)(addr << 1));
+    for (int i = 0; i < n; i++) bb_byte(b[i]);
+    bb(2, 0); delay_us(3); bb(3, 1); delay_us(5); bb(2, 1); delay_us(5);          /* STOP */
+    gpio_func(2, 4); gpio_func(3, 4);
+    mmio_write(BSC_S, S_DONE | S_ERR | S_CLKT);
+    ulk();
+    return 0;
+}
+
+/* OLED controllers (SSD1306/SSD1309/SH1106) are write-only on I2C: they may not ACK a READ address.
+ * Probe them with a one-byte write of 0x00 = a control byte with nothing after it (harmless).
+ * Only used for the display addresses - an unknown chip could take the byte as a register number. */
+int i2c_probe_write(u8 addr)
+{
+    u8 z = 0;
+    return i2c_write(addr, &z, 1) == 0;
+}
+
 /* is somebody at addr? (a one-byte read is answered by every device) */
 int i2c_probe(u8 addr)
 {
@@ -144,7 +179,7 @@ void i2c_cmd(int argc, char **argv)
         int n = 0;
         kprintf("I2C on GPIO2 (SDA) / GPIO3 (SCL), 100 kHz:\n");
         for (int ad = 0x08; ad < 0x78; ad++)
-            if (i2c_probe((u8)ad)) { kprintf("  0x%02x  %s\n", ad, guess((u8)ad)); n++; }
+            if (i2c_probe((u8)ad) || ((ad == 0x3C || ad == 0x3D) && i2c_probe_write((u8)ad))) { kprintf("  0x%02x  %s\n", ad, guess((u8)ad)); n++; }
         kprintf("%d device(s)\n", n);
         return;
     }
