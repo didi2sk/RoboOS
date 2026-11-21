@@ -202,15 +202,20 @@ static void detect(void)
     if (cfg_type > 0) {
         int a = cfg_addr ? cfg_addr : cfg_type == D_LCD ? 0x27 : 0x3C;
         if (cfg_type == D_LCD && !cfg_addr && !i2c_probe(0x27) && i2c_probe(0x3F)) a = 0x3F;
-        if (cfg_type != D_LCD && !cfg_addr && !i2c_probe(0x3C) && i2c_probe(0x3D)) a = 0x3D;
-        if (i2c_probe((u8)a)) { dtype = cfg_type; daddr = a; }
+        if (cfg_type != D_LCD && !cfg_addr && !i2c_probe(0x3C) && !i2c_probe_write(0x3C) && (i2c_probe(0x3D) || i2c_probe_write(0x3D))) a = 0x3D;
+        if (i2c_probe((u8)a) || (cfg_type != D_LCD && i2c_probe_write((u8)a))) { dtype = cfg_type; daddr = a; }
         else if (cfg_type != D_LCD) { dtype = cfg_type; daddr = a; noack = 1; }   /* an OLED that never ACKs */
         return;
     }
     static const u8 oled[] = { 0x3C, 0x3D }, lcd[] = { 0x27, 0x3F };
     for (int i = 0; i < 2 && !dtype; i++) {
         u8 s;
-        if (i2c_read(oled[i], &s, 1)) continue;
+        if (i2c_read(oled[i], &s, 1)) {
+            /* no answer to a read: an SSD1309 (the 2.42" boards) is write-only on I2C - try a write */
+            if (!i2c_probe_write(oled[i])) continue;
+            st_byte = 0xFF; dtype = D_SSD1306; daddr = oled[i];   /* (0xFF in 'display' = no status byte) */
+            continue;
+        }
         /* ASSUMED: the SH1106 status byte reads 0x08 (bits 3:0) when the display is off, the SSD1306
          * gives 0x03 / 0x06 / 0x07 - the usual trick of the Arduino auto-detect sketches. If the picture is
          * shifted by 2 pixels or the right edge is noise, 'display type sh1106' (or ssd1306) fixes it. */

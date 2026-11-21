@@ -415,6 +415,8 @@ a po 18 s Pi odpojil, druhý pokus sa potom pripojil za 3 s.
 certifikátov pre HTTPS (DigiCert G5, SSL.com, Certainly, Microsoft, IdenTrust).
 0.57: OLED displeje, ktoré na I2C nepotvrdzujú (ACK) - 2,42" dosky SSD1309 s otvoreným D2 (na ESP išli, jeho softvérové I2C
 ACK ignoruje): `display type ssd1306` ich použije aj tak, zápis softvérovým I2C na GPIO2/3.
+Nájdu sa aj OLED radiče, ktoré odpovedajú na zápis, ale nie na čítanie (SSD1309): `i2c scan` a hľadanie displeja
+skúšajú 0x3C/0x3D aj zápisom.
 
 ### Dátum a čas (NTP)
 

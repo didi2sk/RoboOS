@@ -139,6 +139,15 @@ int i2c_write_noack(u8 addr, const void *buf, int n)
     return 0;
 }
 
+/* OLED controllers (SSD1306/SSD1309/SH1106) are write-only on I2C: they may not ACK a READ address.
+ * Probe them with a one-byte write of 0x00 = a control byte with nothing after it (harmless).
+ * Only used for the display addresses - an unknown chip could take the byte as a register number. */
+int i2c_probe_write(u8 addr)
+{
+    u8 z = 0;
+    return i2c_write(addr, &z, 1) == 0;
+}
+
 /* is somebody at addr? (a one-byte read is answered by every device) */
 int i2c_probe(u8 addr)
 {
@@ -170,7 +179,7 @@ void i2c_cmd(int argc, char **argv)
         int n = 0;
         kprintf("I2C on GPIO2 (SDA) / GPIO3 (SCL), 100 kHz:\n");
         for (int ad = 0x08; ad < 0x78; ad++)
-            if (i2c_probe((u8)ad)) { kprintf("  0x%02x  %s\n", ad, guess((u8)ad)); n++; }
+            if (i2c_probe((u8)ad) || ((ad == 0x3C || ad == 0x3D) && i2c_probe_write((u8)ad))) { kprintf("  0x%02x  %s\n", ad, guess((u8)ad)); n++; }
         kprintf("%d device(s)\n", n);
         return;
     }

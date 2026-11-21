@@ -224,6 +224,7 @@ int  i2c_read(u8 addr, void *buf, int n);
 int  i2c_read_reg(u8 addr, u8 reg, void *buf, int n);
 int  i2c_write_reg(u8 addr, u8 reg, const void *data, int n);
 int  i2c_probe(u8 addr);
+int  i2c_probe_write(u8 addr);        /* 1-byte write of 0x00: for write-only OLED controllers */
 int  i2c_write_noack(u8 addr, const void *buf, int n);   /* bit-banged, ACK ignored (displays without ACK) */
 void i2c_cmd(int argc, char **argv);
 

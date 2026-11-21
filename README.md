@@ -419,6 +419,8 @@ dropped the board after 18 s, the second try then joined in 3 s.
 for HTTPS (DigiCert G5, SSL.com, Certainly, Microsoft, IdenTrust).
 0.57: OLED displays that never acknowledge on I2C (2.42" SSD1309 boards with the D2 jumper open - they worked on an ESP,
 whose software I2C ignores ACK): `display type ssd1306` uses them anyway, written by bit-banged I2C on GPIO2/3.
+Also OLED controllers that answer writes but not reads (SSD1309) are now found: `i2c scan` and the display search try
+0x3C/0x3D with a write too.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)

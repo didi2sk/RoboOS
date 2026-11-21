@@ -41,7 +41,7 @@ static int sound_is_exclusive(void) { return 0; }
 
 /* ---------------- the fake bus ---------------- */
 enum { NONE, SSD, SH, LCD };
-static int chip, chip_addr, chip_noack;            /* chip_noack: never ACKs (2.42" board, D2 open) */
+static int chip, chip_addr, chip_noack, chip_wonly;   /* chip_wonly: ACKs writes, not reads (SSD1309) */            /* chip_noack: never ACKs (2.42" board, D2 open) */
 static u8 status_byte;
 static u8 gram[8][132];
 static int col, page, c0 = 0, c1 = 127, p0 = 0, p1 = 7, sh_col;
@@ -110,7 +110,8 @@ static int bus_write(u8 a, const void *bv, int n)
     else { printf("bad control byte 0x%02x\n", b[0]); errors++; }
     return 0;
 }
-static int i2c_read(u8 a, void *b, int n) { (void)n; if (chip_noack || !chip || a != chip_addr) return -1; *(u8 *)b = status_byte; return 0; }
+static int i2c_read(u8 a, void *b, int n) { (void)n; if (chip_wonly || chip_noack || !chip || a != chip_addr) return -1; *(u8 *)b = status_byte; return 0; }
+static int i2c_probe_write(u8 a) { u8 z = 0; return i2c_write(a, &z, 1) == 0; }
 static int i2c_probe(u8 a) { u8 b; return i2c_read(a, &b, 1) == 0; }
 
 #define DISPLAY_HOST_TEST
@@ -142,7 +143,7 @@ static void lcd_textrow(int r, int w, char *out)
 
 static void reset(int c, int addr, u8 st, const char *cfg)
 {
-    chip = c; chip_addr = addr; chip_noack = 0; status_byte = st; cfg_text = cfg;
+    chip = c; chip_addr = addr; chip_noack = 0; chip_wonly = 0; status_byte = st; cfg_text = cfg;
     memset(gram, 0, sizeof(gram)); memset(ddram, 0, sizeof(ddram));
     l4bit = 0; lnib_hi = -1; last_e = 0; col = page = sh_col = 0;
     cfg_type = -1; cfg_addr = cfg_w = cfg_h = 0; status_on = 1; contrast = 0xCF; backlight = 1; ok = 0; busy = 0;
@@ -218,6 +219,12 @@ int main(void)
     display_boot();
     check("no display", !display_found() && display_text(0, "x") == -1);
     { char *av[] = { "display" }; display_cmd(1, av); }
+
+    printf("SSD1309 that ACKs writes only (no reads), auto:\n");
+    reset(SSD, 0x3C, 0, 0); chip_wonly = 1;
+    display_boot();
+    check("found by a write, ssd1306, not blind", display_found() && dtype == D_SSD1306 && !noack && daddr == 0x3C);
+    { const char *w[] = { "RoboOS", "0.56", "Raspberry Pi 3 M", "" }; expect_rows("boot", 0, 0, 4, w); }
 
     printf("2.42\" SSD1309 without ACK, auto: not found; type ssd1306: written blind\n");
     reset(SSD, 0x3C, 0, 0); chip_noack = 1;
