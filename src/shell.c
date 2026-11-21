@@ -711,6 +711,7 @@ static const struct cmd cmds[] = {
     { "logout", "",                     "end the shell login",           logout_cmd },
     { "mqtt",   "[broker|pub|off|..]", "MQTT client (IoT broker)",       mqtt_cmd   },
     { "ai",     "<question>|@cmd ..|key|model", "ask Claude (AI, needs an API key)", ai_cmd },
+    { "radio",  "[MHz|up|down|scan|vol|off]", "FM radio (RDA5807M module)",  radio_cmd  },
     { "display", "[scan|text|status|..]", "I2C OLED / LCD display",        display_cmd },
     { "sensors", "[scan]",              "temperature, humidity, ADC, RTC", sensors_cmd },
     { "time",   "[sync|zone|server]",   "date and time (NTP), time zone",  time_cmd   },

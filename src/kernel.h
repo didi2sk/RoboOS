@@ -256,6 +256,19 @@ int  display_found(void);
 int  display_rows(void);
 int  display_cols(void);
 void display_cmd(int argc, char **argv);
+/* radio.c - RDA5807M FM radio (I2C 0x10/0x11) */
+void radio_boot(void);
+void radio_poll(void);                /* core 0, con_trygetc: RDS, queued network commands */
+void radio_cmd(int argc, char **argv);
+void radio_net(const char *cmd, int len);   /* core 1 (API, MQTT): a command line for core 0 */
+int  radio_on(void);
+int  radio_present(void);
+u32  radio_freq(void);                /* 10 kHz units: 10440 = 104.40 MHz */
+int  radio_rssi(void);
+int  radio_stereo(void);
+int  radio_volume(void);
+const char *radio_ps(void);
+const char *radio_rt(void);
 void display_con_putc(char c);        /* console.c: every printed char (console mode) */
 void display_net(int row, const char *t, int len);   /* core 1 (API, MQTT): row -1 = whole screen */
 const char *display_type_name(void);

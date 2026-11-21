@@ -129,6 +129,7 @@ static int raw_trygetc(void)
     upload_poll();                              /* a file / kernel that came over the network: to the card */
     bt_boot_poll();                             /* Bluetooth at boot, once WiFi has joined */
     display_poll();                             /* I2C display: the status screen */
+    radio_poll();                               /* FM radio: RDS, network commands */
     return kbd_getc();
 }
 

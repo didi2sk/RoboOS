@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.70**
+Current version: **0.71**
 
 ## Supported boards
 
@@ -448,6 +448,8 @@ writes; `i2c speed <kHz>` (10-400, until reboot) - LCD backpacks (PCF8574) are r
 0.70: I2C bus clear - the owner's LCD backpack held SDA low ("SDA LOW" in `i2c scan`, nothing found) until a
 failed transfer clocked it free; now at start-up, before `i2c scan` and after a timeout RoboOS sends up to 9 clock
 pulses + a STOP whenever SDA is stuck low (`i2c scan` says so).
+0.71: FM radio - `radio` for an RDA5807M module (tune, seek, scan, volume, RDS name + text, `display radio`,
+/api/radio, MQTT set/radio); an MPU-6050 on 0x68 is no longer taken for the DS3231 clock (WHO_AM_I check).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -709,6 +711,27 @@ questions with real commands. The key lives in `/AI.TXT`, **XOR-scrambled** - on
 readable at a glance; anyone with the card can recover it, so keep the spend limit low. It never
 goes to the shell history. **Not yet tested against the real API** (QEMU test with a fake server).
 
+### FM radio (RDA5807M, 0.71)
+
+The tiny RDA5807M module (RRD-102, ~11 x 11 mm) is an FM receiver on the I2C bus (addresses 0x10/0x11),
+3.3 V. Wiring: VCC pin 1, GND pin 6, SDA pin 3, SCL pin 5, about 75 cm of wire on ANT; the sound comes
+out of the module itself on L / R (32 ohm headphones directly, a speaker through a small amplifier).
+
+```
+radio 104.4          tune (also 104,4 or 1044), switches it on
+radio up / down      seek the next station
+radio scan           list every station of the band (87-108 MHz) with its signal
+radio vol 8          volume 0-15 (0 = muted)
+radio mono on|off    forced mono (weak stations hiss less); radio bass on|off
+radio                frequency, stereo, signal, RDS station name and text
+radio off / on
+display radio        the radio on the OLED: frequency, station name, radio text
+```
+
+The station, volume and on/off are saved in `/RADIO.TXT` and restored at boot. Over the network:
+`POST /api/radio` with `{"cmd":"104.4"}` (or `up`, `down`, `off`, `vol 8`), `GET /api/radio` (state +
+RDS), MQTT `roboos/<name>/set/radio`. **Not yet tested on hardware** (PC test `tools/test_radio.c` with a fake chip).
+
 ### MQTT
 
 MQTT is the usual way IoT devices talk to a server (Home Assistant, Node-RED, Mosquitto...).
@@ -893,6 +916,7 @@ If you connect after boot, press Enter.
 | `bt [on\|scan [s]\|sensors\|pair [mac]\|forget\|off\|auto on\|off]` | Bluetooth: devices, thermometers, phone, keyboard (only when asked) |
 | `sensors [scan]`, `i2c scan\|read\|write` | I2C sensors (BME280, ADS1115, DS3231) |
 | `ai <question>\|@cmd ..\|key\|model` | ask Claude (own Anthropic API key) |
+| `radio [MHz\|up\|down\|scan\|vol n\|off]` | FM radio (RDA5807M module on I2C) |
 | `display [scan\|text n ..\|clear\|status on\|off\|size\|type\|addr]` | I2C OLED / LCD display |
 | `mqtt [broker\|user\|pub\|interval\|off]` | MQTT client (IoT) |
 | `users [add\|passwd\|del\|console on\|off]`, `logout` | logins for the web page + API (optional) |

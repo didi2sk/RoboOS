@@ -230,6 +230,7 @@ static void incoming(const char *t, int tl, const char *p, int pl)
         return;
     }
     if (!strcmp(sub, "set/publish")) { publish_state(); return; }
+    if (!strcmp(sub, "set/radio")) { radio_net(p, pl); return; }                  /* 104.4 / up / down / off / vol 8 */
     if (!strcmp(sub, "set/display")) { display_net(-1, p, pl); return; }        /* the whole screen, \n = next row */
     if (!strncmp(sub, "set/display/", 12)) {                                     /* one row: set/display/<1..10> */
         int r = 0, k = 12;

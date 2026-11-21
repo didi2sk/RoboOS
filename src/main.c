@@ -2,7 +2,7 @@
 #include "usb.h"
 #include "sd.h"
 
-#define VERSION "0.70"
+#define VERSION "0.71"
 
 const char *os_version(void) { return VERSION; }
 /* found by 'update' / POST /api/update in a kernel8.img: only a RoboOS kernel may replace the running one */
@@ -110,6 +110,7 @@ void kernel_main(void)
     clock_prepare();                     /* /TIME.TXT */
     sensors_probe();                     /* I2C: BME280, ADS1115, DS3231 */
     display_boot();                      /* I2C: OLED / LCD display (/DISPLAY.TXT) */
+    radio_boot();                        /* I2C: RDA5807M FM radio (/RADIO.TXT) */
     { u64 rt = rtc_read(); if (rt) clock_set_time(rt, 3); }   /* the time before NTP answers */
     ip_prepare();
     mqtt_prepare();                      /* /MQTT.TXT */
