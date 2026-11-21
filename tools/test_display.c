@@ -1,7 +1,7 @@
 /*
  * PC test of src/display.c: fake SSD1306 / SH1106 / HD44780-on-PCF8574 chips decode every I2C byte
  * the driver sends, then the picture is read back as text (OLED pixels matched against the font).
- * build + run:  cc -O1 -o /tmp/test_display tools/test_display.c src/font.c src/font5x7.c src/font4x6.c src/fontclock.c && /tmp/test_display
+ * build + run:  cc -O1 -o /tmp/test_display tools/test_display.c src/font.c src/font5x7.c src/font4x6.c src/font5x8.c src/fontclock.c && /tmp/test_display
  */
 #include <stdio.h>
 #include <string.h>
@@ -322,8 +322,8 @@ int main(void)
     now_us += 200000; display_poll();
     { const char *w[] = { "line 5  x", "line 6  x", "line 7  x", "line 8  x", "line 9  x", "robo$ ls0123456789012", "345678901234", "" }; expect_small("wrap", 8, w); }
 
-    printf("tiny font: 32 x 10 (rows across page borders)\n");
-    reset(SSD, 0x3C, 0x43, "font tiny\nmode console\n");
+    printf("micro font: 32 x 10 (rows across page borders)\n");
+    reset(SSD, 0x3C, 0x43, "font micro\nmode console\n");
     display_boot();
     check("32 x 10", cols == 32 && rows == 10);
     for (int i = 1; i <= 12; i++) { char l[48]; snprintf(l, sizeof(l), "%02d The quick brown fox jumps!\n", i); for (char *c = l; *c; c++) display_con_putc(*c); }
@@ -332,6 +332,15 @@ int main(void)
         if (r < 9) { char t[40]; snprintf(t, sizeof(t), "%02d The quick brown fox jumps!", r + 4); snprintf(w, sizeof(w), "%-32.32s", t); } else snprintf(w, sizeof(w), "%-32s", "");
         printf("  tiny row %2d: [%s]%s\n", r + 1, got, strcmp(got, w) ? " WRONG" : ""); if (strcmp(got, w)) bad = 1; }
       check("tiny rows", !bad); }
+
+    printf("tiny font (5x8): 25 x 8\n");
+    reset(SSD, 0x3C, 0x43, "font tiny\nmode text\n");
+    display_boot();
+    check("25 x 8", cols == 25 && rows == 8);
+    display_text(0, "address: 192.168.1.104");
+    { extern const unsigned char font5x8[95][5]; char o[26]; for (int c = 0; c < 25; c++) { o[c] = '?';
+        for (int q = 0; q < 95; q++) if (!memcmp(&gram[0][c * 5], font5x8[q], 5)) { o[c] = (char)(32 + q); break; } } o[25] = 0;
+      printf("  [%s]\n", o); check("tiny row 1", !strcmp(o, "address: 192.168.1.104   ")); }
 
     printf("clock (display time), 128x64 and 128x32, LCD 16x2\n");
     reset(SSD, 0x3C, 0x43, "mode clock\n");

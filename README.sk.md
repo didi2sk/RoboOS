@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.61**
+Aktuálna verzia: **0.62**
 
 ## Podporované dosky
 
@@ -425,6 +425,7 @@ sa len zmenené 8-bodové pásy. Riadky 1-10 v BASICu, API aj MQTT.
 `display console off` sa vráti na stavovú obrazovku (v 0.59 nechal displej prázdny). Režim sa uloží.
 0.61: hodiny tenkými číslicami (DejaVu Sans, `tools/mkclock.py`) namiesto hrubých 3x zväčšených, sekundy menšie
 hneď vedľa HH:MM, dátum písmom 8x16 pod nimi.
+0.62: `font tiny` je teraz čitateľnejšie X11 5x8 (25 x 8); stiesnené 4x6 (32 x 10) je `font micro`.
 
 ### Dátum a čas (NTP)
 
@@ -641,7 +642,7 @@ display size 20x4        veľkosť LCD sa nedá zistiť: predpokladá sa 16x2 (a
 display type ssd1306     aj pre OLED, ktorý vôbec neodpovedá (bez ACK): zapisuje sa naslepo
 display type sh1106      ak je obraz OLED posunutý / pravý okraj je šum (auto, lcd, ssd1306, sh1106, none)
 display addr 0x26        iná adresa LCD modulu (prepojky A0-A2: 0x20-0x27, PCF8574A 0x38-0x3F)
-display font small       písmo OLED: tiny 32 x 10, small 21 x 8, normal 16 x 4, big 8 x 2 (veľké číslice) - uloží sa
+display font small       písmo OLED: micro 32 x 10, tiny 25 x 8, small 21 x 8, normal 16 x 4, big 8 x 2 (veľké číslice) - uloží sa
 display time             veľké digitálne hodiny: tenké HH:MM, vedľa menšie sekundy, pod tým deň + dátum (128x64), LCD = čas + dátum
 display info             späť na stavovú obrazovku (meno, IP, čas, sieť)
 display console on       kópia terminálu na displeji (najlepšie s malým písmom); off = späť na info
