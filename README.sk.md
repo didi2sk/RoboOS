@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.67**
+Aktuálna verzia: **0.68**
 
 ## Podporované dosky
 
@@ -435,6 +435,9 @@ po "asking ..." a nebolo vidno kde.
 0.67: OPRAVA zamrznutia `ai`: po odpovedi po kúskoch (chunked; API vrátilo HTTP 429) sa BearSSL pri slušnom
 ukončení TLS (`br_sslio_close`) zacyklil navždy - zopakované v QEMU; HTTPS klient teraz len zatvorí TCP spojenie.
 Pri 429 napíše, že ide o limit volaní / výdavkov alebo kredit.
+0.68: OPRAVA: `i2c scan` „našiel“ 0x3c / 0x3d aj bez ničoho pripojeného (skúška zápisom pre OLED): neskoré
+chýbajúce ACK sa zachytí a zápisu sa verí, len ak rezervovaná adresa 0x7c NEodpovie. `i2c scan` aj upozorní,
+ak sú SDA / SCL v pokoji nízko (skrat, prehodené vodiče, nenapájaný modul).
 
 ### Dátum a čas (NTP)
 
