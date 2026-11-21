@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.51**
+Current version: **0.52**
 
 ## Supported boards
 
@@ -404,7 +404,9 @@ WiFi retries say why the last try failed. 0.49: a retry never cuts short a try t
 associating or doing the WPA handshake (0.46 retried after 10 s and so joined only on the 4th try): after an
 error 2 s, otherwise 20 s; the time a try took is printed (`connected to ... (N s)`). 0.50: on the 3B+ (RoboOS does the WPA handshake) the firmware's
 own WPA status is ignored - 0.49 took it for a failure and restarted joins in the middle of the handshake (10 tries). 0.51: `wifi` lists the last 10 joins with the time of
-each step (network found, link, WPA msg1/msg3, keys, lost + reason) - one photo shows where a join stops.
+each step (network found, link, WPA msg1/msg3, keys, lost + reason) - one photo shows where a join stops. 0.52: the owner's router answered
+the quick retries with deauth reason 2 ("previous authentication no longer valid") 20 times: now every retry first
+leaves cleanly (disassociate, 0.3 s) and a refused try is retried after 15 s, not 2 s.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
