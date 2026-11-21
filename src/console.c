@@ -20,6 +20,7 @@ int  con_capture_end(void) { int n = cap_len; if (cap_buf) cap_buf[n] = 0; cap_b
 void con_putc(char c)
 {
     if (cap_buf && cap_len < cap_max - 1 && c != 7) cap_buf[cap_len++] = c;
+    display_con_putc(c);                        /* 'display console on': a copy on the I2C display */
     if (c == 7) { uart_putc(7); if (smp_core() == 0) sound_tone(880, 80); return; }   /* BEL = a short beep */
     con_lock();
     if (c == '\n') uart_putc('\r');

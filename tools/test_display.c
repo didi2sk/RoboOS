@@ -1,7 +1,7 @@
 /*
  * PC test of src/display.c: fake SSD1306 / SH1106 / HD44780-on-PCF8574 chips decode every I2C byte
  * the driver sends, then the picture is read back as text (OLED pixels matched against the font).
- * build + run:  cc -O1 -o /tmp/test_display tools/test_display.c src/font.c && /tmp/test_display
+ * build + run:  cc -O1 -o /tmp/test_display tools/test_display.c src/font.c src/font5x7.c && /tmp/test_display
  */
 #include <stdio.h>
 #include <string.h>
@@ -118,6 +118,40 @@ static int i2c_probe(u8 a) { u8 b; return i2c_read(a, &b, 1) == 0; }
 #include "../src/display.c"
 
 /* ---------------- reading the picture back ---------------- */
+extern const unsigned char font5x7[95][5];
+static void oled_textrow_small(int r, char *out)        /* 6x8 cells, 21 columns */
+{
+    for (int c = 0; c < 21; c++) {
+        out[c] = '?';
+        for (int k = 0; k < 95; k++) if (!memcmp(&gram[r][c * 6], font5x7[k], 5) && !gram[r][c * 6 + 5]) { out[c] = (char)(32 + k); break; }
+    }
+    out[21] = 0;
+}
+static void oled_textrow_big(int r, char *out)          /* 16x32 cells, 8 columns: undouble, compare with 8x16 */
+{
+    for (int c = 0; c < 8; c++) {
+        u8 g[16] = { 0 };
+        for (int p = 0; p < 4; p++)
+            for (int x = 0; x < 16; x += 2) {
+                u8 v = gram[r * 4 + p][c * 16 + x];
+                for (int y = 0; y < 8; y += 2) if (v & (1 << y)) g[(p * 8 + y) / 2] |= (u8)(0x80 >> (x / 2));
+            }
+        out[c] = '?';
+        for (int k = 0; k < 95; k++) if (!memcmp(g, font8x16[k], 16)) { out[c] = (char)(32 + k); break; }
+    }
+    out[8] = 0;
+}
+static void expect_small(const char *what, int nrows, const char *const *want)
+{
+    for (int r = 0; r < nrows; r++) {
+        char got[24], w[24];
+        oled_textrow_small(r, got);
+        snprintf(w, sizeof(w), "%-21.21s", want[r]);
+        int good = !strcmp(got, w);
+        printf("  %s row %d: [%s] %s\n", what, r + 1, got, good ? "ok" : "WRONG");
+        if (!good) { printf("     want [%s]\n", w); errors++; }
+    }
+}
 static void oled_textrow(int r, int x0, char *out)
 {
     for (int c = 0; c < 16; c++) {
@@ -146,7 +180,8 @@ static void reset(int c, int addr, u8 st, const char *cfg)
     chip = c; chip_addr = addr; chip_noack = 0; chip_wonly = 0; status_byte = st; cfg_text = cfg;
     memset(gram, 0, sizeof(gram)); memset(ddram, 0, sizeof(ddram));
     l4bit = 0; lnib_hi = -1; last_e = 0; col = page = sh_col = 0;
-    cfg_type = -1; cfg_addr = cfg_w = cfg_h = 0; status_on = 1; contrast = 0xCF; backlight = 1; ok = 0; busy = 0;
+    cfg_type = -1; cfg_addr = cfg_w = cfg_h = 0; mode = M_STATUS; font = 1; contrast = 0xCF; backlight = 1; ok = 0; busy = 0;
+    cur_r = cur_c = 0; dirty = 0; npend = 0;
     now_us = 0;
 }
 
@@ -209,7 +244,7 @@ int main(void)
     { char *av[] = { "display", "text", "4", "temp", "21.5", "C" }; display_cmd(6, av); }
     { const char *w[] = { "rpi3b-1234", "192.168.1.104", "2026-11-21 11:01:27", "temp 21.5 C" }; expect_rows("display text 4", 20, 0, 4, w); }
     { char *av[] = { "display", "status", "off" }; display_cmd(3, av); }
-    check("saved DISPLAY.TXT", !strcmp(saved, "type auto\nsize 20x4\nstatus off\ncontrast 207\n"));
+    check("saved DISPLAY.TXT", !strcmp(saved, "type auto\nsize 20x4\nmode text\nfont normal\ncontrast 207\n"));
     printf("    %s", saved);
     { char *av[] = { "display", "clear" }; display_cmd(2, av); }
     { const char *w[] = { "", "", "", "" }; expect_rows("clear", 20, 0, 4, w); }
@@ -235,6 +270,43 @@ int main(void)
     check("type set: used without ACK", display_found() && noack && daddr == 0x3C);
     { const char *w[] = { "RoboOS", "0.56", "Raspberry Pi 3 M", "" }; expect_rows("boot", 0, 0, 4, w); }
     { char *av[] = { "display" }; display_cmd(1, av); }
+
+    printf("small font (DISPLAY.TXT font small): 21 x 8, status screen\n");
+    reset(SSD, 0x3C, 0x43, "font small\n");
+    display_boot();
+    check("21 x 8", cols == 21 && rows == 8);
+    now_us += 2100000; display_poll();
+    { const char *w[] = { "RoboOS 0.56", "rpi3b-1234", "192.168.1.104", "", "2026-11-21 11:01:27", "WiFi iot", "", "up 0h 0m" }; expect_small("status", 8, w); }
+
+    printf("console mode (small font): the terminal copied, scrolling\n");
+    reset(SSD, 0x3C, 0x43, "font small\nmode console\n");
+    display_boot();
+    for (int i = 1; i <= 9; i++) { char l[32]; snprintf(l, sizeof(l), "line %d\tx\n", i); for (char *c = l; *c; c++) display_con_putc(*c); }
+    for (const char *c = "\033[1;32mrobo$ lsx\b \b"; *c; c++) display_con_putc(*c);
+    now_us += 200000; display_poll();
+    { const char *w[] = { "line 3  x", "line 4  x", "line 5  x", "line 6  x", "line 7  x", "line 8  x", "line 9  x", "robo$ ls" }; expect_small("console", 8, w); }
+    for (const char *c = "0123456789012345678901234\n"; *c; c++) display_con_putc(*c);
+    now_us += 200000; display_poll();
+    { const char *w[] = { "line 5  x", "line 6  x", "line 7  x", "line 8  x", "line 9  x", "robo$ ls0123456789012", "345678901234", "" }; expect_small("wrap", 8, w); }
+
+    printf("big font: 8 x 2\n");
+    reset(SSD, 0x3C, 0x43, "font big\nmode text\n");
+    display_boot();
+    check("8 x 2", cols == 8 && rows == 2);
+    display_text(0, "12:34"); display_text(1, "21.5 C");
+    { char g0[9], g1[9]; oled_textrow_big(0, g0); oled_textrow_big(1, g1);
+      check("big row 1 = '12:34   '", !strcmp(g0, "12:34   ")); check("big row 2 = '21.5 C  '", !strcmp(g1, "21.5 C  ")); }
+
+    printf("network text (core 1 -> core 0)\n");
+    reset(SSD, 0x3C, 0x43, 0);
+    display_boot();
+    display_net(-1, "Hello\nfrom MQTT\nrow 3", 22);
+    display_poll();
+    { const char *w[] = { "Hello", "from MQTT", "row 3", "" }; expect_rows("net all", 0, 0, 4, w); }
+    display_net(3, "only row 4", 10);
+    display_poll();
+    { const char *w[] = { "Hello", "from MQTT", "row 3", "only row 4" }; expect_rows("net row", 0, 0, 4, w); }
+    check("mode text after network text", mode == M_TEXT);
 
     printf("type none in DISPLAY.TXT (an OLED is there):\n");
     reset(SSD, 0x3C, 0x43, "type none\n");

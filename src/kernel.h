@@ -256,6 +256,11 @@ int  display_found(void);
 int  display_rows(void);
 int  display_cols(void);
 void display_cmd(int argc, char **argv);
+void display_con_putc(char c);        /* console.c: every printed char (console mode) */
+void display_net(int row, const char *t, int len);   /* core 1 (API, MQTT): row -1 = whole screen */
+const char *display_type_name(void);
+const char *display_mode_name(void);
+const char *display_row_text(int r);
 int  sensor_value(int n);             /* 0 CPU, 1 temp, 2 hum (0.01), 3 Pa, 4-7 mV */
 
 /* mqtt.c: MQTT 3.1.1 client (QoS 0), /MQTT.TXT */
