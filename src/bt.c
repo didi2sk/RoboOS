@@ -1215,6 +1215,18 @@ static void list(u64 since)
 }
 
 /* /BT.TXT: "auto on" = switch Bluetooth on at boot */
+/* with WiFi set up, Bluetooth waits until WiFi has joined (at most 15 s): both share one radio, and the
+ * Bluetooth start (firmware, paging the keyboard, scanning) made the boot-time WiFi join fail (20 s) */
+static u64 bt_boot_at;
+
+void bt_boot_poll(void)                           /* core 0, from con_trygetc */
+{
+    if (!bt_boot_at || io_held()) return;
+    if (!wifi_joined() && timer_us() < bt_boot_at) return;
+    bt_boot_at = 0;
+    if (!bt_up && bt_start()) kprintf("Bluetooth: %s\n", bt_err);
+}
+
 void bt_boot(void)
 {
     struct fat_file f;
@@ -1224,6 +1236,11 @@ void bt_boot(void)
     if (n <= 0) return;
     b[n] = 0;
     if (!strstr(b, "auto on")) return;
+    if (wifi_joining()) {                         /* WiFi first (one radio for both) */
+        bt_boot_at = timer_us() + 15000000;
+        kprintf("Bluetooth: starts once WiFi has joined\n");
+        return;
+    }
     if (bt_start()) kprintf("Bluetooth: %s\n", bt_err);
 }
 
