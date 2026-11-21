@@ -32,6 +32,27 @@ static u32 speed = 100000, core_hz, last_s, last_us;   /* last_s / last_us: stat
 static void lk(void)  { while (__atomic_test_and_set(&lock, __ATOMIC_ACQUIRE)) ; }
 static void ulk(void) { __atomic_clear(&lock, __ATOMIC_RELEASE); }
 
+static void bb(int pin, int hi) { if (hi) gpio_func(pin, 0); else { gpio_set(pin, 0); gpio_func(pin, 1); } }
+
+/* 0.70: a slave stuck in the middle of a byte keeps SDA low (owner's LCD backpack: "SDA LOW" in i2c scan,
+ * then nothing answered until a failed transfer happened to clock it free). The standard bus clear:
+ * up to 9 SCL pulses until SDA is released, then a STOP. Returns the pulses needed, 0 = SDA was free,
+ * -1 = still low (a short?). No lock taken - callers hold it or run before anyone uses the bus. */
+static int recover_l(void)
+{
+    if (gpio_get(2)) return 0;
+    gpio_func(2, 0);                                      /* SDA: input (released) */
+    int n = 0;
+    while (n < 9 && !gpio_get(2)) {
+        bb(3, 0); delay_us(5); bb(3, 1); delay_us(5); n++;
+    }
+    bb(2, 0); delay_us(5); bb(3, 1); delay_us(5); bb(2, 1); delay_us(5);   /* STOP */
+    int ok = gpio_get(2);
+    gpio_func(2, 4); gpio_func(3, 4);
+    return ok ? (n ? n : 1) : -1;
+}
+static int recovered;                                     /* for i2c scan: what the last clear did */
+
 void i2c_init(void)
 {
     if (ready) return;
@@ -45,6 +66,7 @@ void i2c_init(void)
     mmio_write(BSC_C, C_I2CEN | C_CLEAR);
     mmio_write(BSC_S, S_DONE | S_ERR | S_CLKT);
     ready = 1;
+    recovered = recover_l();
 }
 
 /* one transfer; 0 = ok, -1 = no answer (NACK), -2 = timeout / bus stuck */
@@ -52,7 +74,9 @@ static int xfer2(u8 addr, u8 *buf, int n, int rd);
 static int xfer(u8 addr, u8 *buf, int n, int rd)
 {
     u64 t0 = timer_us();
+    if (!gpio_get(2)) recovered = recover_l();            /* SDA held low before we start: clear it */
     int r = xfer2(addr, buf, n, rd);
+    if (r == -2 && !gpio_get(2)) recovered = recover_l();
     last_us = (u32)(timer_us() - t0);
     return r;
 }
@@ -134,7 +158,6 @@ int i2c_write_reg(u8 addr, u8 reg, const void *data, int n)
  * acknowledge (2.42" SSD1309 OLED boards with the D2 jumper open - ESP / Arduino software I2C ignores
  * ACK, but the BSC stops at a missing address ACK). Open drain: low = output 0, high = input (the Pi's
  * 1.8k pull-ups). The pins go back to ALT0 (BSC1) afterwards. */
-static void bb(int pin, int hi) { if (hi) gpio_func(pin, 0); else { gpio_set(pin, 0); gpio_func(pin, 1); } }
 static void bb_byte(u8 v)
 {
     for (int i = 7; i >= 0; i--) { bb(2, (v >> i) & 1); delay_us(3); bb(3, 1); delay_us(5); bb(3, 0); delay_us(2); }
@@ -206,6 +229,9 @@ void i2c_cmd(int argc, char **argv)
         int n = 0;
         i2c_init();
         kprintf("I2C on GPIO2 (SDA) / GPIO3 (SCL), %u kHz (core clock %u MHz):\n", speed / 1000, core_hz / 1000000);
+        lk(); recovered = recover_l(); ulk();
+        if (recovered > 0) kprintf("  (SDA was held low by a stuck chip - freed with %d clock pulse%s)\n", recovered, recovered > 1 ? "s" : "");
+        if (recovered < 0) kprintf("  !! SDA stays low even after 9 clock pulses - a short to GND or a broken module\n");
         int l = i2c_lines();
         if (l != 3) kprintf("  !! idle lines: SDA %s, SCL %s - should both be high (a short, SDA/SCL swapped,\n"
                             "     or a module without power pulling the line down)\n", l & 1 ? "high" : "LOW", l & 2 ? "high" : "LOW");

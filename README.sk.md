@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.69**
+Aktuálna verzia: **0.70**
 
 ## Podporované dosky
 
@@ -441,6 +441,9 @@ ak sú SDA / SCL v pokoji nízko (skrat, prehodené vodiče, nenapájaný modul)
 0.69: na prázdnej zbernici vlastníka stále fantóm 0x3c -> skúška zápisom musí odpovedať 3-krát po sebe, `i2c scan`
 označí také nálezy "[answers writes only]"; `i2c probe <adresa>` ukáže surový stav radiča + čas čítania a zápisu;
 `i2c speed <kHz>` (10-400, do reštartu) - LCD moduly (PCF8574) zvládajú najviac 100 kHz.
+0.70: uvoľnenie zaseknutej I2C zbernice - LCD modul vlastníka držal SDA dole ("SDA LOW" v `i2c scan`, nič sa
+nenašlo), kým ho neuvoľnil neúspešný prenos; teraz pri štarte, pred `i2c scan` a po vypršaní času RoboOS pošle až
+9 hodinových impulzov + STOP, keď je SDA zaseknutá dole (`i2c scan` to napíše).
 
 ### Dátum a čas (NTP)
 
