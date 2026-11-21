@@ -818,7 +818,7 @@ static void statement(void)
         sock_items(b, &n, sizeof(b));
         while (n && (b[n - 1] == '\n' || b[n - 1] == '\r')) n--;
         b[n] = 0;
-        if (r < 1 || r > 4) error("BAD ROW");
+        if (r < 1 || r > 10) error("BAD ROW");
         if (display_text((int)r - 1, b) == -1) error("NO DISPLAY");
         return;
     }

@@ -9,7 +9,9 @@
  * The text lives in txt[][]; only changed rows go out (the bus is 100 kHz: a full OLED is ~0.1 s,
  * a row ~25 ms). Status screen (default on): name, IP, time, link - refreshed once a second from
  * display_poll() on core 0 (con_trygetc); text from a command / BASIC / a program turns it off.
- * 0.58: fonts on the OLED: small 5x7 (21 x 8), normal 8x16 (16 x 4), big 16x32 (8 x 2); modes: status,
+ * 0.58: fonts on the OLED: small 5x7 (21 x 8), normal 8x16 (16 x 4), big 16x32 (8 x 2); 0.59: tiny 4x6
+ * (32 x 10) - text rows are no longer page-aligned, so the OLED is drawn into fb[8][128] and only the changed
+ * pages go out; modes: status,
  * text, console (a copy of the terminal: con_putc -> display_con_putc, the screen follows every 0.1 s);
  * text over the network (JSON API /api/display, MQTT set/display) is stored by core 1 and drawn by core 0.
  */
@@ -19,18 +21,21 @@
 #endif
 extern const unsigned char font8x16[95][16];
 extern const unsigned char font5x7[95][5];
+extern const unsigned char font4x6[95][4];
 
 enum { D_NONE, D_SSD1306, D_SH1106, D_LCD };
 static const char *const tname[] = { "none", "ssd1306", "sh1106", "lcd" };
 
-#define MAXR 8
-#define MAXC 21
+#define MAXR 10
+#define MAXC 32
 enum { M_TEXT, M_STATUS, M_CONSOLE };
 static const char *const mname[] = { "text", "status", "console" };
-static const char *const fname[] = { "small", "normal", "big" };
+static const char *const fname[] = { "small", "normal", "big", "tiny" };
+#define NFONTS 4
 static int dtype, daddr, dw, dh, rows, cols;    /* dw x dh: pixels (OLED) or characters (LCD) */
 static int cfg_type = -1, cfg_addr, cfg_w, cfg_h, contrast = 0xCF, backlight = 1;
-static int mode = M_STATUS, font = 1, cw = 8, chh = 16;   /* OLED font: 0 small 6x8, 1 normal 8x16, 2 big 16x32 */
+static int mode = M_STATUS, font = 1, cw = 8, chh = 16;   /* OLED font: 0 small 6x8, 1 normal 8x16, 2 big 16x32, 3 tiny 4x6 */
+static u8 fb[8][128], fbsent[8][128];          /* the OLED picture, and what the display shows */
 #define status_on (mode == M_STATUS)
 static volatile int dirty;                     /* console mode: txt changed since the last flush */
 static int cur_r, cur_c, esc;                  /* console mode: the cursor, inside an escape sequence */
@@ -63,29 +68,38 @@ static int oled_init(void)
     return oled_cmds(c, sizeof(c));
 }
 
-/* the column byte (bit 0 = top) of character ch, pixel column x, page p of its cell (font-dependent) */
-static u8 glyph_col(unsigned char ch, int x, int p)
+/* is pixel (x, y) of character ch's cell lit? (font-dependent cell size cw x chh) */
+static int glyph_px(unsigned char ch, int x, int y)
 {
     if (ch < 32 || ch > 126) ch = ch ? '?' : ' ';
-    if (font == 0) return x < 5 ? font5x7[ch - 32][x] : 0;          /* 5x7 in a 6x8 cell */
-    const unsigned char *g = font8x16[ch - 32];                     /* rows, bit 7 = the left pixel */
-    u8 v = 0;
-    if (font == 1) { for (int y = 0; y < 8; y++) if (g[p * 8 + y] & (0x80 >> x)) v |= (u8)(1 << y); }
-    else for (int y = 0; y < 8; y++) if (g[(p * 8 + y) / 2] & (0x80 >> (x / 2))) v |= (u8)(1 << y);   /* 2x */
-    return v;
+    switch (font) {
+    case 3: return x < 4 && y < 6 && (font4x6[ch - 32][x] >> y & 1);          /* 4x6 */
+    case 0: return x < 5 && y < 8 && (font5x7[ch - 32][x] >> y & 1);          /* 5x7 in a 6x8 cell */
+    case 1: return (font8x16[ch - 32][y] & (0x80 >> x)) != 0;                 /* rows, bit 7 = left */
+    default: return (font8x16[ch - 32][y / 2] & (0x80 >> (x / 2))) != 0;      /* the 8x16 doubled */
+    }
 }
 
-/* one text row = chh/8 pages of 128 columns */
-static int oled_row(int r)
+/* draw txt into fb, then send the pages that differ from what the display shows */
+static int oled_flush(void)
 {
+    memset(fb, 0, sizeof(fb));
+    for (int r = 0; r < rows; r++)
+        for (int c = 0; c < cols; c++) {
+            unsigned char ch = (unsigned char)txt[r][c];
+            if (ch == ' ') continue;
+            for (int y = 0; y < chh; y++) {
+                int py = r * chh + y;
+                if (py >= dh) break;
+                for (int x = 0; x < cw; x++)
+                    if (glyph_px(ch, x, y)) fb[py >> 3][c * cw + x] |= (u8)(1 << (py & 7));
+            }
+        }
     u8 b[1 + 128];
-    for (int half = 0; half < chh / 8; half++) {
-        int page = r * (chh / 8) + half;
-        if (page * 8 >= dh) break;
+    for (int page = 0; page < dh / 8; page++) {
+        if (!memcmp_n(fb[page], fbsent[page], 128)) continue;
         b[0] = 0x40;                             /* control byte: data follow */
-        memset(b + 1, 0, 128);
-        for (int c = 0; c < cols; c++)
-            for (int x = 0; x < cw; x++) b[1 + c * cw + x] = glyph_col((unsigned char)txt[r][c], x, half);
+        memcpy(b + 1, fb[page], 128);
         int e;
         if (dtype == D_SH1106) {                 /* page addressing; the 132-column RAM shows from column 2 */
             u8 c[] = { (u8)(0xB0 + page), 0x02, 0x10 };
@@ -96,6 +110,7 @@ static int oled_row(int r)
         }
         if (!e) e = dwr((u8)daddr, b, sizeof(b));
         if (e) return e;
+        memcpy(fbsent[page], fb[page], 128);
     }
     return 0;
 }
@@ -171,7 +186,7 @@ static void geometry(void)
         if (rows > MAXR) rows = dh = MAXR;
     } else {
         dw = 128; dh = cfg_h == 32 ? 32 : 64;
-        cw = font == 0 ? 6 : font == 1 ? 8 : 16; chh = font == 0 ? 8 : font == 1 ? 16 : 32;
+        cw = font == 3 ? 4 : font == 0 ? 6 : font == 1 ? 8 : 16; chh = font == 3 ? 6 : font == 0 ? 8 : font == 1 ? 16 : 32;
         cols = 128 / cw; rows = dh / chh;
     }
     if (cur_r >= rows) cur_r = rows - 1;
@@ -181,12 +196,14 @@ static void geometry(void)
 static int flush(void)
 {
     if (!ok) return -1;
+    int changed = 0;
     for (int r = 0; r < rows; r++) {
         if (!memcmp_n(txt[r], sent[r], MAXC + 1)) continue;
-        int e = dtype == D_LCD ? lcd_row(r) : oled_row(r);
-        if (e) { ok = 0; return e; }             /* gone from the bus: 'display scan' finds it again */
+        if (dtype == D_LCD) { if (lcd_row(r)) { ok = 0; return -1; } }   /* gone: 'display scan' finds it again */
         memcpy(sent[r], txt[r], MAXC + 1);
+        changed = 1;
     }
+    if (dtype != D_LCD && changed && oled_flush()) { ok = 0; return -1; }
     return 0;
 }
 
@@ -204,6 +221,7 @@ static int start(void)
     memset(txt, ' ', sizeof(txt));
     for (int r = 0; r < MAXR; r++) txt[r][MAXC] = 0;
     memset(sent, 0, sizeof(sent));               /* everything differs: the whole screen goes out */
+    memset(fbsent, 0xA5, sizeof(fbsent));
     ok = 0;
     if (dtype == D_NONE) return -1;
     int e = dtype == D_LCD ? lcd_init() : oled_init();
@@ -280,7 +298,7 @@ static void load_cfg(void)
             if (w && h) { cfg_w = (int)w; cfg_h = (int)h; }
         } else if (kl == 6 && !memcmp_n(k, "status", 6)) mode = !strcmp(vv, "on") ? M_STATUS : M_TEXT;   /* (0.55 files) */
         else if (kl == 4 && !memcmp_n(k, "mode", 4)) { for (int i = 0; i < 3; i++) if (!strcmp(vv, mname[i])) mode = i; }
-        else if (kl == 4 && !memcmp_n(k, "font", 4)) { for (int i = 0; i < 3; i++) if (!strcmp(vv, fname[i])) font = i; }
+        else if (kl == 4 && !memcmp_n(k, "font", 4)) { for (int i = 0; i < NFONTS; i++) if (!strcmp(vv, fname[i])) font = i; }
         else if (kl == 8 && !memcmp_n(k, "contrast", 8) && parse_num(vv, &x) && x < 256) contrast = (int)x;
     }
 }
@@ -483,13 +501,13 @@ void display_cmd(int argc, char **argv)
             busy = 0;
         }
         save_cfg();
-        if (mode == M_CONSOLE && font != 0 && dtype && dtype != D_LCD) kprintf("(tip: 'display font small' shows 21 x 8 characters)\n");
+        if (mode == M_CONSOLE && (font == 1 || font == 2) && dtype && dtype != D_LCD) kprintf("(tip: 'display font small' shows 21 x 8 characters, 'tiny' 32 x 10)\n");
         return;
     }
     else if (!strcmp(a, "font") && argc > 2) {
         int f = -1;
-        for (int i = 0; i < 3; i++) if (!strcmp(argv[2], fname[i])) f = i;
-        if (f < 0) { kprintf("fonts: small (21 x 8), normal (16 x 4), big (8 x 2) - OLED only\n"); return; }
+        for (int i = 0; i < NFONTS; i++) if (!strcmp(argv[2], fname[i])) f = i;
+        if (f < 0) { kprintf("fonts: tiny (32 x 10), small (21 x 8), normal (16 x 4), big (8 x 2) - OLED only\n"); return; }
         font = f; save_cfg(); restart();
     }
     else if (!strcmp(a, "type") && argc > 2) {
@@ -529,7 +547,7 @@ void display_cmd(int argc, char **argv)
     }
     else if (a[0]) {
         kprintf("usage: display [scan | clear | text <row> <words> | status on|off | console on|off\n"
-                "               | font small|normal|big | on | off | type auto|lcd|ssd1306|sh1106|none\n"
+                "               | font tiny|small|normal|big | on | off | type auto|lcd|ssd1306|sh1106|none\n"
                 "               | addr <0x..> | size <WxH> | contrast <0-255> | light on|off]\n");
         return;
     }

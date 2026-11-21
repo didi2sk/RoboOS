@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.58**
+Aktuálna verzia: **0.59**
 
 ## Podporované dosky
 
@@ -419,6 +419,8 @@ Nájdu sa aj OLED radiče, ktoré odpovedajú na zápis, ale nie na čítanie (S
 skúšajú 0x3C/0x3D aj zápisom.
 0.58: písma displeja (small 21 x 8 / normal / big), `display console on` (kópia terminálu), text cez sieť
 (`/api/display`, MQTT `set/display`). 2,42" OLED na 3B+ funguje (vlastník: ukazuje IP aj čas).
+0.59: `display font tiny` = 32 x 10 znakov (X11 4x6, voľné použitie); OLED sa kreslí do obrázka v pamäti a posielajú
+sa len zmenené 8-bodové pásy. Riadky 1-10 v BASICu, API aj MQTT.
 
 ### Dátum a čas (NTP)
 
@@ -635,7 +637,7 @@ display size 20x4        veľkosť LCD sa nedá zistiť: predpokladá sa 16x2 (a
 display type ssd1306     aj pre OLED, ktorý vôbec neodpovedá (bez ACK): zapisuje sa naslepo
 display type sh1106      ak je obraz OLED posunutý / pravý okraj je šum (auto, lcd, ssd1306, sh1106, none)
 display addr 0x26        iná adresa LCD modulu (prepojky A0-A2: 0x20-0x27, PCF8574A 0x38-0x3F)
-display font small       písmo OLED: small 21 x 8, normal 16 x 4, big 8 x 2 (veľké číslice) - uloží sa
+display font small       písmo OLED: tiny 32 x 10, small 21 x 8, normal 16 x 4, big 8 x 2 (veľké číslice) - uloží sa
 display console on       kópia terminálu na displeji (najlepšie s malým písmom); off = prázdny
 display contrast 128     jas OLED 0-255;  display light on|off = podsvietenie LCD;  display on|off
 ```
