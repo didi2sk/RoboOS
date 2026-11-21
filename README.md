@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.59**
+Current version: **0.60**
 
 ## Supported boards
 
@@ -425,6 +425,8 @@ Also OLED controllers that answer writes but not reads (SSD1309) are now found: 
 (`/api/display`, MQTT `set/display`). The 2.42" OLED works on the 3B+ (owner: IP and time shown).
 0.59: `display font tiny` = 32 x 10 characters (X11 4x6, public domain); the OLED is drawn into a picture in memory and
 only the changed 8-pixel stripes are sent. Rows 1-10 in BASIC, the API and MQTT.
+0.60: `display time` = a big digital clock (with the date on 128x64), `display info` = the status screen;
+`display console off` goes back to the status screen (in 0.59 it left the display empty). The mode is saved.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -646,7 +648,9 @@ display type ssd1306     also for an OLED that does not answer at all (no ACK): 
 display type sh1106      if the OLED picture is shifted / the right edge is noise (auto, lcd, ssd1306, sh1106, none)
 display addr 0x26        another LCD backpack address (A0-A2 jumpers: 0x20-0x27, PCF8574A 0x38-0x3F)
 display font small       OLED font: tiny 32 x 10, small 21 x 8, normal 16 x 4, big 8 x 2 (big digits) - saved
-display console on       a copy of the terminal on the display (best with the small font); off = empty
+display time             big digital clock: 128x64 = HH:MM + weekday, date and seconds, 128x32 = HH:MM:SS, LCD = time + date
+display info             back to the status screen (name, IP, time, link)
+display console on       a copy of the terminal on the display (best with the small font); off = back to info
 display contrast 128     OLED brightness 0-255;  display light on|off = LCD backlight;  display on|off
 ```
 

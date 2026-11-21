@@ -28,8 +28,8 @@ static const char *const tname[] = { "none", "ssd1306", "sh1106", "lcd" };
 
 #define MAXR 10
 #define MAXC 32
-enum { M_TEXT, M_STATUS, M_CONSOLE };
-static const char *const mname[] = { "text", "status", "console" };
+enum { M_TEXT, M_STATUS, M_CONSOLE, M_CLOCK };
+static const char *const mname[] = { "text", "status", "console", "clock" };
 static const char *const fname[] = { "small", "normal", "big", "tiny" };
 #define NFONTS 4
 static int dtype, daddr, dw, dh, rows, cols;    /* dw x dh: pixels (OLED) or characters (LCD) */
@@ -80,6 +80,8 @@ static int glyph_px(unsigned char ch, int x, int y)
     }
 }
 
+static int oled_send(void);
+
 /* draw txt into fb, then send the pages that differ from what the display shows */
 static int oled_flush(void)
 {
@@ -95,6 +97,12 @@ static int oled_flush(void)
                     if (glyph_px(ch, x, y)) fb[py >> 3][c * cw + x] |= (u8)(1 << (py & 7));
             }
         }
+    return oled_send();
+}
+
+/* send the pages of fb that differ from what the display shows */
+static int oled_send(void)
+{
     u8 b[1 + 128];
     for (int page = 0; page < dh / 8; page++) {
         if (!memcmp_n(fb[page], fbsent[page], 128)) continue;
@@ -113,6 +121,97 @@ static int oled_flush(void)
         memcpy(fbsent[page], fb[page], 128);
     }
     return 0;
+}
+
+static int ap(char *b, int n, const char *s);
+static int flush(void);
+static void set_row(int r, const char *s);
+
+/* ---- the clock (0.60): big digits drawn straight into fb ---- */
+static void px_on(int x, int y) { if (x >= 0 && x < 128 && y >= 0 && y < dh) fb[y >> 3][x] |= (u8)(1 << (y & 7)); }
+
+static void draw_big(const char *s, int x, int y, int k)        /* the 8x16 font, k times bigger */
+{
+    for (; *s; s++, x += 8 * k) {
+        unsigned char ch = (unsigned char)*s;
+        if (ch < 32 || ch > 126) ch = '?';
+        const unsigned char *g = font8x16[ch - 32];
+        for (int gy = 0; gy < 16; gy++)
+            for (int gx = 0; gx < 8; gx++)
+                if (g[gy] & (0x80 >> gx))
+                    for (int dy = 0; dy < k; dy++) for (int dx = 0; dx < k; dx++) px_on(x + gx * k + dx, y + gy * k + dy);
+    }
+}
+
+static void draw_small(const char *s, int x, int y)             /* the 5x7 font, 6 px a character */
+{
+    for (; *s; s++, x += 6) {
+        unsigned char ch = (unsigned char)*s;
+        if (ch < 32 || ch > 126) ch = '?';
+        for (int gx = 0; gx < 5; gx++)
+            for (int gy = 0; gy < 8; gy++) if (font5x7[ch - 32][gx] >> gy & 1) px_on(x + gx, y + gy);
+    }
+}
+
+/* "YYYY-MM-DD HH:MM:SS" -> weekday (Sakamoto) */
+static const char *weekday(const char *t)
+{
+    static const char *const wd[] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+    static const int tt[] = { 0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4 };
+    int y = (t[0] - '0') * 1000 + (t[1] - '0') * 100 + (t[2] - '0') * 10 + (t[3] - '0');
+    int m = (t[5] - '0') * 10 + (t[6] - '0'), d = (t[8] - '0') * 10 + (t[9] - '0');
+    if (m < 1 || m > 12) return "";
+    if (m < 3) y--;
+    return wd[(y + y / 4 - y / 100 + y / 400 + tt[m - 1] + d) % 7];
+}
+
+static int slen(const char *s) { int n = 0; while (s[n]) n++; return n; }
+
+/* the clock screen: OLED 128x64 = HH:MM 3x (48 px) + "Sat 21.11.2026  :56" below,
+ * 128x32 = HH:MM:SS 2x (fills it); LCD = time on row 1, weekday + date on row 2 */
+static void clock_draw(void)
+{
+    char t[24], hm[9], date[24];
+    u64 now = clock_now();
+    if (now) {
+        clock_format(t, now, 0);                 /* "YYYY-MM-DD HH:MM:SS" */
+        int n = ap(date, 0, weekday(t));
+        char d[12] = { ' ', t[8], t[9], '.', t[5], t[6], '.', t[0], t[1], t[2], t[3], 0 };
+        ap(date, n, d);
+    } else { ap(t, 0, "0000-00-00 --:--:--"); ap(date, 0, "no time yet (NTP)"); }
+    if (dtype == D_LCD) {
+        for (int r = 0; r < rows; r++) set_row(r, "");
+        char l[MAXC + 1]; int pad = (cols - 8) / 2, k = 0;
+        while (k < pad) l[k++] = ' ';
+        for (int i = 11; i < 19; i++) l[k++] = t[i];
+        l[k] = 0;
+        set_row(0, l);
+        if (rows > 1) {
+            int dl = slen(date); pad = cols > dl ? (cols - dl) / 2 : 0; k = 0;
+            while (k < pad) l[k++] = ' ';
+            for (int i = 0; date[i] && k < MAXC; i++) l[k++] = date[i];
+            l[k] = 0;
+            set_row(1, l);
+        }
+        flush();
+        return;
+    }
+    memset(fb, 0, sizeof(fb));
+    if (dh >= 64) {
+        for (int i = 0; i < 5; i++) hm[i] = t[11 + i];
+        hm[5] = 0;
+        draw_big(hm, 4, 0, 3);                   /* 5 x 24 = 120 px wide, 48 tall */
+        char sec[4] = { ':', t[17], t[18], 0 };
+        int dl = slen(date);
+        if (dl > 16) draw_small(date, 0, 54);
+        else { draw_small(date, 4, 54); draw_small(sec, 128 - 4 - 18, 54); }
+    } else {
+        for (int i = 0; i < 8; i++) hm[i] = t[11 + i];
+        hm[8] = 0;
+        draw_big(hm, 0, 0, 2);                   /* 8 x 16 = 128 px, 32 tall */
+    }
+    for (int r = 0; r < MAXR; r++) memset(sent[r], 0, MAXC + 1);   /* text mode redraws fully later */
+    if (oled_send()) ok = 0;
 }
 
 /* ---------------- LCD on a PCF8574 ---------------- */
@@ -297,7 +396,7 @@ static void load_cfg(void)
             while (*q >= '0' && *q <= '9') h = h * 10 + (u64)(*q++ - '0');
             if (w && h) { cfg_w = (int)w; cfg_h = (int)h; }
         } else if (kl == 6 && !memcmp_n(k, "status", 6)) mode = !strcmp(vv, "on") ? M_STATUS : M_TEXT;   /* (0.55 files) */
-        else if (kl == 4 && !memcmp_n(k, "mode", 4)) { for (int i = 0; i < 3; i++) if (!strcmp(vv, mname[i])) mode = i; }
+        else if (kl == 4 && !memcmp_n(k, "mode", 4)) { for (int i = 0; i < 4; i++) if (!strcmp(vv, mname[i])) mode = i; }
         else if (kl == 4 && !memcmp_n(k, "font", 4)) { for (int i = 0; i < NFONTS; i++) if (!strcmp(vv, fname[i])) font = i; }
         else if (kl == 8 && !memcmp_n(k, "contrast", 8) && parse_num(vv, &x) && x < 256) contrast = (int)x;
     }
@@ -445,11 +544,11 @@ void display_poll(void)
         busy = 0;
         return;
     }
-    if (mode != M_STATUS || timer_us() < next_status) return;
+    if ((mode != M_STATUS && mode != M_CLOCK) || timer_us() < next_status) return;
     busy = 1;
     next_status = timer_us() + 1000000;
-    status_draw();
-    flush();
+    if (mode == M_CLOCK) clock_draw();
+    else { status_draw(); flush(); }
     busy = 0;
 }
 
@@ -489,9 +588,17 @@ void display_cmd(int argc, char **argv)
         if (e) kprintf("no display (try 'display scan')\n");
         return;
     }
+    else if (!strcmp(a, "time") || !strcmp(a, "clock") || !strcmp(a, "info")) {
+        mode = a[0] == 'i' ? M_STATUS : M_CLOCK;
+        next_status = 0;
+        if (ok) { busy = 1; for (int r = 0; r < rows; r++) set_row(r, ""); flush(); busy = 0; }
+        save_cfg();
+        if (!dtype) kprintf("no display found\n");
+        return;
+    }
     else if ((!strcmp(a, "status") || !strcmp(a, "console")) && argc > 2) {
         int on = !strcmp(argv[2], "on");
-        mode = on ? (a[0] == 's' ? M_STATUS : M_CONSOLE) : M_TEXT;
+        mode = on ? (a[0] == 's' ? M_STATUS : M_CONSOLE) : a[0] == 'c' ? M_STATUS : M_TEXT;   /* console off -> info */
         next_status = 0;
         if (ok) {
             busy = 1;
@@ -546,7 +653,7 @@ void display_cmd(int argc, char **argv)
         else if (ok) { u8 c = on ? 0xAF : 0xAE; oled_cmds(&c, 1); }
     }
     else if (a[0]) {
-        kprintf("usage: display [scan | clear | text <row> <words> | status on|off | console on|off\n"
+        kprintf("usage: display [scan | clear | text <row> <words> | info | time | console on|off\n"
                 "               | font tiny|small|normal|big | on | off | type auto|lcd|ssd1306|sh1106|none\n"
                 "               | addr <0x..> | size <WxH> | contrast <0-255> | light on|off]\n");
         return;

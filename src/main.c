@@ -2,7 +2,7 @@
 #include "usb.h"
 #include "sd.h"
 
-#define VERSION "0.59"
+#define VERSION "0.60"
 
 const char *os_version(void) { return VERSION; }
 /* found by 'update' / POST /api/update in a kernel8.img: only a RoboOS kernel may replace the running one */
