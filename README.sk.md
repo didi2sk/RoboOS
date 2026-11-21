@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.68**
+Aktuálna verzia: **0.69**
 
 ## Podporované dosky
 
@@ -438,6 +438,9 @@ Pri 429 napíše, že ide o limit volaní / výdavkov alebo kredit.
 0.68: OPRAVA: `i2c scan` „našiel“ 0x3c / 0x3d aj bez ničoho pripojeného (skúška zápisom pre OLED): neskoré
 chýbajúce ACK sa zachytí a zápisu sa verí, len ak rezervovaná adresa 0x7c NEodpovie. `i2c scan` aj upozorní,
 ak sú SDA / SCL v pokoji nízko (skrat, prehodené vodiče, nenapájaný modul).
+0.69: na prázdnej zbernici vlastníka stále fantóm 0x3c -> skúška zápisom musí odpovedať 3-krát po sebe, `i2c scan`
+označí také nálezy "[answers writes only]"; `i2c probe <adresa>` ukáže surový stav radiča + čas čítania a zápisu;
+`i2c speed <kHz>` (10-400, do reštartu) - LCD moduly (PCF8574) zvládajú najviac 100 kHz.
 
 ### Dátum a čas (NTP)
 
