@@ -508,7 +508,7 @@ e.g. `python -m http.server`). HTTPS certificates are checked against built-in r
 DigiCert, Sectigo, Google, GlobalSign, Amazon; `tools/mkta.py`) and `/TLS/CA.PEM` (your own CA) - the
 board needs the time for that (NTP or `time set`). `update get -k` (or the word `insecure` in
 /UPDATE.TXT) skips the check. The same version is not installed again, an older one only with
-`update get force`. Redirects and chunked answers are followed.
+`update get force`. Redirects and chunked answers are followed. Works on the Pi 3B+: a kernel sent from a PC, and `update check` from GitHub with the certificate checked.
 
 ### Users: a login for the web page and the API (optional)
 

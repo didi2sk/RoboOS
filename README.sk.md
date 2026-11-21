@@ -500,7 +500,7 @@ rovnako bezpečne nainštaluje a reštartuje sa. Predvolene ide z tohto repozit�
 Certifikáty HTTPS sa overujú voči vstavaným koreňovým autoritám (Let's Encrypt, DigiCert, Sectigo, Google,
 GlobalSign, Amazon; `tools/mkta.py`) a `/TLS/CA.PEM` (vlastná autorita) - Pi na to potrebuje čas (NTP alebo
 `time set`). `update get -k` (alebo slovo `insecure` v /UPDATE.TXT) overovanie vynechá. Rovnaká verzia sa znova
-neinštaluje, staršia len cez `update get force`. Presmerovania a „chunked“ odpovede zvláda.
+neinštaluje, staršia len cez `update get force`. Presmerovania a „chunked“ odpovede zvláda. Funguje na Pi 3B+: kernel poslaný z PC aj `update check` z GitHubu s overeným certifikátom.
 
 ### Používatelia: prihlásenie na webovú stránku a API (voliteľné)
 
