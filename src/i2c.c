@@ -67,6 +67,12 @@ static int xfer(u8 addr, u8 *buf, int n, int rd)
             return (s & S_ERR) ? -1 : -2;
         }
         if (s & S_DONE) {
+            delay_us(30);                                 /* 0.68: a late ERR (no ACK) must not pass as done */
+            if (mmio_read(BSC_S) & (S_ERR | S_CLKT)) {
+                mmio_write(BSC_S, S_DONE | S_ERR | S_CLKT);
+                mmio_write(BSC_C, C_I2CEN | C_CLEAR);
+                return -1;
+            }
             if (rd) while ((mmio_read(BSC_S) & S_RXD) && i < n) buf[i++] = (u8)mmio_read(BSC_FIFO);
             mmio_write(BSC_S, S_DONE);
             return i == n ? 0 : -2;
@@ -145,8 +151,15 @@ int i2c_write_noack(u8 addr, const void *buf, int n)
 int i2c_probe_write(u8 addr)
 {
     u8 z = 0;
+    /* 0.68: with NOTHING on the bus the owner's 3B+ still "found" 0x3C and 0x3D this way. So first a
+     * write to 0x7C (a reserved address no chip may use): if that is "acknowledged" too, write
+     * probes cannot be trusted on this bus and say no */
+    if (i2c_write(0x7C, &z, 1) == 0) return 0;
     return i2c_write(addr, &z, 1) == 0;
 }
+
+/* the line levels while idle (both should be high: the Pi's 1.8k pull-ups) */
+int i2c_lines(void) { i2c_init(); return (gpio_get(2) ? 1 : 0) | (gpio_get(3) ? 2 : 0); }
 
 /* is somebody at addr? (a one-byte read is answered by every device) */
 int i2c_probe(u8 addr)
@@ -178,6 +191,10 @@ void i2c_cmd(int argc, char **argv)
     if (argc > 1 && !strcmp(argv[1], "scan")) {
         int n = 0;
         kprintf("I2C on GPIO2 (SDA) / GPIO3 (SCL), 100 kHz:\n");
+        int l = i2c_lines();
+        if (l != 3) kprintf("  !! idle lines: SDA %s, SCL %s - should both be high (a short, SDA/SCL swapped,\n"
+                            "     or a module without power pulling the line down)\n", l & 1 ? "high" : "LOW", l & 2 ? "high" : "LOW");
+        { u8 z = 0; if (i2c_write(0x7C, &z, 1) == 0) kprintf("  !! even the reserved address 0x7c answers a write - the bus is not reliable\n"); }
         for (int ad = 0x08; ad < 0x78; ad++)
             if (i2c_probe((u8)ad) || ((ad == 0x3C || ad == 0x3D) && i2c_probe_write((u8)ad))) { kprintf("  0x%02x  %s\n", ad, guess((u8)ad)); n++; }
         kprintf("%d device(s)\n", n);
