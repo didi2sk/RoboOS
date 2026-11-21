@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.72**
+Aktuálna verzia: **0.73**
 
 ## Podporované dosky
 
@@ -448,6 +448,7 @@ nenašlo), kým ho neuvoľnil neúspešný prenos; teraz pri štarte, pred `i2c 
 `display radio`, /api/radio, MQTT set/radio); MPU-6050 na 0x68 sa už nepovažuje za hodiny DS3231 (kontrola WHO_AM_I).
 0.72: Waveshare 1,3" OLED HAT (SH1106 na SPI0 + 3 tlačidlá + joystick) ako panel rádia: `display hat`, `display keys`;
 nový ovládač SPI0 `src/spi.c`.
+0.73: senzor tlaku a teploty BMP180 (BMP085) na 0x77 v `sensors`, MQTT, API a BASIC `SENSOR()`.
 
 ### Dátum a čas (NTP)
 
@@ -629,6 +630,7 @@ Pri štarte RoboOS tieto moduly nájde sám (`sensors scan` hľadá znova):
 | Modul | Adresa | Hodnoty |
 |---|---|---|
 | BME280 (BMP280) | 0x76 / 0x77 | teplota, vlhkosť (len BME280), tlak |
+| BMP180 (BMP085) | 0x77 | teplota, tlak (0.73) |
 | ADS1115 | 0x48-0x4B | 4 analógové vstupy A0-A3, 0-4,096 V v mV (neprekročiť 3,3 V!) |
 | DS3231 (DS1307) | 0x68 | hodiny s batériou: čas je známy po štarte aj bez siete |
 
