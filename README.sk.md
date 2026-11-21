@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.73**
+Aktuálna verzia: **0.74**
 
 ## Podporované dosky
 
@@ -449,6 +449,7 @@ nenašlo), kým ho neuvoľnil neúspešný prenos; teraz pri štarte, pred `i2c 
 0.72: Waveshare 1,3" OLED HAT (SH1106 na SPI0 + 3 tlačidlá + joystick) ako panel rádia: `display hat`, `display keys`;
 nový ovládač SPI0 `src/spi.c`.
 0.73: senzor tlaku a teploty BMP180 (BMP085) na 0x77 v `sensors`, MQTT, API a BASIC `SENSOR()`.
+0.74: prijímač rádiových hodín DCF77 na GPIO pine (`dcf`): čas bez siete.
 
 ### Dátum a čas (NTP)
 
@@ -742,6 +743,28 @@ Tlačidlá: KEY1 = ďalšia obrazovka (info, hodiny, rádio, konzola); na obrazo
 dole / hore, joystick vľavo / vpravo = -/+ 0,1 MHz, hore / dole = hlasitosť, stlačenie = rádio zap / vyp.
 Pozor: GPIO24/25/16 sú aj výstupy IoT shieldu - nepoužívať naraz. **Na hardvéri funguje** (0.72).
 
+### Rádiové hodiny DCF77 (0.74)
+
+Prijímač DCF77 (77,5 kHz z Mainflingenu pri Frankfurte, dosah ~2000 km; malá doska s feritovou anténou,
+napr. "RC8000", ELV DCF-2, Pollin, Canaduino) dá presný čas bez siete. Zapojenie: VCC na 3,3 V (pin 1),
+GND (pin 6), výstup (OUT / TCO / T) na voľné GPIO, napr. GPIO17 (pin 11); vstup PON / P1 (ak ho modul má)
+na GND - alebo na GPIO s `dcf pon <gpio>` (držané dole = prijímač zapnutý).
+
+```
+dcf pin 17           výstup prijímača je na GPIO17 (uloží sa do /DCF.TXT, načíta sa pri štarte)
+dcf                  signál: zmeny úrovne, dĺžky impulzov (100 ms = 0, 200 ms = 1), posledná minúta, čas
+dcf invert on|off    polarita impulzov ručne (inak automaticky - moduly sa líšia)
+dcf pull up|down|off pull rezistor na pine (up = pre výstup s otvoreným kolektorom)
+dcf off
+```
+
+Impulzy číta jadro 1 každú milisekundu, krátke špičky sa odfiltrujú; keď sa dve minúty po sebe dekódujú
+rovnako (všetky paritné bity sedia, rozdiel 1 minúta), nastavia sa hodiny (`time` napíše "from the DCF77
+radio signal") aj batériové hodiny. Ak čas nastavilo NTP za posledné 2 hodiny, DCF77 ho len kontroluje.
+Prvý čas príde po ~2-3 minútach čistého signálu. Anténu drž asi 1 m od Pi, monitorov a nabíjačiek, bokom
+k Frankfurtu; v noci je príjem najlepší. **Na hardvéri zatiaľ neotestované** (PC test `tools/test_dcf.c`:
+SEČ/SELČ, obe polarity, špičky, stratený impulz, šum).
+
 ### MQTT
 
 MQTT je bežný spôsob, ako IoT zariadenia hovoria so serverom (Home Assistant, Node-RED,
@@ -926,6 +949,7 @@ Systém komunikuje po anglicky.
 | `sensors [scan]`, `i2c scan\|read\|write` | senzory na I2C (BME280, ADS1115, DS3231) |
 | `ai <otázka>\|@príkaz ..\|key\|model` | otázka pre Claude (vlastný API kľúč Anthropic) |
 | `radio [MHz\|up\|down\|scan\|vol n\|off]` | FM rádio (modul RDA5807M na I2C) |
+| `dcf [pin n\|invert\|pull\|pon\|off]` | prijímač rádiových hodín DCF77 na GPIO |
 | `display [scan\|text n ..\|clear\|status on\|off\|size\|type\|addr\|hat\|keys]` | I2C displej OLED / LCD, Waveshare SPI OLED HAT |
 | `mqtt [broker\|user\|pub\|interval\|off]` | MQTT klient (IoT) |
 | `users [add\|passwd\|del\|console on\|off]`, `logout` | prihlásenie na web a API (voliteľné) |
