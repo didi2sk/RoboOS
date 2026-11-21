@@ -127,8 +127,8 @@ static const char *guess(u8 a)
     case 0x48: case 0x49: case 0x4A: case 0x4B: return "ADS1115 (ADC) or a TMP102 / LM75 thermometer";
     case 0x68: return "DS3231 / DS1307 (clock) or an MPU6050";
     case 0x57: return "AT24C32 EEPROM (on DS3231 boards)";
-    case 0x3C: case 0x3D: return "SSD1306 OLED display";
-    case 0x27: case 0x3F: return "PCF8574 (LCD backpack)";
+    case 0x3C: case 0x3D: return "SSD1306 / SH1106 OLED display (see 'display')";
+    case 0x27: case 0x3F: return "PCF8574 LCD backpack (see 'display')";
     case 0x44: case 0x45: return "SHT3x (temperature, humidity)";
     case 0x40: return "INA219 / HTU21D / Si7021";
     case 0x23: return "BH1750 (light)";

@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.54**
+Current version: **0.55**
 
 ## Supported boards
 
@@ -413,6 +413,8 @@ both share one radio, and the Bluetooth start made the boot-time WiFi join take 
 in `/HISTORY.TXT` on the card, so it survives a reboot. WiFi: a refused FIRST try after a boot is retried after 3 s (not 20 s), and so is a first
 try whose WPA handshake stalls (msg2 sent, no msg3 within 5 s) - the owner's photo: at boot the router never answered our msg2 and
 dropped the board after 18 s, the second try then joined in 3 s.
+0.55: I2C displays - SSD1306 / SH1106 OLED and 16x2 / 20x4 LCDs with a PCF8574 backpack, found at boot, status screen
+(name, IP, time), `display`, BASIC `DISPLAY`, C API 11 (see "I2C display").
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -611,6 +613,38 @@ i2c write 0x76 0xf4 0x27 write a register
 The clock module is set every time NTP answers (or by `time set`), and at boot the time is
 taken from it - `time` then says "from the battery clock (DS3231)".
 
+### I2C display (OLED / LCD, 0.55)
+
+The usual cheap I2C displays go on the same four pins (3.3 V, GND, SDA, SCL) and are found at boot:
+
+| Display | Address | Text |
+|---|---|---|
+| OLED 0.96" / 1.3" 128x64, SSD1306 or SH1106 | 0x3C / 0x3D | 16 x 4 (128x32: 16 x 2) |
+| text LCD 16x2 / 20x4 (HD44780) with a PCF8574 "I2C backpack" | 0x27 / 0x3F | 16 x 2, 20 x 4 |
+
+At boot it shows "RoboOS" + the version, after 2 s a **status screen**: board name, IP address, time,
+WiFi / Ethernet (on 2 rows: IP + time) - handy for a board without a monitor.
+
+```
+display                  what was found (type, address, size)
+display scan             look again (after plugging it in)
+display text 2 Hello     text on row 2 (turns the status screen off until the next boot)
+display clear            empty display
+display status on|off    the status screen (saved)
+display size 20x4        the LCD size can not be detected: 16x2 is assumed (also 128x32 for a small OLED)
+display type sh1106      if the OLED picture is shifted / the right edge is noise (auto, lcd, ssd1306, sh1106, none)
+display addr 0x26        another LCD backpack address (A0-A2 jumpers: 0x20-0x27, PCF8574A 0x38-0x3F)
+display contrast 128     OLED brightness 0-255;  display light on|off = LCD backlight;  display on|off
+```
+
+The settings go to `/DISPLAY.TXT`. BASIC: `DISPLAY 1, "T="; T` and `DISPLAY CLS` (example
+`/APPS/display.bas`), C (API 11): `displayText(row, text)`, `displaySize()`. **Careful with 5 V LCDs:**
+the backpack has its own pull-ups on SDA/SCL to its supply - powered from 5 V they put ~3.8 V on the
+Pi's pins (over 3.3 V). Either remove those two resistors (usually 4.7k, next to the header) or use
+an I2C level shifter; powered from 3.3 V the text is often too faint. OLED modules are 3.3 V parts - fine.
+The contrast trimmer on the LCD backpack must be turned until the text shows. **Not yet tested on hardware** (only the PC test
+`tools/test_display.c`, which plays the three chips).
+
 ### MQTT
 
 MQTT is the usual way IoT devices talk to a server (Home Assistant, Node-RED, Mosquitto...).
@@ -794,6 +828,7 @@ If you connect after boot, press Enter.
 | `update [check\|get [-k] [force]\|url <addr>\|restore]` | kernel updates: download one, or see what came from a PC; the backup back |
 | `bt [on\|scan [s]\|sensors\|pair [mac]\|forget\|off\|auto on\|off]` | Bluetooth: devices, thermometers, phone, keyboard (only when asked) |
 | `sensors [scan]`, `i2c scan\|read\|write` | I2C sensors (BME280, ADS1115, DS3231) |
+| `display [scan\|text n ..\|clear\|status on\|off\|size\|type\|addr]` | I2C OLED / LCD display |
 | `mqtt [broker\|user\|pub\|interval\|off]` | MQTT client (IoT) |
 | `users [add\|passwd\|del\|console on\|off]`, `logout` | logins for the web page + API (optional) |
 | `time [sync\|zone\|server\|set]` | date and time from NTP, time zone, set by hand |

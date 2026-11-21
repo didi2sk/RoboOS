@@ -246,6 +246,14 @@ int  rtc_present(void);
 u64  rtc_read(void);                     /* Unix time from the DS3231, 0 = none */
 void rtc_write(u64 t);
 #define SENSOR_NONE (-999999)
+/* display.c - SSD1306 / SH1106 OLED (0x3C/0x3D) or HD44780 LCD on a PCF8574 (0x27/0x3F) */
+void display_boot(void);              /* kernel_main: /DISPLAY.TXT + detect + boot text */
+void display_poll(void);              /* core 0 (con_trygetc): the status screen once a second */
+int  display_text(int row, const char *s);   /* row 0.., -1 = clear; 0 ok, < 0 no display */
+int  display_found(void);
+int  display_rows(void);
+int  display_cols(void);
+void display_cmd(int argc, char **argv);
 int  sensor_value(int n);             /* 0 CPU, 1 temp, 2 hum (0.01), 3 Pa, 4-7 mV */
 
 /* mqtt.c: MQTT 3.1.1 client (QoS 0), /MQTT.TXT */

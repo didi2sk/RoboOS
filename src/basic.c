@@ -809,6 +809,19 @@ static void statement(void)
         net_ok = mqtt_publish(t, b, n, 0) ? 0 : -1;
         return;
     }
+    if (kw("DISPLAY"))   {                            /* DISPLAY CLS | DISPLAY row, items (row 1..) */
+        if (kw("CLS")) { display_text(-1, ""); return; }
+        i64 r = expr();
+        char b[128];
+        int n = 0;
+        if (!at_end()) expect(',');
+        sock_items(b, &n, sizeof(b));
+        while (n && (b[n - 1] == '\n' || b[n - 1] == '\r')) n--;
+        b[n] = 0;
+        if (r < 1 || r > 4) error("BAD ROW");
+        if (display_text((int)r - 1, b) == -1) error("NO DISPLAY");
+        return;
+    }
     if (kw("SOCKCLOSE")) { sock_close((int)expr()); return; }
     if (kw("RANDOMIZE")) { rng ^= timer_us() * 2654435761UL; if (!at_end()) rng ^= (u64)expr(); return; }
     if (is_alpha(*pc)) { st_let(); return; }
@@ -1012,6 +1025,7 @@ static void help(void)
              "            SOCKAVAIL(H)  SOCKGET(H) (byte)  SOCKNUM(H) (number)   errors are < 0\n"
              "  IoT:      SENSOR(n) 0 CPU 1 temp 2 humidity (0.01 C / %) 3 Pa 4-7 ADC mV (-999999 = none)\n"
              "            MQTTPUB \"topic\", items   MQTTOK (connected; broker set by 'mqtt' in the shell)\n"
+             "  Display:  DISPLAY row, items (I2C OLED / LCD, row 1..)   DISPLAY CLS\n"
              "  Operators: + - * / MOD  = <> < > <= >=  AND OR NOT   (integers only)\n"
              "  SAVE \"/RUN/NAME\" = start automatically after boot. Ctrl+C stops a program.\n");
 }

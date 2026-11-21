@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.54**
+Aktuálna verzia: **0.55**
 
 ## Podporované dosky
 
@@ -409,6 +409,8 @@ jedno rádio a štart Bluetoothu predĺžil pripojenie WiFi pri štarte na 20 s.
 sa ukladá do `/HISTORY.TXT` na karte, takže prežije reštart. WiFi: odmietnutý PRVÝ pokus po štarte sa opakuje o 3 s (nie o 20 s), rovnako prvý pokus,
 kde WPA handshake zastal (msg2 odoslaná, msg3 do 5 s neprišla) - na fotke vlastníka router pri štarte na našu msg2 neodpovedal
 a po 18 s Pi odpojil, druhý pokus sa potom pripojil za 3 s.
+0.55: I2C displeje - OLED SSD1306 / SH1106 a LCD 16x2 / 20x4 s modulom PCF8574, nájdu sa pri štarte, stavová obrazovka
+(meno, IP, čas), `display`, BASIC `DISPLAY`, C API 11 (pozri „I2C displej“).
 
 ### Dátum a čas (NTP)
 
@@ -603,6 +605,38 @@ i2c write 0x76 0xf4 0x27 zápis registra
 Hodiny sa nastavia vždy, keď odpovie NTP (alebo `time set`), a pri štarte sa čas zoberie z nich -
 `time` potom píše "from the battery clock (DS3231)".
 
+### I2C displej (OLED / LCD, 0.55)
+
+Bežné lacné I2C displeje sa pripájajú na tie isté štyri piny (3,3 V, GND, SDA, SCL) a nájdu sa pri štarte:
+
+| Displej | Adresa | Text |
+|---|---|---|
+| OLED 0,96" / 1,3" 128x64, SSD1306 alebo SH1106 | 0x3C / 0x3D | 16 x 4 (128x32: 16 x 2) |
+| znakový LCD 16x2 / 20x4 (HD44780) s modulom PCF8574 („I2C backpack“) | 0x27 / 0x3F | 16 x 2, 20 x 4 |
+
+Pri štarte ukáže „RoboOS“ + verziu, po 2 s **stavovú obrazovku**: meno dosky, IP adresu, čas,
+WiFi / Ethernet (na 2 riadkoch: IP + čas) - hodí sa pre dosku bez monitora.
+
+```
+display                  čo sa našlo (typ, adresa, veľkosť)
+display scan             hľadaj znova (po pripojení)
+display text 2 Ahoj      text na 2. riadok (vypne stavovú obrazovku do ďalšieho štartu)
+display clear            prázdny displej
+display status on|off    stavová obrazovka (uloží sa)
+display size 20x4        veľkosť LCD sa nedá zistiť: predpokladá sa 16x2 (aj 128x32 pre malý OLED)
+display type sh1106      ak je obraz OLED posunutý / pravý okraj je šum (auto, lcd, ssd1306, sh1106, none)
+display addr 0x26        iná adresa LCD modulu (prepojky A0-A2: 0x20-0x27, PCF8574A 0x38-0x3F)
+display contrast 128     jas OLED 0-255;  display light on|off = podsvietenie LCD;  display on|off
+```
+
+Nastavenia sa ukladajú do `/DISPLAY.TXT`. BASIC: `DISPLAY 1, "T="; T` a `DISPLAY CLS` (príklad
+`/APPS/display.bas`), C (API 11): `displayText(riadok, text)`, `displaySize()`. **Pozor na 5 V LCD:**
+modul má vlastné pull-upy na SDA/SCL k svojmu napájaniu - pri 5 V dajú na piny Pi ~3,8 V (viac ako
+3,3 V). Buď tie dva rezistory odstráň (zvyčajne 4,7k pri konektore), alebo použi I2C prevodník úrovní;
+pri napájaní z 3,3 V býva text príliš slabý. OLED moduly sú na 3,3 V - v poriadku.
+Trimrom kontrastu na LCD module treba otočiť, kým sa text neukáže. **Na hardvéri ešte neotestované** (len PC test `tools/test_display.c`,
+ktorý hrá všetky tri čipy).
+
 ### MQTT
 
 MQTT je bežný spôsob, ako IoT zariadenia hovoria so serverom (Home Assistant, Node-RED,
@@ -785,6 +819,7 @@ Systém komunikuje po anglicky.
 | `wifi [scan\|join <sieť> [heslo]\|band 2\|5\|auto\|leave\|forget]` | WiFi: siete, pripojenie (uloží sa), stav |
 | `bt [on\|scan [s]\|sensors\|off\|auto on\|off]` | Bluetooth LE: zariadenia, teplomery, mobil (len na požiadanie) |
 | `sensors [scan]`, `i2c scan\|read\|write` | senzory na I2C (BME280, ADS1115, DS3231) |
+| `display [scan\|text n ..\|clear\|status on\|off\|size\|type\|addr]` | I2C displej OLED / LCD |
 | `mqtt [broker\|user\|pub\|interval\|off]` | MQTT klient (IoT) |
 | `users [add\|passwd\|del\|console on\|off]`, `logout` | prihlásenie na web a API (voliteľné) |
 | `time [sync\|zone\|server\|set]` | dátum a čas z NTP, časové pásmo, ručné nastavenie |
