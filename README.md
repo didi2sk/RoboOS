@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.76**
+Current version: **0.77**
 
 ## Supported boards
 
@@ -456,6 +456,8 @@ new SPI0 driver `src/spi.c`.
 0.74: DCF77 radio clock receiver on a GPIO pin (`dcf`): the time without a network.
 0.75: `dcf on` / `dcf off` (the pin is kept; with `dcf pon` the receiver is powered down too).
 0.76: `dcf` shows how long each level lasted (a table + the last 12 periods) to tell a real signal from noise.
+0.77: noise-tolerant DCF77 decoder: it locks onto the 1 s rhythm and judges each second as a whole (spikes no
+longer break pulses); two good minutes that fit together set the clock even with bad minutes in between.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -768,8 +770,9 @@ dcf pull up|down|off pull resistor on the pin (up = for open-collector outputs)
 dcf off / dcf on     stop / start reading it (saved; the pin is kept; PON goes high = receiver off)
 ```
 
-The pulses are read by core 1 every millisecond, short spikes are filtered out, and once two minutes in a
-row decode the same way (all parity bits right, 1 minute apart) the clock is set (`time` says "from the
+The pin is read by core 1 every millisecond; the decoder locks onto the 1 s rhythm (averaged over ~16 s,
+`dcf` shows the lock quality) and judges each second as a whole, so short spikes do not break it. Once two
+minutes decode and fit together (all parity bits right, N minutes apart) the clock is set (`time` says "from the
 DCF77 radio signal") and the battery clock too. If NTP set the time in the last 2 hours, DCF77 only checks
 it. The first time comes after ~2-3 minutes of clean signal. Keep the antenna about 1 m away from the Pi,
 monitors and chargers, turned broadside to Frankfurt; reception is best at night. **Not yet tested on
