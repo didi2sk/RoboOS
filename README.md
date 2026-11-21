@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.68**
+Current version: **0.69**
 
 ## Supported boards
 
@@ -442,6 +442,9 @@ A 429 now hints at the rate / spend limit and the credit.
 0.68: FIX `i2c scan` "finding" 0x3c / 0x3d with nothing connected (the write probe for OLEDs): a late no-ACK
 is caught, and write probes are trusted only if the reserved address 0x7c does NOT answer. `i2c scan` also warns
 when SDA / SCL are low while idle (short, swapped wires, an unpowered module).
+0.69: still one phantom 0x3c on the owner's empty bus -> the write probe must answer 3 times in a row, `i2c scan`
+marks such finds "[answers writes only]"; `i2c probe <addr>` shows the raw controller status + time of reads and
+writes; `i2c speed <kHz>` (10-400, until reboot) - LCD backpacks (PCF8574) are rated for 100 kHz at most.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)

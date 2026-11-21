@@ -27,7 +27,7 @@
 #define S_CLKT     (1u << 9)            /* the slave held SCL too long */
 
 static int ready, lock;
-static u32 speed = 100000;
+static u32 speed = 100000, core_hz, last_s, last_us;   /* last_s / last_us: status + time of the last transfer (i2c probe) */
 
 static void lk(void)  { while (__atomic_test_and_set(&lock, __ATOMIC_ACQUIRE)) ; }
 static void ulk(void) { __atomic_clear(&lock, __ATOMIC_RELEASE); }
@@ -39,6 +39,7 @@ void i2c_init(void)
     gpio_func(3, 4);
     u32 clk[2] = { 4, 0 };                                /* core clock */
     u32 core = mbox_prop(0x00030002, clk, 2) && clk[1] ? clk[1] : 250000000;
+    core_hz = core;
     mmio_write(BSC_DIV, core / speed);
     mmio_write(BSC_CLKT, 0x40);
     mmio_write(BSC_C, C_I2CEN | C_CLEAR);
@@ -47,7 +48,15 @@ void i2c_init(void)
 }
 
 /* one transfer; 0 = ok, -1 = no answer (NACK), -2 = timeout / bus stuck */
+static int xfer2(u8 addr, u8 *buf, int n, int rd);
 static int xfer(u8 addr, u8 *buf, int n, int rd)
+{
+    u64 t0 = timer_us();
+    int r = xfer2(addr, buf, n, rd);
+    last_us = (u32)(timer_us() - t0);
+    return r;
+}
+static int xfer2(u8 addr, u8 *buf, int n, int rd)
 {
     int i = 0;
     mmio_write(BSC_C, C_I2CEN | C_CLEAR);
@@ -62,13 +71,15 @@ static int xfer(u8 addr, u8 *buf, int n, int rd)
         if (rd) while ((s & S_RXD) && i < n) { buf[i++] = (u8)mmio_read(BSC_FIFO); s = mmio_read(BSC_S); }
         else while ((s & S_TXD) && i < n) { mmio_write(BSC_FIFO, buf[i++]); s = mmio_read(BSC_S); }
         if (s & (S_ERR | S_CLKT)) {
+            last_s = s;
             mmio_write(BSC_S, S_DONE | S_ERR | S_CLKT);
             mmio_write(BSC_C, C_I2CEN | C_CLEAR);
             return (s & S_ERR) ? -1 : -2;
         }
         if (s & S_DONE) {
             delay_us(30);                                 /* 0.68: a late ERR (no ACK) must not pass as done */
-            if (mmio_read(BSC_S) & (S_ERR | S_CLKT)) {
+            last_s = s | mmio_read(BSC_S);
+            if (last_s & (S_ERR | S_CLKT)) {
                 mmio_write(BSC_S, S_DONE | S_ERR | S_CLKT);
                 mmio_write(BSC_C, C_I2CEN | C_CLEAR);
                 return -1;
@@ -154,8 +165,11 @@ int i2c_probe_write(u8 addr)
     /* 0.68: with NOTHING on the bus the owner's 3B+ still "found" 0x3C and 0x3D this way. So first a
      * write to 0x7C (a reserved address no chip may use): if that is "acknowledged" too, write
      * probes cannot be trusted on this bus and say no */
-    if (i2c_write(0x7C, &z, 1) == 0) return 0;
-    return i2c_write(addr, &z, 1) == 0;
+    for (int k = 0; k < 3; k++) {                         /* 0.69: three times in a row, or it is noise */
+        if (i2c_write(0x7C, &z, 1) == 0) return 0;
+        if (i2c_write(addr, &z, 1) != 0) return 0;
+    }
+    return 1;
 }
 
 /* the line levels while idle (both should be high: the Pi's 1.8k pull-ups) */
@@ -190,13 +204,17 @@ void i2c_cmd(int argc, char **argv)
     u64 a = 0, r = 0, v = 0;
     if (argc > 1 && !strcmp(argv[1], "scan")) {
         int n = 0;
-        kprintf("I2C on GPIO2 (SDA) / GPIO3 (SCL), 100 kHz:\n");
+        i2c_init();
+        kprintf("I2C on GPIO2 (SDA) / GPIO3 (SCL), %u kHz (core clock %u MHz):\n", speed / 1000, core_hz / 1000000);
         int l = i2c_lines();
         if (l != 3) kprintf("  !! idle lines: SDA %s, SCL %s - should both be high (a short, SDA/SCL swapped,\n"
                             "     or a module without power pulling the line down)\n", l & 1 ? "high" : "LOW", l & 2 ? "high" : "LOW");
         { u8 z = 0; if (i2c_write(0x7C, &z, 1) == 0) kprintf("  !! even the reserved address 0x7c answers a write - the bus is not reliable\n"); }
         for (int ad = 0x08; ad < 0x78; ad++)
-            if (i2c_probe((u8)ad) || ((ad == 0x3C || ad == 0x3D) && i2c_probe_write((u8)ad))) { kprintf("  0x%02x  %s\n", ad, guess((u8)ad)); n++; }
+            {
+                int rd = i2c_probe((u8)ad), wr = !rd && (ad == 0x3C || ad == 0x3D) && i2c_probe_write((u8)ad);
+                if (rd || wr) { kprintf("  0x%02x  %s%s\n", ad, guess((u8)ad), wr ? "  [answers writes only]" : ""); n++; }
+            }
         kprintf("%d device(s)\n", n);
         return;
     }
@@ -218,5 +236,25 @@ void i2c_cmd(int argc, char **argv)
         kprintf("%s\n", e ? (e == -1 ? "no answer" : "timeout") : "ok");
         return;
     }
-    kprintf("usage: i2c scan | read <addr> <reg> [count] | write <addr> <reg> <value>   (0x.. hex)\n");
+    if (argc > 2 && !strcmp(argv[1], "speed") && parse_num(argv[2], &a) && a >= 10 && a <= 400) {
+        speed = (u32)a * 1000; ready = 0; i2c_init();
+        kprintf("I2C %u kHz (core clock %u MHz, divider %u) - until the next boot\n", (u32)a, core_hz / 1000000, core_hz / speed);
+        return;
+    }
+    if (argc > 2 && !strcmp(argv[1], "probe") && parse_num(argv[2], &a) && a < 0x80) {
+        i2c_init();
+        kprintf("I2C %u kHz, core clock %u MHz, divider %u; lines SDA %s SCL %s\n", speed / 1000, core_hz / 1000000,
+                core_hz / speed, gpio_get(2) ? "high" : "LOW", gpio_get(3) ? "high" : "LOW");
+        for (int k = 0; k < 3; k++) {
+            u8 b = 0, z = 0;
+            int e = i2c_read((u8)a, &b, 1);
+            kprintf("  read  0x%02x: %-9s status 0x%03x, %u us%s", (u32)a, e == 0 ? "ANSWERED" : e == -1 ? "no ACK" : "timeout",
+                    last_s, last_us, e == 0 ? "" : "\n");
+            if (e == 0) kprintf(", byte 0x%02x\n", (u32)b);
+            e = i2c_write((u8)a, &z, 1);
+            kprintf("  write 0x%02x: %-9s status 0x%03x, %u us\n", (u32)a, e == 0 ? "ANSWERED" : e == -1 ? "no ACK" : "timeout", last_s, last_us);
+        }
+        return;
+    }
+    kprintf("usage: i2c scan | probe <addr> | speed <kHz> | read <addr> <reg> [count] | write <addr> <reg> <value>   (0x.. hex)\n");
 }
