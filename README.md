@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.73**
+Current version: **0.74**
 
 ## Supported boards
 
@@ -453,6 +453,7 @@ pulses + a STOP whenever SDA is stuck low (`i2c scan` says so).
 0.72: Waveshare 1.3" OLED HAT (SH1106 on SPI0 + 3 keys + joystick) as a radio panel: `display hat`, `display keys`;
 new SPI0 driver `src/spi.c`.
 0.73: BMP180 (BMP085) pressure + temperature sensor at 0x77 in `sensors`, MQTT, the API and BASIC `SENSOR()`.
+0.74: DCF77 radio clock receiver on a GPIO pin (`dcf`): the time without a network.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -750,6 +751,28 @@ Keys: KEY1 = next screen (info, clock, radio, console); on the radio screen KEY2
 joystick left / right = -/+ 0.1 MHz, up / down = volume, press = radio on / off. Note: GPIO24/25/16 are also
 outputs of the IoT shield - do not use both. **Works on hardware** (owner, 0.72).
 
+### DCF77 radio clock (0.74)
+
+A DCF77 receiver module (77.5 kHz from Mainflingen near Frankfurt, ~2000 km range; a small board with a
+ferrite rod antenna, e.g. "RC8000", ELV DCF-2, Pollin, Canaduino) gives the exact time without any network.
+Wiring: VCC to 3.3 V (pin 1), GND (pin 6), the output (OUT / TCO / T) to a free GPIO, e.g. GPIO17 (pin 11);
+a PON / P1 input (if there is one) to GND - or to a GPIO with `dcf pon <gpio>` (held low = receiver on).
+
+```
+dcf pin 17           the receiver's output is on GPIO17 (saved in /DCF.TXT, read at boot)
+dcf                  signal: level changes, pulse lengths (100 ms = 0, 200 ms = 1), last minute, last time
+dcf invert on|off    pulse polarity by hand (auto by default - modules differ)
+dcf pull up|down|off pull resistor on the pin (up = for open-collector outputs)
+dcf off
+```
+
+The pulses are read by core 1 every millisecond, short spikes are filtered out, and once two minutes in a
+row decode the same way (all parity bits right, 1 minute apart) the clock is set (`time` says "from the
+DCF77 radio signal") and the battery clock too. If NTP set the time in the last 2 hours, DCF77 only checks
+it. The first time comes after ~2-3 minutes of clean signal. Keep the antenna about 1 m away from the Pi,
+monitors and chargers, turned broadside to Frankfurt; reception is best at night. **Not yet tested on
+hardware** (PC test `tools/test_dcf.c`: CET/CEST, both polarities, glitches, a lost pulse, noise).
+
 ### MQTT
 
 MQTT is the usual way IoT devices talk to a server (Home Assistant, Node-RED, Mosquitto...).
@@ -935,6 +958,7 @@ If you connect after boot, press Enter.
 | `sensors [scan]`, `i2c scan\|read\|write` | I2C sensors (BME280, ADS1115, DS3231) |
 | `ai <question>\|@cmd ..\|key\|model` | ask Claude (own Anthropic API key) |
 | `radio [MHz\|up\|down\|scan\|vol n\|off]` | FM radio (RDA5807M module on I2C) |
+| `dcf [pin n\|invert\|pull\|pon\|off]` | DCF77 radio clock receiver on a GPIO |
 | `display [scan\|text n ..\|clear\|status on\|off\|size\|type\|addr\|hat\|keys]` | I2C OLED / LCD display, Waveshare SPI OLED HAT |
 | `mqtt [broker\|user\|pub\|interval\|off]` | MQTT client (IoT) |
 | `users [add\|passwd\|del\|console on\|off]`, `logout` | logins for the web page + API (optional) |

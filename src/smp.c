@@ -96,6 +96,7 @@ void io_poll_all(void)
     io_where = "usb"; usb_hotplug();
     io_where = "net"; net_poll();
     io_where = "bt"; bt_poll();
+    io_where = "dcf"; dcf_poll();
     io_where = "loop";
     io_beats++;
 }

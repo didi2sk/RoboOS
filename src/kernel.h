@@ -258,6 +258,10 @@ int  display_cols(void);
 void display_cmd(int argc, char **argv);
 void spi_init(u32 div);              /* spi.c - SPI0 on GPIO8-11 */
 int  spi_write(const void *buf, int n);
+/* dcf.c - DCF77 time signal receiver on a GPIO pin */
+void dcf_boot(void);                 /* core 0 at boot: /DCF.TXT */
+void dcf_poll(void);                 /* core 1 (io_poll_all): samples the pin */
+void dcf_cmd(int argc, char **argv);
 /* radio.c - RDA5807M FM radio (I2C 0x10/0x11) */
 void radio_boot(void);
 void radio_poll(void);                /* core 0, con_trygetc: RDS, queued network commands */
@@ -298,7 +302,8 @@ void clock_prepare(void);                /* core 0: /TIME.TXT */
 const char *clock_server(void);
 int  clock_ntp_wanted(void);             /* core 1 asks: sync now? */
 void clock_ntp_again(void);
-int  clock_how(void);                    /* 0 none, 1 NTP, 2 by hand, 3 battery clock */
+int  clock_how(void);                    /* 0 none, 1 NTP, 2 by hand, 3 battery clock, 4 DCF77 */
+u64  clock_synced_ago(void);             /* seconds since NTP last set it */
 u64  clock_make(int y, int mo, int d, int h, int mi, int s);   /* UTC -> Unix */
 void clock_split(u64 t, int *y, int *mo, int *d, int *h, int *mi, int *s);
 void time_cmd(int argc, char **argv);

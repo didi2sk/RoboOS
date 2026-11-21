@@ -12,7 +12,7 @@
 
 static volatile u64 base_unix, base_us;    /* the time at the moment base_us of the timer */
 static volatile u64 synced_us;             /* when NTP last set it (0 = never) */
-static volatile int set_by;                /* 0 not set, 1 NTP, 2 by hand */
+static volatile int set_by;                /* 0 not set, 1 NTP, 2 by hand, 3 battery clock, 4 DCF77 */
 static char server[48] = "pool.ntp.org";
 static int zone_min = 60, zone_eu = 1;
 static volatile int want_sync = 1;
@@ -259,6 +259,7 @@ void time_cmd(int argc, char **argv)
     if (set_by == 1) kprintf("from NTP %s, %u s ago\n", server, (u32)clock_synced_ago());
     else if (set_by == 2) kprintf("set by hand\n");
     else if (set_by == 3) kprintf("from the battery clock (DS3231), NTP not yet\n");
+    else if (set_by == 4) kprintf("from the DCF77 radio signal ('dcf' for details)\n");
     int az = zone_min < 0 ? -zone_min : zone_min;
     kprintf("ntp: %s, zone: UTC%c%d", server[0] ? server : "off", zone_min < 0 ? '-' : '+', az / 60);
     if (az % 60) kprintf(":%02d", az % 60);
