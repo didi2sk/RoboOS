@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.48**
+Current version: **0.49**
 
 ## Supported boards
 
@@ -400,7 +400,9 @@ the boot) and leaves the WiFi join at boot to the I/O core, so the router's WPA 
 at once (before, the 3B+ often joined only on the retry 20 s later).
 0.46: Bluetooth listens in the background only 10 % of the time (30 ms every 300 ms, `bt scan` 50 %) - WiFi
 and Bluetooth share one radio, and the 50 % scan made the WPA handshake fail until the 3rd try on the 3B+;
-WiFi retries come after 10 s (then 30 s, 60 s) and say why the last try failed.
+WiFi retries say why the last try failed. 0.49: a retry never cuts short a try that is still
+associating or doing the WPA handshake (0.46 retried after 10 s and so joined only on the 4th try): after an
+error 2 s, otherwise 20 s; the time a try took is printed (`connected to ... (N s)`).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -508,7 +510,7 @@ e.g. `python -m http.server`). HTTPS certificates are checked against built-in r
 DigiCert, Sectigo, Google, GlobalSign, Amazon; `tools/mkta.py`) and `/TLS/CA.PEM` (your own CA) - the
 board needs the time for that (NTP or `time set`). `update get -k` (or the word `insecure` in
 /UPDATE.TXT) skips the check. The same version is not installed again, an older one only with
-`update get force`. Redirects and chunked answers are followed.
+`update get force`. Redirects and chunked answers are followed. Works on the Pi 3B+: a kernel sent from a PC, and `update check` from GitHub with the certificate checked.
 
 ### Users: a login for the web page and the API (optional)
 

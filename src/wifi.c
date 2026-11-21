@@ -713,7 +713,7 @@ static volatile int j_ssid_ok, j_link, j_keyed, j_fail, j_need_key, j_told;
 static char j_ssid[33], j_pass[64];
 static int cfg_band;
 static int j_want, j_tries, pmk_ok, j_first;                       /* j_want: keep re-joining j_ssid (until 'wifi leave') */
-static u64 j_next_try;
+static u64 j_next_try, j_started, j_fail_at;      /* when the running try began / first reported a failure */
 static int join_send(const char *ssid, const char *pass);                                      /* 0 auto, 1 = 5 GHz only, 2 = 2.4 GHz only (WLC_SET_BAND) */
 
 /* our own WPA2 supplicant, for firmware without one (Pi 3B+): see wpa.c */
@@ -1119,7 +1119,16 @@ int wifi_recv(void *buf, int max, int want_data)
     if (j_want) {                                         /* keep trying: at boot, after a lost link, a rebooted router */
         u64 now = timer_us();
         if (wifi_joined()) j_tries = 0;
-        else if (now >= j_next_try) {
+        else {
+            /* a try that failed for sure (an error event, or the link dropped) is retried soon; one that is
+             * still associating or doing the WPA handshake is never cut short (0.46 retried after 10 s and
+             * so killed tries that would have joined - it joined only on the 4th) */
+            int failed = j_fail || (d_lost_type && !j_link);
+            if (failed && !j_fail_at) j_fail_at = now;
+            if (failed && now >= j_fail_at + 2000000 && now < j_next_try) j_next_try = now;
+            if (!failed && j_link && j_started && now < j_started + 30000000 && now >= j_next_try) j_next_try = now + 2000000;
+        }
+        if (!wifi_joined() && now >= j_next_try) {
             char ss[33], pw[64];
             memcpy(ss, j_ssid, sizeof(ss));
             memcpy(pw, j_pass, sizeof(pw));
@@ -1135,15 +1144,21 @@ int wifi_recv(void *buf, int max, int want_data)
                                            d_m1, d_m3, d_keys, d_sent, d_sendfail, sup_err ? ", " : "", sup_err ? sup_err : "");
                 else kprintf("  last try: associated, no keys from the firmware supplicant\n");
                 if (d_lost_type) kprintf("  link lost: type %d, reason %d\n", d_lost_type, d_lost_reason);
+                if (j_started) kprintf("  (that try ran %u s)\n", (u32)((now - j_started) / 1000000));
                 con_color(COL_DEFAULT);
             }
+            j_started = timer_us(); j_fail_at = 0;
+            d_lost_type = d_lost_reason = 0;                 /* a fresh try: forget the last one's link loss */
             if (join_send(ss, pw[0] ? pw : 0)) kprintf("[NET] WiFi join: %s\n", werr);
-            j_next_try = timer_us() + (j_tries < 3 ? 10000000ULL : j_tries < 6 ? 30000000ULL : 60000000ULL);
+            j_next_try = timer_us() + (j_tries < 3 ? 20000000ULL : j_tries < 6 ? 30000000ULL : 60000000ULL);
         }
     }
     if (wifi_joined() && !j_told) {                       /* tell once: connected */
         j_told = 1;
-        con_color(COL_CYAN); kprintf("\n[NET] WiFi connected to %s\n", j_ssid); con_color(COL_DEFAULT);
+        con_color(COL_CYAN);
+        if (j_started) kprintf("\n[NET] WiFi connected to %s (%u s)\n", j_ssid, (u32)((timer_us() - j_started) / 1000000));
+        else kprintf("\n[NET] WiFi connected to %s\n", j_ssid);
+        con_color(COL_DEFAULT);
     } else if (!wifi_joined() && j_told == 1 && j_ssid_ok) {
         j_told = 2;
         con_color(COL_YELLOW); kprintf("\n[NET] WiFi lost %s\n", j_ssid); con_color(COL_DEFAULT);

@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.48**
+Aktuálna verzia: **0.49**
 
 ## Podporované dosky
 
@@ -395,8 +395,10 @@ pripájaní overí sama (0.44 to krížila: chyba 0x05, jeden pokus navyše). 0.
 921600 baudov (8x rýchlejšie: `bt auto on` už nepredĺži boot o ~6 s) a pripojenie WiFi pri štarte robí I/O jadro,
 takže WPA handshake routera dostane odpoveď hneď (predtým sa 3B+ často pripojila až na pokus o 20 s neskôr).
 0.46: Bluetooth na pozadí počúva len 10 % času (30 ms z 300 ms, `bt scan` 50 %) - WiFi a Bluetooth zdieľajú
-jedno rádio a 50 % hľadanie na 3B+ kazilo WPA handshake až do 3. pokusu; WiFi skúša znova po 10 s (potom 30 s,
-60 s) a vypíše, prečo predošlý pokus zlyhal. QEMU test: `tools/qemu_btkbd_test.py`.
+jedno rádio a 50 % hľadanie na 3B+ kazilo WPA handshake až do 3. pokusu; WiFi pri ďalšom pokuse vypíše, prečo
+predošlý zlyhal. 0.49: ďalší pokus nikdy nepreruší ten, ktorý sa ešte pripája alebo robí WPA handshake (0.46 skúšala
+znova po 10 s, a preto sa pripojila až na 4. pokus): po chybe o 2 s, inak o 20 s; vypíše aj, ako dlho pokus trval
+(`connected to ... (N s)`). QEMU test: `tools/qemu_btkbd_test.py`.
 
 ### Dátum a čas (NTP)
 
@@ -500,7 +502,7 @@ rovnako bezpečne nainštaluje a reštartuje sa. Predvolene ide z tohto repozit�
 Certifikáty HTTPS sa overujú voči vstavaným koreňovým autoritám (Let's Encrypt, DigiCert, Sectigo, Google,
 GlobalSign, Amazon; `tools/mkta.py`) a `/TLS/CA.PEM` (vlastná autorita) - Pi na to potrebuje čas (NTP alebo
 `time set`). `update get -k` (alebo slovo `insecure` v /UPDATE.TXT) overovanie vynechá. Rovnaká verzia sa znova
-neinštaluje, staršia len cez `update get force`. Presmerovania a „chunked“ odpovede zvláda.
+neinštaluje, staršia len cez `update get force`. Presmerovania a „chunked“ odpovede zvláda. Funguje na Pi 3B+: kernel poslaný z PC aj `update check` z GitHubu s overeným certifikátom.
 
 ### Používatelia: prihlásenie na webovú stránku a API (voliteľné)
 
