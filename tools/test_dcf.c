@@ -46,7 +46,7 @@ static void minute(int y, int mo, int d, int wd, int h, int mi, int cest, int p,
 
 static int errors;
 static void check(const char *what, int ok) { printf("  %-50s %s\n", what, ok ? "ok" : "WRONG"); if (!ok) errors++; }
-static void reset_all(void) { stable = -1; pol = invert >= 0 ? (invert ? 0 : 1) : -1; shortc[0] = shortc[1] = 0; nbits = 0;
+static void reset_all(void) { stable = -1; pol = invert >= 0 ? (invert ? 0 : 1) : -1; shortc[0] = shortc[1] = 0; gapc[0] = gapc[1] = 0; nbits = 0;
     last_pulse = pulse_at = edge_at = 0; prev_frame = 0; synced_ok = 0; set_count = 0; set_t = 0; n_frames = n_bad_frames = 0; }
 
 int main(void)

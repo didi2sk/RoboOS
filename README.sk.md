@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.75**
+Aktuálna verzia: **0.76**
 
 ## Podporované dosky
 
@@ -451,6 +451,7 @@ nový ovládač SPI0 `src/spi.c`.
 0.73: senzor tlaku a teploty BMP180 (BMP085) na 0x77 v `sensors`, MQTT, API a BASIC `SENSOR()`.
 0.74: prijímač rádiových hodín DCF77 na GPIO pine (`dcf`): čas bez siete.
 0.75: `dcf on` / `dcf off` (pin ostane uložený; s `dcf pon` sa vypne aj prijímač).
+0.76: `dcf` ukazuje, ako dlho trvala každá úroveň (tabuľka + posledných 12 úsekov) - rozlíši signál od šumu.
 
 ### Dátum a čas (NTP)
 
