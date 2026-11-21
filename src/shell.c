@@ -7,6 +7,7 @@
 #define ARGS_MAX  8
 
 static struct le_hist hist;
+static int hist_saved = -1;          /* hist.n written to /HISTORY.TXT, -1 = not loaded yet */
 
 /* ---------------- helpers ---------------- */
 
@@ -93,6 +94,89 @@ static void cmd_echo(int argc, char **argv)
 }
 
 static void cmd_clear(int argc, char **argv) { (void)argc; (void)argv; con_clear(); }
+
+/* history: the last LE_HIST commands, numbered; !N / !! run one again */
+static void cmd_history(int argc, char **argv)
+{
+    if (argc > 1 && !strcmp(argv[1], "clear")) {
+        hist.n = 0;
+        if (fat_mounted()) fat_write_file("/HISTORY.TXT", "", 0);
+        hist_saved = 0;
+        return;
+    }
+    int first = hist.n > LE_HIST ? hist.n - LE_HIST : 0;
+    for (int i = first; i < hist.n; i++) {
+        con_color(COL_YELLOW); kprintf("%4d  ", i + 1);
+        con_color(COL_DEFAULT); kprintf("%s\n", hist.line[i % LE_HIST]);
+    }
+}
+
+/* /HISTORY.TXT: the history survives a reboot (one command per line, oldest first).
+   Written by core 0 before each new command runs (FAT is core 0 only). */
+static char hbuf[LE_HIST * LINE_MAX];
+
+
+static void hist_load(void)
+{
+    struct fat_file f;
+    hist_saved = 0;
+    if (!fat_mounted() || fat_open("/HISTORY.TXT", &f) || f.is_dir) return;
+    int n = fat_read(&f, hbuf, sizeof(hbuf) - 1);
+    if (n <= 0) return;
+    hbuf[n] = 0;
+    for (char *p = hbuf; *p; ) {
+        char *e = p;
+        while (*e && *e != '\n') e++;
+        int len = (int)(e - p);
+        if (len && p[len - 1] == '\r') len--;
+        if (len > 0 && len < LINE_MAX) {
+            memcpy(hist.line[hist.n % LE_HIST], p, (u32)len);
+            hist.line[hist.n % LE_HIST][len] = 0;
+            hist.n++;
+        }
+        p = *e ? e + 1 : e;
+    }
+    hist_saved = hist.n;
+}
+
+static void hist_save(void)
+{
+    if (hist.n == hist_saved || !fat_mounted()) return;
+    int first = hist.n > LE_HIST ? hist.n - LE_HIST : 0, n = 0;
+    for (int i = first; i < hist.n; i++) {
+        for (const char *s = hist.line[i % LE_HIST]; *s && n < (int)sizeof(hbuf) - 2; s++) hbuf[n++] = *s;
+        hbuf[n++] = '\n';
+    }
+    fat_write_file("/HISTORY.TXT", hbuf, (u32)n);
+    hist_saved = hist.n;
+}
+
+/* "!!" = the previous command, "!N" = command number N from 'history'.
+   The expanded line replaces "!N" in the history. 0 = not found. */
+static int hist_expand(char *line)
+{
+    int n = hist.n - 1;                     /* index of the "!..." line itself */
+    int want;
+    if (line[1] == '!' && !line[2]) want = n - 1;
+    else {
+        want = 0;
+        const char *p = line + 1;
+        if (*p < '0' || *p > '9') return 0;
+        while (*p >= '0' && *p <= '9') want = want * 10 + (*p++ - '0');
+        if (*p) return 0;
+        want--;
+    }
+    int first = hist.n > LE_HIST ? hist.n - LE_HIST : 0;
+    if (want < first || want >= n) return 0;
+    const char *src = hist.line[want % LE_HIST];
+    int k = 0;
+    for (; src[k] && k < LINE_MAX - 1; k++) line[k] = src[k];
+    line[k] = 0;
+    memcpy(hist.line[n % LE_HIST], line, k + 1);
+    if (n > 0 && !strcmp(hist.line[(n - 1) % LE_HIST], line)) hist.n--;   /* no duplicate */
+    con_puts(line); con_putc('\n');
+    return 1;
+}
 
 static void cmd_led(int argc, char **argv)
 {
@@ -646,6 +730,7 @@ static const struct cmd cmds[] = {
     { "playwav", "<file>",              "play a WAV file",                 cmd_playwav },
     { "sd",     "[init [sdhost|emmc]]", "SD card info / re-initialize",    cmd_sd     },
     { "screen", "[WxH|auto]",           "screen resolution (saved)",       cmd_screen },
+    { "history", "[clear]",             "last 30 commands, kept on the card", cmd_history },
     { "clear",  "",                     "clear the screen",                cmd_clear  },
     { "reboot", "",                     "reboot via watchdog",             cmd_reboot },
     { "halt",   "",                     "halt the system",                 cmd_halt   },
@@ -665,7 +750,7 @@ static void cmd_help(int argc, char **argv)
         con_color(COL_DEFAULT); kprintf("%s\n", cmds[i].help);
     }
     con_color(COL_GRAY);
-    con_puts("  Tab = complete, Up/Down = history, Left/Right/Home/End = cursor, Ctrl+C = cancel\n");
+    con_puts("  Tab = complete, Up/Down = history (!N), Left/Right/Home/End = cursor, Ctrl+C = cancel\n");
     con_color(COL_DEFAULT);
 }
 
@@ -818,13 +903,17 @@ static void execute(char *line)
 void shell_run(void)
 {
     char line[LINE_MAX];
+    if (hist_saved < 0) hist_load();
     for (;;) {
         users_console_login();         /* 'users console on': an admin must log in first */
         prompt();
         net_notify(1);                 /* messages show up while waiting at the prompt */
         int len = line_edit(line, LINE_MAX, &hist, complete, prompt);
         net_notify(0);
-        if (len > 0) execute(line);
+        if (len > 0 && line[0] == '!' && line[1]) {
+            if (!hist_expand(line)) { kprintf("%s: not in the history\n", line); hist.n--; continue; }
+        }
+        if (len > 0) { hist_save(); execute(line); }
     }
 }
 
