@@ -86,12 +86,18 @@ void mbox_unlock(void) { rl_give(&mbox_l); }
 int io_core_active(void) { return io_running; }
 
 /* the I/O core's work, also used by core 0 when there is no I/O core */
+/* where core 1 is (for 'ai' / fetch traces when something hangs) */
+volatile const char *io_where = "-";
+volatile u32 io_beats;
+
 void io_poll_all(void)
 {
-    kbd_poll();
-    usb_hotplug();
-    net_poll();
-    bt_poll();
+    io_where = "kbd"; kbd_poll();
+    io_where = "usb"; usb_hotplug();
+    io_where = "net"; net_poll();
+    io_where = "bt"; bt_poll();
+    io_where = "loop";
+    io_beats++;
 }
 
 static void worker(int core)

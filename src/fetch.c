@@ -105,13 +105,22 @@ static int trace;                                     /* fetch_post: print every
 static u64 t_start;
 static void step(const char *what) { if (trace) { con_color(COL_GRAY); kprintf("  %s (%u ms)\n", what, (u32)((timer_us() - t_start) / 1000)); con_color(COL_DEFAULT); } }                  /* no byte for this long = give up (the AI may think longer) */
 
+static u32 got_raw;                                   /* bytes from the socket in this request */
 static int low_read(void *ctx, unsigned char *b, size_t len)
 {
     (void)ctx;
-    u64 end = timer_us() + read_timeout;
+    u64 end = timer_us() + read_timeout, next = timer_us() + 5000000;
+    u32 beats = io_beats;
     for (;;) {
         int n = sock_read(sock_h, b, (int)len);
-        if (n > 0) return n;
+        if (n > 0) { got_raw += (u32)n; return n; }
+        if (trace && timer_us() > next) {             /* a hang? say what core 1 does */
+            con_color(COL_GRAY);
+            kprintf("  ... still waiting: %u bytes in so far, core 1: %s (%u loops in 5 s)\n",
+                    got_raw, (const char *)io_where, io_beats - beats);
+            con_color(COL_DEFAULT);
+            beats = io_beats; next = timer_us() + 5000000;
+        }
         if (n < 0) return -1;                       /* closed */
         if (timer_us() > end || stop_key()) return -1;
         delay_us(500);
@@ -177,7 +186,7 @@ static long fetch_core(const char *url0, const char *extra, const char *body, in
         if (quiet) ;
         else if (port != (https ? 443 : 80)) kprintf("  %s://%s:%d%s\n", https ? "https" : "http", host, port, path);
         else kprintf("  %s://%s%s\n", https ? "https" : "http", host, path);
-        t_start = timer_us();
+        t_start = timer_us(); got_raw = 0;
         if (trace) { con_color(COL_GRAY); kprintf("  connecting to %s:%d ...\n", host, port); con_color(COL_DEFAULT); }
         sock_h = sock_tcp_connect(host, port, stop_key);
         if (sock_h < 0) { fetch_err = sock_h == -2 ? "name not found (DNS)" : sock_h == -1 ? "no network" : "no connection"; return -1; }
@@ -231,7 +240,17 @@ static long fetch_core(const char *url0, const char *extra, const char *body, in
         hdr[hl] = 0;
         int status = 0;
         if (hl > 12 && !strncmp(hdr, "HTTP/1.", 7)) for (int i = 9; i < 12; i++) status = status * 10 + (hdr[i] - '0');
-        if (status) step("answer started, reading ...");
+        if (status && trace) {
+            long cl = -1; int ch = 0;
+            for (char *l = strstr(hdr, "\r\n"); l && l[2] != '\r'; l = strstr(l + 2, "\r\n")) {
+                char *h = l + 2;
+                if (lower_eq(h, "content-length:", 15)) { char *v = h + 15; while (*v == ' ') v++; cl = 0; while (*v >= '0' && *v <= '9') cl = cl * 10 + (*v++ - '0'); }
+                if (lower_eq(h, "transfer-encoding:", 18)) ch = 1;
+            }
+            con_color(COL_GRAY);
+            kprintf("  answer: HTTP %d, length %ld%s (%u ms), reading ...\n", status, cl, ch ? ", chunked" : "", (u32)((timer_us() - t_start) / 1000));
+            con_color(COL_DEFAULT);
+        }
         else if (trace) step("no answer");
         if (!status) {
             int e = tls ? br_ssl_engine_last_error(&cc.eng) : 0;
