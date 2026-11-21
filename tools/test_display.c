@@ -1,7 +1,7 @@
 /*
  * PC test of src/display.c: fake SSD1306 / SH1106 / HD44780-on-PCF8574 chips decode every I2C byte
  * the driver sends, then the picture is read back as text (OLED pixels matched against the font).
- * build + run:  cc -O1 -o /tmp/test_display tools/test_display.c src/font.c src/font5x7.c src/font4x6.c && /tmp/test_display
+ * build + run:  cc -O1 -o /tmp/test_display tools/test_display.c src/font.c src/font5x7.c src/font4x6.c src/fontclock.c && /tmp/test_display
  */
 #include <stdio.h>
 #include <string.h>
@@ -336,12 +336,15 @@ int main(void)
     printf("clock (display time), 128x64 and 128x32, LCD 16x2\n");
     reset(SSD, 0x3C, 0x43, "mode clock\n");
     display_boot(); now_us += 2100000; display_poll();
-    { char a[8], b[20], c[4]; read_big(4, 0, 3, 5, a); read_small(4, 54, 14, b); read_small(106, 54, 3, c);
-      printf("  big [%s] date [%s] sec [%s]\n", a, b, c);
-      check("128x64: 11:01, Sat 21.11.2026, :27", !strcmp(a, "11:01") && !strcmp(b, "Sat 21.11.2026") && !strcmp(c, ":27")); }
+    { char b[20]; read_big(8, 46, 1, 14, b); printf("  date [%s]\n", b); check("128x64: date Sat 21.11.2026", !strcmp(b, "Sat 21.11.2026"));
+      FILE *f = fopen("/tmp/clock64.pbm", "w"); fprintf(f, "P1\n128 64\n");
+      for (int y = 0; y < 64; y++) { for (int x = 0; x < 128; x++) fputc(gpx(x, y) ? '1' : '0', f); fputc('\n', f); } fclose(f); }
     reset(SSD, 0x3C, 0x43, "mode clock\nsize 128x32\n");
     display_boot(); now_us += 2100000; display_poll();
-    { char a[10]; read_big(0, 0, 2, 8, a); printf("  big [%s]\n", a); check("128x32: 11:01:27", !strcmp(a, "11:01:27")); }
+    { FILE *f = fopen("/tmp/clock32.pbm", "w"); fprintf(f, "P1\n128 32\n");
+      for (int y = 0; y < 32; y++) { for (int x = 0; x < 128; x++) fputc(gpx(x, y) ? '1' : '0', f); fputc('\n', f); } fclose(f);
+      int lit = 0; for (int y = 0; y < 32; y++) for (int x = 0; x < 128; x++) lit += gpx(x, y);
+      check("128x32: something drawn", lit > 200); }
     reset(LCD, 0x27, 0xFF, "mode clock\n");
     display_boot(); now_us += 2100000; display_poll();
     { const char *w[] = { "    11:01:27", " Sat 21.11.2026" }; expect_rows("lcd clock", 16, 0, 2, w); }

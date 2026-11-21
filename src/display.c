@@ -22,6 +22,9 @@
 extern const unsigned char font8x16[95][16];
 extern const unsigned char font5x7[95][5];
 extern const unsigned char font4x6[95][4];
+extern const int clk_big_h, clk_sec_h;                  /* fontclock.c: thin DejaVu Sans digits "0123456789:-" */
+extern const unsigned char clk_big_w[12], clk_sec_w[12];
+extern const unsigned int clk_big_g[12][30], clk_sec_g[12][15];
 
 enum { D_NONE, D_SSD1306, D_SH1106, D_LCD };
 static const char *const tname[] = { "none", "ssd1306", "sh1106", "lcd" };
@@ -153,6 +156,28 @@ static void draw_small(const char *s, int x, int y)             /* the 5x7 font,
     }
 }
 
+/* clock digits (0.61): every digit in a cell as wide as the widest one (no jumping), the colon narrow */
+static int clk_idx(char c) { return c >= '0' && c <= '9' ? c - '0' : c == ':' ? 10 : 11; }
+static int clk_cell(const unsigned char *w) { int m = 0; for (int i = 0; i < 10; i++) if (w[i] > m) m = w[i]; return m; }
+static int clk_width(const char *s, const unsigned char *w, int gap)
+{
+    int n = 0, cell = clk_cell(w);
+    for (; *s; s++) n += (*s == ':' ? w[10] : cell) + (s[1] ? gap : 0);
+    return n;
+}
+static void clk_draw(const char *s, int x, int y, const unsigned char *w, const unsigned int *g, int h, int gap)
+{
+    int cell = clk_cell(w);
+    for (; *s; s++) {
+        int i = clk_idx(*s), cw2 = *s == ':' ? w[10] : cell, off = (cw2 - w[i]) / 2;
+        for (int r = 0; r < h; r++) {
+            unsigned int bits = g[i * h + r];
+            for (int c = 0; c < w[i]; c++) if (bits & (0x80000000u >> c)) px_on(x + off + c, y + r);
+        }
+        x += cw2 + gap;
+    }
+}
+
 /* "YYYY-MM-DD HH:MM:SS" -> weekday (Sakamoto) */
 static const char *weekday(const char *t)
 {
@@ -197,18 +222,20 @@ static void clock_draw(void)
         return;
     }
     memset(fb, 0, sizeof(fb));
-    if (dh >= 64) {
-        for (int i = 0; i < 5; i++) hm[i] = t[11 + i];
-        hm[5] = 0;
-        draw_big(hm, 4, 0, 3);                   /* 5 x 24 = 120 px wide, 48 tall */
-        char sec[4] = { ':', t[17], t[18], 0 };
+    /* HH:MM in the thin big digits, the seconds smaller beside them (bottom-aligned), the date below */
+    for (int i = 0; i < 5; i++) hm[i] = now ? t[11 + i] : (i == 2 ? ':' : '-');
+    hm[5] = 0;
+    char sec[3] = { now ? t[17] : '-', now ? t[18] : '-', 0 };
+    int bw = clk_width(hm, clk_big_w, 3), sw = clk_width(sec, clk_sec_w, 1), gap = 4;
+    int x = (128 - bw - gap - sw) / 2;
+    if (x < 0) x = 0;
+    int y = dh >= 64 ? 3 : (dh - clk_big_h) / 2;
+    clk_draw(hm, x, y, clk_big_w, &clk_big_g[0][0], clk_big_h, 3);
+    clk_draw(sec, x + bw + gap, y + clk_big_h - clk_sec_h, clk_sec_w, &clk_sec_g[0][0], clk_sec_h, 1);
+    if (dh >= 64) {                              /* "Sat 21.11.2026" in the 8x16 font (14 x 8 = 112 px) */
         int dl = slen(date);
-        if (dl > 16) draw_small(date, 0, 54);
-        else { draw_small(date, 4, 54); draw_small(sec, 128 - 4 - 18, 54); }
-    } else {
-        for (int i = 0; i < 8; i++) hm[i] = t[11 + i];
-        hm[8] = 0;
-        draw_big(hm, 0, 0, 2);                   /* 8 x 16 = 128 px, 32 tall */
+        if (dl <= 16) draw_big(date, (128 - dl * 8) / 2, 46, 1);
+        else draw_small(date, (128 - dl * 6) / 2 > 0 ? (128 - dl * 6) / 2 : 0, 50);
     }
     for (int r = 0; r < MAXR; r++) memset(sent[r], 0, MAXC + 1);   /* text mode redraws fully later */
     if (oled_send()) ok = 0;
