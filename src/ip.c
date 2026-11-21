@@ -1088,7 +1088,7 @@ static void http_cmd_l(int argc, char **argv)
  * must poll the network: con_trygetc() via the program's Ctrl+C check.
  */
 #define NSOCK   8
-#define SOCK_RX 4096
+#define SOCK_RX 8192                     /* must be > TCP_WND (5840): lwIP may hand over all it holds in one go */
 enum { S_FREE, S_UDP, S_TCP, S_LISTEN };
 enum { T_CONNECTING, T_OPEN, T_PEER_CLOSED, T_ERROR };
 

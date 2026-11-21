@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.47**
+Aktuálna verzia: **0.48**
 
 ## Podporované dosky
 
@@ -492,6 +492,15 @@ klastrov, položka v adresári sa prepne naň, prečíta sa späť a porovná - 
 `update` ukáže kernel na karte a zálohu, `update restore` vráti zálohu. Ak by nový kernel vôbec nenaštartoval,
 vyber kartu a premenuj `KERNEL8.BAK` na `kernel8.img`. Vyskúšané v QEMU (HTTP + HTTPS, zlý token, súbor,
 ktorý nie je kernel, restore, reštart) - na hardvéri ešte nie.
+
+**Pi si ho stiahne samo (0.48).** `update check` stiahne kernel a povie, aká je to verzia; `update get` ho
+rovnako bezpečne nainštaluje a reštartuje sa. Predvolene ide z tohto repozitára
+(`https://raw.githubusercontent.com/didi2sk/RoboOS/main/sd/kernel8.img`); inú adresu uloží do `/UPDATE.TXT`
+`update url https://...` (PC v domácej sieti: `http://192.168.1.10:8000/kernel8.img`, napr. `python -m http.server`).
+Certifikáty HTTPS sa overujú voči vstavaným koreňovým autoritám (Let's Encrypt, DigiCert, Sectigo, Google,
+GlobalSign, Amazon; `tools/mkta.py`) a `/TLS/CA.PEM` (vlastná autorita) - Pi na to potrebuje čas (NTP alebo
+`time set`). `update get -k` (alebo slovo `insecure` v /UPDATE.TXT) overovanie vynechá. Rovnaká verzia sa znova
+neinštaluje, staršia len cez `update get force`. Presmerovania a „chunked“ odpovede zvláda.
 
 ### Používatelia: prihlásenie na webovú stránku a API (voliteľné)
 

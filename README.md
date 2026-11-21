@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.47**
+Current version: **0.48**
 
 ## Supported boards
 
@@ -500,6 +500,16 @@ the answer `{"ok":true,"old":"0.46","new":"0.47",...}` comes back and the board 
 and rename `KERNEL8.BAK` to `kernel8.img`. Tested in QEMU (HTTP + HTTPS, wrong token, a file that
 is no kernel, restore, reboot) - not yet on hardware.
 
+**The board fetches it itself (0.48).** `update check` downloads the kernel and says which version it
+is; `update get` installs it the same safe way and reboots. By default it comes from this repository
+(`https://raw.githubusercontent.com/didi2sk/RoboOS/main/sd/kernel8.img`); another address goes into
+`/UPDATE.TXT` with `update url https://...` (a PC in the home network: `http://192.168.1.10:8000/kernel8.img`,
+e.g. `python -m http.server`). HTTPS certificates are checked against built-in roots (Let's Encrypt,
+DigiCert, Sectigo, Google, GlobalSign, Amazon; `tools/mkta.py`) and `/TLS/CA.PEM` (your own CA) - the
+board needs the time for that (NTP or `time set`). `update get -k` (or the word `insecure` in
+/UPDATE.TXT) skips the check. The same version is not installed again, an older one only with
+`update get force`. Redirects and chunked answers are followed.
+
 ### Users: a login for the web page and the API (optional)
 
 As long as there are no users, nothing changes: the page is open and the API takes the token.
@@ -769,7 +779,7 @@ If you connect after boot, press Enter.
 | `http token [<secret>\|off]` | JSON API token (Bearer), see the JSON API section |
 | `http tls on\|off\|new` | HTTPS on port 443 (the API then only there), new certificate |
 | `wifi [scan\|join <net> [pw]\|band 2\|5\|auto\|leave\|forget]` | WiFi: networks, join (saved), status |
-| `update [restore]` | kernel / file updates over the network: status, the backup back |
+| `update [check\|get [-k] [force]\|url <addr>\|restore]` | kernel updates: download one, or see what came from a PC; the backup back |
 | `bt [on\|scan [s]\|sensors\|pair [mac]\|forget\|off\|auto on\|off]` | Bluetooth: devices, thermometers, phone, keyboard (only when asked) |
 | `sensors [scan]`, `i2c scan\|read\|write` | I2C sensors (BME280, ADS1115, DS3231) |
 | `mqtt [broker\|user\|pub\|interval\|off]` | MQTT client (IoT) |
