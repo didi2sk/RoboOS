@@ -99,7 +99,10 @@ void kprintf(const char *fmt, ...)
 }
 
 /* ---------------- input: UART + USB keyboard ---------------- */
-int con_trygetc(void)
+static char pend[256];                           /* keys typed while a command only looked for Ctrl+C */
+static int pend_h, pend_t;
+
+static int raw_trygetc(void)
 {
     if (uart_has_char()) {
         char c = uart_getc();
@@ -117,6 +120,23 @@ int con_trygetc(void)
     api_sound_poll();                           /* a sound asked for over the JSON API */
     upload_poll();                              /* a file / kernel that came over the network: to the card */
     return kbd_getc();
+}
+
+int con_trygetc(void)
+{
+    if (pend_t != pend_h) { int c = (u8)pend[pend_t]; pend_t = (pend_t + 1) % (int)sizeof(pend); return c; }
+    return raw_trygetc();
+}
+
+/* 1 = Ctrl+C was pressed; other keys stay for later (a long command does not eat what is typed meanwhile) */
+int con_break(void)
+{
+    int c = raw_trygetc();
+    if (c < 0) return 0;
+    if (c == 3) return 1;
+    int nx = (pend_h + 1) % (int)sizeof(pend);
+    if (nx != pend_t) { pend[pend_h] = (char)c; pend_h = nx; }
+    return 0;
 }
 
 int con_getc(void)

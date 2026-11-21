@@ -65,10 +65,11 @@ static void ans(int code, const char *json1, const char *json2)
 
 static void add_num(char *o, u32 v) { char t[12]; int k = 0; do t[k++] = (char)('0' + v % 10); while (v /= 10); int j = 0; while (k) o[j++] = t[--k]; o[j] = 0; }
 
-static void do_kernel(void)
+static void do_kernel_buf(const u8 *b, u32 n);
+static void do_kernel(void) { do_kernel_buf(UPLOAD_BUF, upl.got); }
+
+static void do_kernel_buf(const u8 *b, u32 n)
 {
-    u8 *b = UPLOAD_BUF;
-    u32 n = upl.got;
     char nv[24], ov[24], num[16], msg[200];
     kernel_version(b, n, nv, sizeof(nv));
     if (!nv[0]) { ans(400, "{\"ok\":false,\"error\":\"this is not a RoboOS kernel (no RoboOS tag inside) - nothing changed\"}", 0); return; }
@@ -129,6 +130,41 @@ static void do_file(void)
     kprintf("\n[UPDATE] %s written (%u bytes)\n", p, upl.got);
 }
 
+/* "0.48" -> 48, "1.2" -> 1002 */
+static int ver_num(const char *v)
+{
+    int a = 0, b = 0;
+    while (*v >= '0' && *v <= '9') a = a * 10 + (*v++ - '0');
+    if (*v == '.') v++;
+    while (*v >= '0' && *v <= '9') b = b * 10 + (*v++ - '0');
+    return a * 1000 + b;
+}
+
+/* /UPDATE.TXT: the URL (+ the word "insecure" = no certificate check); none = the RoboOS repository */
+#define DEFAULT_URL "https://raw.githubusercontent.com/didi2sk/RoboOS/main/sd/kernel8.img"
+static int update_url_quiet(char *url, int max, int *insecure)
+{
+    struct fat_file f;
+    char b[320];
+    int n = 0;
+    if (fat_mounted() && !fat_open("/UPDATE.TXT", &f) && !f.is_dir) n = fat_read(&f, b, sizeof(b) - 1);
+    if (n <= 0) { int k = 0; for (const char *s = DEFAULT_URL; *s && k < max - 1; s++) url[k++] = *s; url[k] = 0; return 0; }
+    b[n] = 0;
+    char *p = b;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+    if (!strncmp(p, "url=", 4)) p += 4;
+    int k = 0;
+    while (*p && *p != ' ' && *p != '\t' && *p != '\r' && *p != '\n' && k < max - 1) url[k++] = *p++;
+    url[k] = 0;
+    if (strstr(p, "insecure")) *insecure = 1;
+    return k ? 0 : -1;
+}
+static int update_url(char *url, int max, int *insecure)
+{
+    if (update_url_quiet(url, max, insecure)) { kprintf("/UPDATE.TXT has no address ('update url https://...')\n"); return -1; }
+    return 0;
+}
+
 /* core 0, from con_trygetc */
 void upload_poll(void)
 {
@@ -156,13 +192,52 @@ void cmd_update(int argc, char **argv)
         kprintf("kernel8.img is version %s again - reboot to use it ('reboot')\n", v);
         return;
     }
-    if (argc > 1) { kprintf("usage: update [restore]\n"); return; }
+    if (argc > 2 && !strcmp(argv[1], "url")) {
+        char t[300]; int k = 0;
+        for (const char *s2 = argv[2]; *s2 && k < 280; s2++) t[k++] = *s2;
+        if (argc > 3 && !strcmp(argv[3], "insecure")) { const char *w = " insecure"; while (*w) t[k++] = *w++; }
+        t[k++] = '\r'; t[k++] = '\n';
+        if (!fat_mounted() || fat_write_file("/UPDATE.TXT", t, (u32)k)) { kprintf("not saved (no SD card?)\n"); return; }
+        kprintf("saved to /UPDATE.TXT - 'update check' / 'update get'\n");
+        return;
+    }
+    if (argc > 1 && (!strcmp(argv[1], "check") || !strcmp(argv[1], "get"))) {
+        int get = !strcmp(argv[1], "get"), force = 0, insecure = 0;
+        for (int i = 2; i < argc; i++) { if (!strcmp(argv[i], "-k") || !strcmp(argv[i], "insecure")) insecure = 1; if (!strcmp(argv[i], "force")) force = 1; }
+        char url[300];
+        if (update_url(url, sizeof(url), &insecure)) return;
+        kprintf("downloading%s:\n", insecure ? " (certificate NOT checked)" : "");
+        long n = fetch_url(url, UPLOAD_BUF, UPLOAD_MAX, insecure);
+        if (n < 0) { kprintf("download failed: %s\n", fetch_err); return; }
+        kernel_version(UPLOAD_BUF, (u32)n, v, sizeof(v));
+        if (!v[0]) { kprintf("%ld bytes, but that is not a RoboOS kernel - nothing changed\n", n); return; }
+        int same = !strcmp(v, os_version());
+        kprintf("%ld bytes: RoboOS %s (running: %s)%s\n", n, v, os_version(), same ? " - the same" : "");
+        if (!get) { if (!same) kprintf("'update get' installs it\n"); return; }
+        if (same && !force) { kprintf("nothing to do ('update get force' installs it anyway)\n"); return; }
+        if (!same && !force && ver_num(v) < ver_num(os_version())) {
+            kprintf("that is OLDER than the running %s ('update get force' installs it anyway)\n", os_version());
+            return;
+        }
+        upl.reboot = 1;
+        do_kernel_buf(UPLOAD_BUF, (u32)n);
+        if (upl.code != 200) { kprintf("%s\n", upl.answer); return; }
+        kprintf("rebooting in 2 s...\n");
+        delay_us(2000000);
+        sys_reboot();
+        return;
+    }
+    if (argc > 1) { kprintf("usage: update [check | get [-k] [force] | url <https://...> [insecure] | restore]\n"); return; }
     kprintf("running RoboOS %s\n", os_version());
     long n = fat_mounted() ? read_all("/kernel8.img", CMP_BUF, UPLOAD_MAX) : -1;
     if (n > 0) { kernel_version(CMP_BUF, (u32)n, v, sizeof(v)); kprintf("  kernel8.img on the card: %s (%ld bytes)\n", v[0] ? v : "not a RoboOS kernel?", n); }
     n = fat_mounted() ? read_all("/KERNEL8.BAK", CMP_BUF, UPLOAD_MAX) : -1;
     if (n > 0) { kernel_version(CMP_BUF, (u32)n, v, sizeof(v)); kprintf("  KERNEL8.BAK (the one before): %s ('update restore' puts it back)\n", v[0] ? v : "?"); }
-    kprintf("Over the network (needs 'http on' and a token or an admin login):\n");
+    {
+        char url[300]; int ins = 0;
+        if (!update_url_quiet(url, sizeof(url), &ins)) kprintf("  downloads from %s%s ('update check', 'update get')\n", url, ins ? " (insecure)" : "");
+    }
+    kprintf("Sent from a PC (needs 'http on' and a token or an admin login):\n");
     kprintf("  curl --data-binary @kernel8.img -H \"Authorization: Bearer TOKEN\" http://%s/api/update\n", ip_address_str());
     kprintf("  curl --data-binary @ALARM.BIN -H \"Authorization: Bearer TOKEN\" \"http://%s/api/file?path=/APPS/ALARM.BIN\"\n", ip_address_str());
     kprintf("  (https:// and curl -k when HTTPS is on; ?reboot=0 keeps the board running after a kernel update)\n");

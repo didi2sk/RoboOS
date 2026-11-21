@@ -131,6 +131,7 @@ void con_color(int c);
 void con_clear(void);
 int  con_getc(void);        /* blocking: UART or USB keyboard */
 int  con_trygetc(void);     /* -1 if nothing */
+int  con_break(void);       /* Ctrl+C pressed? other keys are kept for later */
 void kprintf(const char *fmt, ...);
 /* special keys returned by con_getkey() next to plain characters */
 enum { K_UP = 256, K_DOWN, K_LEFT, K_RIGHT, K_HOME, K_END, K_DEL, K_PGUP, K_PGDN };
@@ -322,6 +323,8 @@ void upload_poll(void);            /* core 0 */
 void cmd_update(int argc, char **argv);
 int  api_admin_ok(const char *auth, int role, const char *from);   /* webapi.c: 1 ok, 0 no, -1 locked, -2 API off */
 void api_reboot_later(u32 ms);
+long fetch_url(const char *url, u8 *buf, u32 max, int insecure);   /* fetch.c: HTTP(S) GET; -1 + fetch_err */
+extern const char *fetch_err;
 /* sockets for programs: handles 1..8, errors < 0 (sock_error); idle() polls the network */
 int  sock_tcp_connect(const char *host, int port, int (*idle)(void));
 int  sock_tcp_listen(int port);
