@@ -120,6 +120,7 @@ static int raw_trygetc(void)
     api_sound_poll();                           /* a sound asked for over the JSON API */
     upload_poll();                              /* a file / kernel that came over the network: to the card */
     bt_boot_poll();                             /* Bluetooth at boot, once WiFi has joined */
+    display_poll();                             /* I2C display: the status screen */
     return kbd_getc();
 }
 

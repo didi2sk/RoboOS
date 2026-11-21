@@ -710,6 +710,7 @@ static const struct cmd cmds[] = {
     { "users",  "[add|passwd|del|console]", "logins: web page, API, shell", users_cmd },
     { "logout", "",                     "end the shell login",           logout_cmd },
     { "mqtt",   "[broker|pub|off|..]", "MQTT client (IoT broker)",       mqtt_cmd   },
+    { "display", "[scan|text|status|..]", "I2C OLED / LCD display",        display_cmd },
     { "sensors", "[scan]",              "temperature, humidity, ADC, RTC", sensors_cmd },
     { "time",   "[sync|zone|server]",   "date and time (NTP), time zone",  time_cmd   },
     { "ls",     "[path]",               "list a directory on the SD card", cmd_ls     },

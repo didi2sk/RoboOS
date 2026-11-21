@@ -18,7 +18,7 @@ typedef unsigned long      size_t;
 
 #define APP_BASE    0x01000000UL
 #define APP_MAGIC   "ROBOAPP1"
-#define API_VERSION 10
+#define API_VERSION 11
 
 #define INPUT          0
 #define OUTPUT         1
@@ -109,6 +109,11 @@ struct robos_api {
     int      (*mqttConnected)(void);
     int      (*mqttPublish)(const char *topic, const char *text, int retain);
     int      (*mqttReceive)(char *topic, int tmax, char *payload, int pmax);
+    /* API version 11: the I2C display (SSD1306 / SH1106 OLED or an HD44780 LCD on a PCF8574).
+     * displayText(row, text): row 1.., 0 = clear the display; 0 = ok, < 0 = no display.
+     * displaySize: rows * 256 + columns (e.g. 4 * 256 + 16), 0 = no display. */
+    int      (*displayText)(int row, const char *text);
+    int      (*displaySize)(void);
 };
 #define SENSOR_NONE (-999999)
 
@@ -165,6 +170,8 @@ extern const struct robos_api *api;
 #define mqttConnected()                 (api->mqttConnected)()
 #define mqttPublish(t, text, retain)    (api->mqttPublish)(t, text, retain)
 #define mqttReceive(t, tmax, p, pmax)   (api->mqttReceive)(t, tmax, p, pmax)
+#define displayText(row, text)          (api->displayText)(row, text)
+#define displaySize()                   (api->displaySize)()
 
 void *memset(void *d, int c, size_t n);
 void *memcpy(void *d, const void *s, size_t n);
