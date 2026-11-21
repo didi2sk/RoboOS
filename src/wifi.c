@@ -1020,6 +1020,7 @@ static void scan(void)
 /* ---------------- joined: frames for the network stack (core 1, io lock) ---------------- */
 
 int wifi_joined(void) { return w.up && j_link && j_ssid_ok && (j_keyed || !j_need_key); }
+int wifi_joining(void) { return w.up && j_want; }   /* a network is set and being joined / kept */
 const u8 *wifi_mac(void) { return w.mac; }
 const char *wifi_ssid(void) { return j_ssid; }
 

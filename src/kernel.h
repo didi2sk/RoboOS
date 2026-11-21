@@ -52,6 +52,7 @@ int  uart_bt_getc(u32 us);
 void bt_cmd(int argc, char **argv);
 void bt_poll(void);                      /* core 1 (io_poll_all): the HCI UART once Bluetooth is on */
 void bt_boot(void);                      /* core 0 at boot: /BT.TXT "auto on" */
+void bt_boot_poll(void);                 /* core 0: the delayed boot start (after WiFi) */
 struct ble_th { u8 mac[6]; char name[30]; int temp, hum, batt, rssi, first; };   /* temp/hum in 0.01 */
 int  bt_ble_next(struct ble_th *o);      /* core 1: a thermometer with new data for MQTT */
 int  bt_ble_json(char *b, int max);      /* GET /api/ble */
@@ -200,6 +201,7 @@ const char *ip_address_str(void);
 void wifi_cmd(int argc, char **argv);
 int  wifi_up(void);
 int  wifi_joined(void);
+int  wifi_joining(void);
 const u8 *wifi_mac(void);
 const char *wifi_ssid(void);
 int  wifi_recv(void *buf, int max, int want_data);   /* core 1, io lock */

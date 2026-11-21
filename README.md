@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.52**
+Current version: **0.53**
 
 ## Supported boards
 
@@ -407,6 +407,8 @@ own WPA status is ignored - 0.49 took it for a failure and restarted joins in th
 each step (network found, link, WPA msg1/msg3, keys, lost + reason) - one photo shows where a join stops. 0.52: the owner's router answered
 the quick retries with deauth reason 2 ("previous authentication no longer valid") 20 times: now every retry first
 leaves cleanly (disassociate, 0.3 s) and a refused try is retried after 15 s, not 2 s. On the Pi 3B+ WiFi now joins on the first try within a second.
+0.53: with `bt auto on` and WiFi set up, Bluetooth starts only after WiFi has joined (at most 15 s later) -
+both share one radio, and the Bluetooth start made the boot-time WiFi join take 20 s.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
