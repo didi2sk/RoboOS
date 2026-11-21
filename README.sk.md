@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.62**
+Aktuálna verzia: **0.63**
 
 ## Podporované dosky
 
@@ -426,6 +426,7 @@ sa len zmenené 8-bodové pásy. Riadky 1-10 v BASICu, API aj MQTT.
 0.61: hodiny tenkými číslicami (DejaVu Sans, `tools/mkclock.py`) namiesto hrubých 3x zväčšených, sekundy menšie
 hneď vedľa HH:MM, dátum písmom 8x16 pod nimi.
 0.62: `font tiny` je teraz čitateľnejšie X11 5x8 (25 x 8); stiesnené 4x6 (32 x 10) je `font micro`.
+0.63: nezašifrovaný API kľúč zapísaný do `/AI.TXT` na PC (`key sk-ant-...`) sa prijme a pri prvom `ai` zašifruje.
 
 ### Dátum a čas (NTP)
 
