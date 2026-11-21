@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.66**
+Aktuálna verzia: **0.67**
 
 ## Podporované dosky
 
@@ -432,6 +432,9 @@ hneď vedľa HH:MM, dátum písmom 8x16 pod nimi.
 po "asking ..." a nebolo vidno kde.
 0.66: viac na hľadanie zamrznutia: riadok odpovede ukáže HTTP stav, dĺžku a chunked; počas čakania každých 5 s
 "still waiting: N bytes in so far, core 1: <čo robí> (loops)".
+0.67: OPRAVA zamrznutia `ai`: po odpovedi po kúskoch (chunked; API vrátilo HTTP 429) sa BearSSL pri slušnom
+ukončení TLS (`br_sslio_close`) zacyklil navždy - zopakované v QEMU; HTTPS klient teraz len zatvorí TCP spojenie.
+Pri 429 napíše, že ide o limit volaní / výdavkov alebo kredit.
 
 ### Dátum a čas (NTP)
 

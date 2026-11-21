@@ -265,7 +265,8 @@ static void ask(const char *question, const char *cmdline)
         kprintf("\n"); con_color(COL_DEFAULT);
         if (status == 401) kprintf("  the API key is wrong: 'ai key <key>' (console.anthropic.com -> API keys)\n");
         if (status == 404) kprintf("  unknown model? 'ai model %s' sets the default again\n", DEF_MODEL);
-        if (status == 429 || status == 529) kprintf("  too many requests / overloaded - try again in a while\n");
+        if (status == 429) kprintf("  a rate or spend limit: check Limits and Billing (credit) at platform.claude.com, or wait a minute\n");
+        if (status == 529) kprintf("  the API is overloaded - try again in a while\n");
         return;
     }
     /* the text blocks of content[] */
