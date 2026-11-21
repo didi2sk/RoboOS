@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.44**
+Aktuálna verzia: **0.47**
 
 ## Podporované dosky
 
@@ -389,8 +389,14 @@ alebo Fn+C, kým nebliká LED) a napíš `bt pair`. RoboOS ju nájde, pripojí s
 ako USB klávesnica (US rozloženie, autorepeat). Kľúč sa uloží do `/BTKEYS.TXT`: po reštarte (s `bt auto on`)
 alebo keď klávesnica zaspala, stlač kláves a pripojí sa sama. `bt` ukáže stav, `bt forget` kľúč zmaže.
 BLE klávesnice zatiaľ nie. Čip na 3B+ má zástupnú Bluetooth adresu (43:45:c0:00:1f:ac, rovnakú na každej
-doske); od 0.44 mu RoboOS dá vlastnú (b8:27:eb + sériové číslo, ako Raspberry Pi OS). Vyskúšané v QEMU
-(`tools/qemu_btkbd_test.py` hrá radič aj klávesnicu) - na hardvéri ešte nie.
+doske); od 0.44 mu RoboOS dá vlastnú (b8:27:eb + sériové číslo, ako Raspberry Pi OS). **Funguje na Pi 3B+** s lacnou
+klasickou BT klávesnicou (párovanie, písanie, pripojenie po reštarte); 0.45 nechá klávesnicu, nech sa pri
+pripájaní overí sama (0.44 to krížila: chyba 0x05, jeden pokus navyše). 0.45 tiež nahráva firmvér Bluetoothu rýchlosťou
+921600 baudov (8x rýchlejšie: `bt auto on` už nepredĺži boot o ~6 s) a pripojenie WiFi pri štarte robí I/O jadro,
+takže WPA handshake routera dostane odpoveď hneď (predtým sa 3B+ často pripojila až na pokus o 20 s neskôr).
+0.46: Bluetooth na pozadí počúva len 10 % času (30 ms z 300 ms, `bt scan` 50 %) - WiFi a Bluetooth zdieľajú
+jedno rádio a 50 % hľadanie na 3B+ kazilo WPA handshake až do 3. pokusu; WiFi skúša znova po 10 s (potom 30 s,
+60 s) a vypíše, prečo predošlý pokus zlyhal. QEMU test: `tools/qemu_btkbd_test.py`.
 
 ### Dátum a čas (NTP)
 
@@ -467,6 +473,25 @@ volať aj webová stránka z inej adresy (CORS je povolený). Doska vypíše
 `[API] reboot asked by <adresa>` a `[API] wrong or missing token from <adresa>`.
 **HTTP nie je šifrované**: kto vidí do tvojej siete, prečíta aj token, takže API používaj
 len vo vlastnej sieti, nie z internetu. Piny 14/15 sú UART.
+
+### Aktualizácia cez sieť (kernel a súbory, 0.47)
+
+S `http on` a tokenom (`http token <tajne>`) alebo prihlásením admina sa nový kernel dostane do Pi
+bez vyberania karty:
+
+```
+curl --data-binary @kernel8.img -H "Authorization: Bearer <tajne>" http://<doska>/api/update
+curl --data-binary @ALARM.BIN -H "Authorization: Bearer <tajne>" "http://<doska>/api/file?path=/APPS/ALARM.BIN"
+```
+
+(`https://` a `curl -k`, keď je zapnuté HTTPS; `-u meno:heslo` pre prihlásenie používateľa.) Kernel sa
+najprv skontroluje: musí to byť kernel RoboOS (nesie značku `ROBOOS-KERNEL:<verzia>`), takže zlý súbor
+nikdy nenahradí bežiaci kernel. Starý kernel sa skopíruje do `KERNEL8.BAK`, nový sa zapíše do nových
+klastrov, položka v adresári sa prepne naň, prečíta sa späť a porovná - potom príde odpoveď
+`{"ok":true,"old":"0.46","new":"0.47",...}` a Pi sa reštartuje (`?reboot=0` = nereštartovať). Najviac 16 MB.
+`update` ukáže kernel na karte a zálohu, `update restore` vráti zálohu. Ak by nový kernel vôbec nenaštartoval,
+vyber kartu a premenuj `KERNEL8.BAK` na `kernel8.img`. Vyskúšané v QEMU (HTTP + HTTPS, zlý token, súbor,
+ktorý nie je kernel, restore, reštart) - na hardvéri ešte nie.
 
 ### Používatelia: prihlásenie na webovú stránku a API (voliteľné)
 

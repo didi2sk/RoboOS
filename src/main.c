@@ -2,9 +2,11 @@
 #include "usb.h"
 #include "sd.h"
 
-#define VERSION "0.44"
+#define VERSION "0.47"
 
 const char *os_version(void) { return VERSION; }
+/* found by 'update' / POST /api/update in a kernel8.img: only a RoboOS kernel may replace the running one */
+__attribute__((used)) const char kernel_tag[] = "ROBOOS-KERNEL:" VERSION ":AARCH64";
 
 /* /SCREEN.TXT: "1280x720", or "auto" = the monitor's own resolution (0 x 0) */
 void screen_choice(u32 *w, u32 *h)

@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.44**
+Current version: **0.47**
 
 ## Supported boards
 
@@ -393,7 +393,15 @@ types into the shell like a USB keyboard (US layout, autorepeat). The link key i
 connects by itself. `bt` shows the state, `bt forget` deletes the key. BLE keyboards are not supported
 yet. The 3B+ chip comes with a placeholder Bluetooth address (43:45:c0:00:1f:ac, the same on every
 board); since 0.44 RoboOS gives it its own (b8:27:eb + serial number, like Raspberry Pi OS).
-Tested in QEMU (`tools/qemu_btkbd_test.py` plays the controller and a keyboard) - not yet on hardware.
+**Works on the Pi 3B+** with a cheap classic BT keyboard (pairing, typing, reconnect after a reboot);
+0.45 lets the keyboard authenticate by itself when it calls (0.44 crossed it: error 0x05, one retry).
+0.45 also loads the Bluetooth firmware at 921600 baud (8x faster: `bt auto on` no longer adds ~6 s to
+the boot) and leaves the WiFi join at boot to the I/O core, so the router's WPA handshake is answered
+at once (before, the 3B+ often joined only on the retry 20 s later).
+0.46: Bluetooth listens in the background only 10 % of the time (30 ms every 300 ms, `bt scan` 50 %) - WiFi
+and Bluetooth share one radio, and the 50 % scan made the WPA handshake fail until the 3rd try on the 3B+;
+WiFi retries come after 10 s (then 30 s, 60 s) and say why the last try failed.
+QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
 
@@ -471,6 +479,26 @@ from another address may call the API too (CORS is allowed). The board prints
 `[API] reboot asked by <address>` and `[API] wrong or missing token from <address>`.
 **HTTP is not encrypted**: anybody who can watch your LAN can read the token, so use the
 API only on your own network, not from the internet. Pins 14/15 are the UART.
+
+### Updates over the network (kernel and files, 0.47)
+
+With `http on` and a token (`http token <secret>`) or an admin login, a new kernel goes to the
+board without taking the card out:
+
+```
+curl --data-binary @kernel8.img -H "Authorization: Bearer <secret>" http://<board>/api/update
+curl --data-binary @ALARM.BIN -H "Authorization: Bearer <secret>" "http://<board>/api/file?path=/APPS/ALARM.BIN"
+```
+
+(`https://` and `curl -k` when HTTPS is on; `-u name:password` for a user login.) The kernel is
+checked first: it must be a RoboOS kernel (it carries a `ROBOOS-KERNEL:<version>` tag), so a wrong
+file never replaces the running one. The old kernel is copied to `KERNEL8.BAK`, the new one is
+written into fresh clusters, the directory entry switches to it, it is read back and compared - then
+the answer `{"ok":true,"old":"0.46","new":"0.47",...}` comes back and the board reboots
+(`?reboot=0` = do not). 16 MB at most. `update` shows the kernel on the card and the backup,
+`update restore` puts the backup back. If a new kernel does not start at all, take the card out
+and rename `KERNEL8.BAK` to `kernel8.img`. Tested in QEMU (HTTP + HTTPS, wrong token, a file that
+is no kernel, restore, reboot) - not yet on hardware.
 
 ### Users: a login for the web page and the API (optional)
 
@@ -741,6 +769,7 @@ If you connect after boot, press Enter.
 | `http token [<secret>\|off]` | JSON API token (Bearer), see the JSON API section |
 | `http tls on\|off\|new` | HTTPS on port 443 (the API then only there), new certificate |
 | `wifi [scan\|join <net> [pw]\|band 2\|5\|auto\|leave\|forget]` | WiFi: networks, join (saved), status |
+| `update [restore]` | kernel / file updates over the network: status, the backup back |
 | `bt [on\|scan [s]\|sensors\|pair [mac]\|forget\|off\|auto on\|off]` | Bluetooth: devices, thermometers, phone, keyboard (only when asked) |
 | `sensors [scan]`, `i2c scan\|read\|write` | I2C sensors (BME280, ADS1115, DS3231) |
 | `mqtt [broker\|user\|pub\|interval\|off]` | MQTT client (IoT) |

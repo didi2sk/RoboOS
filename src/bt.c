@@ -94,21 +94,38 @@ static int load_firmware(const char *name)
     struct fat_file f;
     if (fat_open(path, &f) || f.is_dir) { char m[64] = "missing "; int j = 8; for (int i = 0; path[i] && j < 62; i++) m[j++] = path[i]; m[j] = 0; return err(m); }
     kprintf("  firmware %s (%u bytes)...\n", path, f.size);
-    if (cmd(0xFC2E, 0, 0, 0, 0, 1000)) return err("'download minidriver' got no answer");
+    /* 115200 baud would take ~6 s for the 3B+ file: ask the chip for 921600 (BCM vendor command, like
+     * Linux btbcm), check it answers there, else go back. After the download it restarts at 115200. */
+    u8 br[6] = { 0, 0, 0x00, 0x10, 0x0E, 0x00 };   /* 921600 */
+    int fast = 0;
+    if (cmd(0xFC18, br, 6, 0, 0, 500) == 0) {
+        uart_bt_baud(921600);
+        delay_us(20000);
+        while (uart_bt_getc(1000) >= 0) continue;
+        if (cmd(0x1001, 0, 0, 0, 0, 300) == 0) fast = 1;     /* Read Local Version at the new speed */
+        else {
+            uart_bt_baud(115200);
+            delay_us(20000);
+            while (uart_bt_getc(1000) >= 0) continue;
+            cmd(0x0C03, 0, 0, 0, 0, 1000);
+        }
+    }
+    if (cmd(0xFC2E, 0, 0, 0, 0, 1000)) { if (fast) uart_bt_baud(115200); return err("'download minidriver' got no answer"); }
     delay_us(50000);
     static u8 rec[260];
     int n = 0;
     while (f.pos < f.size) {
-        if (fat_read(&f, rec, 3) != 3) return err("firmware file cut short");
+        if (fat_read(&f, rec, 3) != 3) { if (fast) uart_bt_baud(115200); return err("firmware file cut short"); }
         u16 op = (u16)(rec[0] | rec[1] << 8);
         int l = rec[2];
         if (l && fat_read(&f, rec + 3, l) != l) return err("firmware file cut short");
         int st = cmd(op, rec + 3, l, 0, 0, 1000);
-        if (st) return err(st < 0 ? "no answer while loading the firmware" : "the chip refused a firmware record");
+        if (st) { if (fast) uart_bt_baud(115200); return err(st < 0 ? "no answer while loading the firmware" : "the chip refused a firmware record"); }
         n++;
     }
     delay_us(250000);
-    kprintf("  %d records loaded\n", n);
+    if (fast) { uart_bt_baud(115200); delay_us(10000); while (uart_bt_getc(1000) >= 0) continue; }   /* the new firmware runs at 115200 */
+    kprintf("  %d records loaded%s\n", n, fast ? " (921600 baud)" : "");
     return 0;
 }
 
@@ -514,7 +531,7 @@ static int kb_we_called, kb_quiet;         /* we created the link; quiet = a sil
 static volatile int kb_state;              /* 0 none, 1 connecting, 2 linked, 3 encrypted, 4 ready, -1 failed */
 static volatile u32 kb_reports;
 static char kb_msg[80];
-static u64 kb_open_at;
+static u64 kb_open_at, kb_auth_at, kb_enc_at;   /* deferred steps when the keyboard called us */
 static struct l2ch { u16 psm, lcid, rcid; u8 used, cfg_in, cfg_out, open; } ch[2];   /* 0 control, 1 interrupt */
 static u8 sig_id = 1;
 
@@ -574,7 +591,7 @@ static void ch_connect(int i)
 
 static void kb_reset(void)
 {
-    kb_h = -1; memset(ch, 0, sizeof(ch)); kb_open_at = 0; kb_we_called = 0;
+    kb_h = -1; memset(ch, 0, sizeof(ch)); kb_open_at = kb_auth_at = kb_enc_at = 0; kb_we_called = 0;
 }
 
 static void ch_check(void)
@@ -583,7 +600,7 @@ static void ch_check(void)
     if (ch[0].open && ch[1].open && kb_state != 4) {
         u8 sp = 0x70;                                  /* HIDP SET_PROTOCOL boot */
         acl_queue_h(kb_h, 1, ch[0].rcid, &sp, 1);
-        kb_state = 4;
+        kb_state = 4; kb_quiet = 0;
         char a[18], m[64] = "keyboard ready: ";
         mac_str(a, kb_addr);
         int k = 16; for (int i = 0; a[i]; i++) m[k++] = a[i]; m[k] = 0;
@@ -671,6 +688,15 @@ static void kb_create(const u8 *a)                      /* io lock held (core 0)
 
 static void kb_tick(u64 now)
 {
+    /* the keyboard called us: it authenticates / encrypts by itself - only if it does not, we do */
+    if (kb_auth_at && now >= kb_auth_at) {
+        kb_auth_at = 0;
+        if (kb_h >= 0 && kb_state < 3) { u8 h[2] = { (u8)kb_h, (u8)(kb_h >> 8) }; hci_queue(0x0411, h, 2); }
+    }
+    if (kb_enc_at && now >= kb_enc_at) {
+        kb_enc_at = 0;
+        if (kb_h >= 0 && kb_state < 3) { u8 d[3] = { (u8)kb_h, (u8)(kb_h >> 8), 1 }; hci_queue(0x0413, d, 3); }
+    }
     if (kb_open_at && now >= kb_open_at) {             /* encrypted, the keyboard opened nothing: we do */
         kb_open_at = 0;
         if (kb_h >= 0 && !ch[0].used) { kb_we_called = 1; ch_connect(0); }
@@ -693,8 +719,9 @@ static int kb_event(const u8 *e)
         kb_h = (p[1] | p[2] << 8) & 0xFFF;
         kb_we_called = !memcmp_n(p + 3, kb_target, 6) && kb_state == 1;
         memcpy(kb_addr, p + 3, 6);
-        kb_state = 2; kb_quiet = 0;
-        { u8 h[2] = { p[1], p[2] }; hci_queue(0x0411, h, 2); }   /* Authentication Requested */
+        kb_state = 2;                                  /* kb_quiet stays: the boot-time try reports nothing */
+        if (kb_we_called) { u8 h[2] = { p[1], p[2] }; hci_queue(0x0411, h, 2); }   /* Authentication Requested */
+        else kb_auth_at = timer_us() + 2000000;     /* it called: it authenticates itself (both at once = error 0x05) */
         return 1;
     case 0x04: {                                       /* Connection Request (a paired keyboard calls) */
         u8 r[7];
@@ -707,13 +734,28 @@ static int kb_event(const u8 *e)
     }
     case 0x06:                                         /* Authentication Complete */
         if (((p[1] | p[2] << 8) & 0xFFF) != kb_h) return 1;
-        if (p[0]) { kprintf("\n[BT] pairing failed (error 0x%02x)\n", p[0]); kb_state = -1; u8 d[3] = { p[1], p[2], 0x05 }; hci_queue(0x0406, d, 3); return 1; }
-        { u8 d[3] = { p[1], p[2], 1 }; hci_queue(0x0413, d, 3); }   /* Set Connection Encryption */
+        if (p[0]) {
+            if (kb_state >= 3) return 1;               /* already encrypted: a crossed request, harmless */
+            if (kb_we_called) {
+                if (!kb_quiet) kprintf("\n[BT] pairing failed (error 0x%02x)\n", p[0]);
+                kb_state = kb_quiet ? 0 : -1;
+                u8 d[3] = { p[1], p[2], 0x05 }; hci_queue(0x0406, d, 3);
+            } else if (!kb_auth_at) kb_auth_at = timer_us() + 1000000;   /* its own try failed: we try once more */
+            return 1;
+        }
+        if (kb_we_called) { u8 d[3] = { p[1], p[2], 1 }; hci_queue(0x0413, d, 3); }   /* Set Connection Encryption */
+        else kb_enc_at = timer_us() + 1000000;       /* it usually switches encryption on itself */
         return 1;
     case 0x08:                                         /* Encryption Change */
         if (((p[1] | p[2] << 8) & 0xFFF) != kb_h) return 1;
-        if (p[0] || !p[3]) { kprintf("\n[BT] encryption failed (error 0x%02x)\n", p[0]); kb_state = -1; return 1; }
-        kb_state = 3;
+        if (p[0] || !p[3]) {
+            if (kb_we_called) {
+                if (!kb_quiet) kprintf("\n[BT] encryption failed (error 0x%02x)\n", p[0]);
+                kb_state = kb_quiet ? 0 : -1;
+            }
+            return 1;                                  /* the keyboard's own link: it tries again by itself */
+        }
+        kb_state = 3; kb_auth_at = kb_enc_at = 0;
         if (kb_we_called && !ch[0].used) ch_connect(0);
         else if (!ch[0].used) kb_open_at = timer_us() + 1500000;
         return 1;
@@ -799,7 +841,7 @@ static void hci_event(const u8 *e)              /* e[0] code, e[1] length, e + 2
     case 0x05:                                     /* Disconnection Complete */
         if (((e[3] | e[4] << 8) & 0xFFF) == kb_h && kb_h >= 0) {
             if (kb_state == 4) kb_say("keyboard disconnected (it connects again when you press a key)");
-            kb_reset(); if (kb_state > 0) kb_state = 0;
+            kb_reset(); kb_quiet = 0; if (kb_state > 0) kb_state = 0;
             return;
         }
         if (conn >= 0) { con_color(COL_CYAN); kprintf("\n[BT] phone disconnected\n"); con_color(COL_DEFAULT); }
@@ -1041,7 +1083,9 @@ static int bt_start(void)
     ad[n++] = (u8)(k + 1); ad[n++] = 0x09; memcpy(ad + n, gap_name, (size_t)k); n += k;
     ad[0] = (u8)(n - 1);
     sr[0] = 18; sr[1] = 17; sr[2] = 0x07; memcpy(sr + 3, U_NUS, 16);
-    u8 sp[7] = { 1, 0x60, 0, 0x30, 0, 0, 0 };
+    /* background scan: 30 ms every 300 ms (10 %): the radio is shared with WiFi, a 50 % scan (60/30 ms)
+     * starved it on the 3B+ - the WPA handshake failed until the 3rd try. 'bt scan' listens at 50 %. */
+    u8 sp[7] = { 1, 0xE0, 0x01, 0x30, 0, 0, 0 };
     int r = cmd(0x2006, ap, 15, 0, 0, 1000) | cmd(0x2008, ad, 32, 0, 0, 1000) | cmd(0x2009, sr, 32, 0, 0, 1000)
           | cmd(0x200A, adv_on, 1, 0, 0, 1000) | cmd(0x200B, sp, 7, 0, 0, 1000) | cmd(0x200C, sc_on, 2, 0, 0, 1000);
     if (r) kprintf("  (advertising / scanning: the chip said %d)\n", r);
@@ -1263,12 +1307,19 @@ void bt_cmd(int argc, char **argv)
             io_lock();
             hci_queue(0x0401, inq, 5);
             io_unlock();
+            static const u8 fast[7] = { 1, 0x60, 0, 0x30, 0, 0, 0 }, slow[7] = { 1, 0xE0, 0x01, 0x30, 0, 0, 0 };
+            io_lock();
+            hci_queue(0x200C, sc_off, 2); hci_queue(0x200B, fast, 7); hci_queue(0x200C, sc_on, 2);
+            io_unlock();
             kprintf("listening %d s (Ctrl+C stops)...\n", (int)s);
             while (timer_us() < t0 + s * 1000000) {
                 if (!io_core_active()) io_poll_all();   /* no I/O core: poll here */
                 if (con_trygetc() == 3) break;
                 delay_us(2000);
             }
+            io_lock();
+            hci_queue(0x200C, sc_off, 2); hci_queue(0x200B, slow, 7); hci_queue(0x200C, sc_on, 2);   /* back to 10 % */
+            io_unlock();
             list(t0);
         } else if (!strcmp(argv[1], "sensors")) {
             char b[1024];

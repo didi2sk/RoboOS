@@ -401,6 +401,23 @@ static int same_token(const char *a, int alen)
     return tl > 0 && d == 0;
 }
 
+/* an admin for uploads (ip.c): a user login with role 2, or the Bearer token */
+int api_admin_ok(const char *auth, int role, const char *from)
+{
+    if (role == 2) return 1;
+    if (role == 1) return 0;
+    if (users_locked(from)) return -1;
+    if (!token[0]) return -2;
+    int al = 0;
+    if (auth) { while (*auth == ' ') auth++; if (!memcmp_n(auth, "Bearer ", 7)) auth += 7; else auth = 0; }
+    if (auth) { while (*auth == ' ') auth++; while (auth[al] && auth[al] != ' ' && auth[al] != '\r') al++; }
+    if (!auth || !same_token(auth, al)) { if (auth) users_failed(from); return 0; }
+    users_ok(from);
+    return 1;
+}
+
+void api_reboot_later(u32 ms) { reboot_at = timer_us() + (u64)ms * 1000; }
+
 /*
  * method, path, the Authorization header value (or 0) and the body; the whole
  * HTTP answer goes to o. Returns its length.
