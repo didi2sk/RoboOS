@@ -1144,6 +1144,10 @@ int wifi_recv(void *buf, int max, int want_data)
             /* 15 s after a refusal, not at once: the owner's router answered quick retries with
              * deauth reason 2 again and again (0.49/0.50: 20 tries 8 s apart) */
             if (failed && now >= j_fail_at + 15000000 && now < j_next_try) j_next_try = now;
+            /* the FIRST try after a boot: the router may still hold our old link (the board rebooted
+             * without leaving) and refuses it once; the next try then joins at once (owner: 0.52/0.53
+             * joined in 1 s, but only after the 20 s wait) - so retry that one after 3 s */
+            if (failed && !j_tries && now >= j_fail_at + 3000000 && now < j_next_try) j_next_try = now;
             if (!failed && j_link && j_started && now < j_started + 30000000 && now >= j_next_try) j_next_try = now + 2000000;
         }
         if (!wifi_joined() && now >= j_next_try) {

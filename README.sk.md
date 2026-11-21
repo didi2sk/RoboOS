@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.53**
+Aktuálna verzia: **0.54**
 
 ## Podporované dosky
 
@@ -405,6 +405,9 @@ odpovedal na rýchle pokusy odpojením s dôvodom 2 („predošlé prihlásenie 
 ďalším pokusom Pi najprv korektne odpojí (disassociate, 0,3 s) a po odmietnutí skúša znova o 15 s, nie o 2 s. Na Pi 3B+ sa WiFi teraz pripojí na prvý pokus do sekundy.
 0.53: s `bt auto on` a nastavenou WiFi sa Bluetooth zapne až po pripojení WiFi (najneskôr o 15 s) - zdieľajú
 jedno rádio a štart Bluetoothu predĺžil pripojenie WiFi pri štarte na 20 s. QEMU test: `tools/qemu_btkbd_test.py`.
+0.54: `history` vypíše posledných 30 príkazov (predtým 10), `!N` / `!!` spustí príkaz znova, `history clear` ju zmaže; história
+sa ukladá do `/HISTORY.TXT` na karte, takže prežije reštart. WiFi: odmietnutý PRVÝ pokus po štarte sa opakuje o 3 s (nie o 20 s) -
+vlastník videl pripájanie 20 s pri štarte aj bez Bluetoothu (druhý pokus sa potom pripojí za 1 s).
 
 ### Dátum a čas (NTP)
 
@@ -719,7 +722,7 @@ kontrolujú každých 0,7 s). Pri štarte sa vypíše:
 - **Americké rozloženie (US)**. Funguje Shift, Caps Lock, Num Lock, Ctrl+C a Ctrl+L; LED Caps/Num Lock svietia podľa stavu.
 - Numerická klávesnica: číslice a `/ * - + .` pri zapnutom Num Lock (predvolené po štarte);
   pri vypnutom Num Lock 8/2 = história hore/dole, 4/6 = kurzor vľavo/vpravo, 7/1 = Home/End a `.` = Delete.
-- Šípky hore/dole = história, vľavo/vpravo/Home/End = kurzor, Backspace, Delete, Tab, autorepeat pri držaní klávesy.
+- Šípky hore/dole = história (posledných 30, uložená v /HISTORY.TXT; `history`, `!N`), vľavo/vpravo/Home/End = kurzor, Backspace, Delete, Tab, autorepeat pri držaní klávesy.
 - Podporované sú klávesnice s HID *boot protocol* (prakticky všetky bežné,
   aj klávesnice so zabudovaným hubom ako Apple a herné klávesnice).
 

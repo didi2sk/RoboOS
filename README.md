@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.53**
+Current version: **0.54**
 
 ## Supported boards
 
@@ -409,6 +409,9 @@ the quick retries with deauth reason 2 ("previous authentication no longer valid
 leaves cleanly (disassociate, 0.3 s) and a refused try is retried after 15 s, not 2 s. On the Pi 3B+ WiFi now joins on the first try within a second.
 0.53: with `bt auto on` and WiFi set up, Bluetooth starts only after WiFi has joined (at most 15 s later) -
 both share one radio, and the Bluetooth start made the boot-time WiFi join take 20 s.
+0.54: `history` lists the last 30 shell commands (was 10), `!N` / `!!` run one again, `history clear`; the history is kept
+in `/HISTORY.TXT` on the card, so it survives a reboot. WiFi: a refused FIRST try after a boot is retried after 3 s (not 20 s) -
+the owner saw the join take 20 s at boot even without Bluetooth (the second try then joins in 1 s).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -729,7 +732,7 @@ hub ports are checked every 0.7 s). At boot you will see:
 - **US layout**. Shift, Caps Lock, Num Lock, Ctrl+C and Ctrl+L work; the Caps/Num Lock LEDs follow.
 - Numeric keypad: digits and `/ * - + .` with Num Lock on (default after boot);
   with Num Lock off, 8/2 = history up/down, 4/6 = cursor left/right, 7/1 = Home/End and `.` = Delete.
-- Up/Down = history, Left/Right/Home/End = cursor, Backspace, Delete, Tab, autorepeat when a key is held.
+- Up/Down = history (last 30, saved in /HISTORY.TXT; `history`, `!N`), Left/Right/Home/End = cursor, Backspace, Delete, Tab, autorepeat when a key is held.
 - Keyboards with the HID *boot protocol* are supported (practically all common ones,
   including keyboards with a built-in hub such as Apple's, and gaming keyboards).
 

@@ -143,7 +143,7 @@ void con_size(int *cols, int *rows);    /* HDMI text size, 80x24 on UART only */
 
 /* lineedit.c - line editor with cursor keys and history */
 #define LE_MAX  160
-#define LE_HIST 10
+#define LE_HIST 30
 struct le_hist { char line[LE_HIST][LE_MAX]; int n; };
 /* returns the length, -1 on Ctrl+C; h, complete and prompt (for Ctrl+L) may be 0 */
 int  line_edit(char *line, int max, struct le_hist *h,
