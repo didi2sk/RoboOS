@@ -256,6 +256,8 @@ int  display_found(void);
 int  display_rows(void);
 int  display_cols(void);
 void display_cmd(int argc, char **argv);
+void spi_init(u32 div);              /* spi.c - SPI0 on GPIO8-11 */
+int  spi_write(const void *buf, int n);
 /* radio.c - RDA5807M FM radio (I2C 0x10/0x11) */
 void radio_boot(void);
 void radio_poll(void);                /* core 0, con_trygetc: RDS, queued network commands */

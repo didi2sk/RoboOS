@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.71**
+Current version: **0.72**
 
 ## Supported boards
 
@@ -450,6 +450,8 @@ failed transfer clocked it free; now at start-up, before `i2c scan` and after a 
 pulses + a STOP whenever SDA is stuck low (`i2c scan` says so).
 0.71: FM radio - `radio` for an RDA5807M module (tune, seek, scan, volume, RDS name + text, `display radio`,
 /api/radio, MQTT set/radio); an MPU-6050 on 0x68 is no longer taken for the DS3231 clock (WHO_AM_I check).
+0.72: Waveshare 1.3" OLED HAT (SH1106 on SPI0 + 3 keys + joystick) as a radio panel: `display hat`, `display keys`;
+new SPI0 driver `src/spi.c`.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -732,6 +734,20 @@ The station, volume and on/off are saved in `/RADIO.TXT` and restored at boot. O
 `POST /api/radio` with `{"cmd":"104.4"}` (or `up`, `down`, `off`, `vol 8`), `GET /api/radio` (state +
 RDS), MQTT `roboos/<name>/set/radio`. **Not yet tested on hardware** (PC test `tools/test_radio.c` with a fake chip).
 
+**Radio panel: Waveshare 1.3" OLED HAT (0.72).** The HAT plugs straight onto the 40-pin header: a 128x64 SH1106
+OLED on SPI0 (CE0, DC GPIO24, RST GPIO25) plus KEY1-3 (GPIO21/20/16) and a 5-way joystick (up 6, down 19,
+left 5, right 26, press 13). The RDA5807M stays on I2C (pins 3/5 are free on the HAT).
+
+```
+display hat          use the HAT (saved as "bus spi" in /DISPLAY.TXT); 'display type auto' = back to I2C
+display radio        radio screen
+display keys         which keys are pressed now (test)
+```
+
+Keys: KEY1 = next screen (info, clock, radio, console); on the radio screen KEY2 / KEY3 = seek down / up,
+joystick left / right = -/+ 0.1 MHz, up / down = volume, press = radio on / off. Note: GPIO24/25/16 are also
+outputs of the IoT shield - do not use both. **Not yet tested on hardware** (PC test with a fake SPI SH1106 + keys).
+
 ### MQTT
 
 MQTT is the usual way IoT devices talk to a server (Home Assistant, Node-RED, Mosquitto...).
@@ -917,7 +933,7 @@ If you connect after boot, press Enter.
 | `sensors [scan]`, `i2c scan\|read\|write` | I2C sensors (BME280, ADS1115, DS3231) |
 | `ai <question>\|@cmd ..\|key\|model` | ask Claude (own Anthropic API key) |
 | `radio [MHz\|up\|down\|scan\|vol n\|off]` | FM radio (RDA5807M module on I2C) |
-| `display [scan\|text n ..\|clear\|status on\|off\|size\|type\|addr]` | I2C OLED / LCD display |
+| `display [scan\|text n ..\|clear\|status on\|off\|size\|type\|addr\|hat\|keys]` | I2C OLED / LCD display, Waveshare SPI OLED HAT |
 | `mqtt [broker\|user\|pub\|interval\|off]` | MQTT client (IoT) |
 | `users [add\|passwd\|del\|console on\|off]`, `logout` | logins for the web page + API (optional) |
 | `time [sync\|zone\|server\|set]` | date and time from NTP, time zone, set by hand |

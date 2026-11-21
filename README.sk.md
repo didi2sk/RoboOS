@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.71**
+Aktuálna verzia: **0.72**
 
 ## Podporované dosky
 
@@ -446,6 +446,8 @@ nenašlo), kým ho neuvoľnil neúspešný prenos; teraz pri štarte, pred `i2c 
 9 hodinových impulzov + STOP, keď je SDA zaseknutá dole (`i2c scan` to napíše).
 0.71: FM rádio - `radio` pre modul RDA5807M (ladenie, hľadanie, zoznam staníc, hlasitosť, RDS názov + text,
 `display radio`, /api/radio, MQTT set/radio); MPU-6050 na 0x68 sa už nepovažuje za hodiny DS3231 (kontrola WHO_AM_I).
+0.72: Waveshare 1,3" OLED HAT (SH1106 na SPI0 + 3 tlačidlá + joystick) ako panel rádia: `display hat`, `display keys`;
+nový ovládač SPI0 `src/spi.c`.
 
 ### Dátum a čas (NTP)
 
@@ -724,6 +726,21 @@ Stanica, hlasitosť a zapnutie sa ukladajú do `/RADIO.TXT` a obnovia sa pri št
 `POST /api/radio` s `{"cmd":"104.4"}` (alebo `up`, `down`, `off`, `vol 8`), `GET /api/radio` (stav +
 RDS), MQTT `roboos/<meno>/set/radio`. **Na hardvéri zatiaľ neotestované** (PC test `tools/test_radio.c` so simulovaným čipom).
 
+**Panel rádia: Waveshare 1,3" OLED HAT (0.72).** HAT sa nasadí priamo na 40-pinový konektor: OLED 128x64 SH1106
+na SPI0 (CE0, DC GPIO24, RST GPIO25) + KEY1-3 (GPIO21/20/16) a 5-smerový joystick (hore 6, dole 19,
+vľavo 5, vpravo 26, stlačenie 13). RDA5807M ostáva na I2C (piny 3/5 sú na HATe voľné).
+
+```
+display hat          použije HAT (uloží "bus spi" do /DISPLAY.TXT); 'display type auto' = späť na I2C
+display radio        obrazovka rádia
+display keys         ktoré tlačidlá sú práve stlačené (test)
+```
+
+Tlačidlá: KEY1 = ďalšia obrazovka (info, hodiny, rádio, konzola); na obrazovke rádia KEY2 / KEY3 = hľadanie
+dole / hore, joystick vľavo / vpravo = -/+ 0,1 MHz, hore / dole = hlasitosť, stlačenie = rádio zap / vyp.
+Pozor: GPIO24/25/16 sú aj výstupy IoT shieldu - nepoužívať naraz. **Na hardvéri zatiaľ neotestované** (PC test
+so simulovaným SPI SH1106 + tlačidlami).
+
 ### MQTT
 
 MQTT je bežný spôsob, ako IoT zariadenia hovoria so serverom (Home Assistant, Node-RED,
@@ -908,7 +925,7 @@ Systém komunikuje po anglicky.
 | `sensors [scan]`, `i2c scan\|read\|write` | senzory na I2C (BME280, ADS1115, DS3231) |
 | `ai <otázka>\|@príkaz ..\|key\|model` | otázka pre Claude (vlastný API kľúč Anthropic) |
 | `radio [MHz\|up\|down\|scan\|vol n\|off]` | FM rádio (modul RDA5807M na I2C) |
-| `display [scan\|text n ..\|clear\|status on\|off\|size\|type\|addr]` | I2C displej OLED / LCD |
+| `display [scan\|text n ..\|clear\|status on\|off\|size\|type\|addr\|hat\|keys]` | I2C displej OLED / LCD, Waveshare SPI OLED HAT |
 | `mqtt [broker\|user\|pub\|interval\|off]` | MQTT klient (IoT) |
 | `users [add\|passwd\|del\|console on\|off]`, `logout` | prihlásenie na web a API (voliteľné) |
 | `time [sync\|zone\|server\|set]` | dátum a čas z NTP, časové pásmo, ručné nastavenie |

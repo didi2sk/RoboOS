@@ -261,8 +261,10 @@ void radio_net(const char *cmd, int len)
 
 void radio_cmd(int argc, char **argv);
 
+static int rbusy;                                /* a command runs (seek may poll the console = us again) */
 void radio_poll(void)
 {
+    if (rbusy) return;
     if (qpend) {
         char c[48], *av[4]; int ac = 1;
         while (__atomic_test_and_set(&qlock, __ATOMIC_ACQUIRE)) ;
@@ -307,7 +309,9 @@ static void show(void)
     if (rt[0]) { char r[65]; int k = 0; for (int i = 0; i < 64 && rt[i]; i++) r[k++] = rt[i]; r[k] = 0; kprintf("  text:    %s\n", r); }
 }
 
-void radio_cmd(int argc, char **argv)
+static void radio_cmd2(int argc, char **argv);
+void radio_cmd(int argc, char **argv) { rbusy++; radio_cmd2(argc, argv); rbusy--; }
+static void radio_cmd2(int argc, char **argv)
 {
     const char *a = argc > 1 ? argv[1] : "";
     u32 f;

@@ -119,6 +119,22 @@ static int bus_write(u8 a, const void *bv, int n)
 static int i2c_read(u8 a, void *b, int n) { (void)n; if (chip_wonly || chip_noack || !chip || a != chip_addr) return -1; *(u8 *)b = status_byte; return 0; }
 static int i2c_probe_write(u8 a) { u8 z = 0; return i2c_write(a, &z, 1) == 0; }
 static int i2c_probe(u8 a) { u8 b; return i2c_read(a, &b, 1) == 0; }
+/* the Waveshare HAT: SPI writes + DC pin -> the same fake SH1106; keys = GPIO levels */
+static int gpio_lvl[54], spi_bytes, dc_level;
+static char last_radio[32];
+static void gpio_func(int p, int f) { (void)p; (void)f; }
+static void gpio_pull(int p, int m) { if (m == 2) gpio_lvl[p] = 1; }
+static int gpio_get(int p) { return gpio_lvl[p]; }
+static void gpio_set(int p, int v) { gpio_lvl[p] = v; }
+static void spi_init(u32 d) { (void)d; }
+static int spi_write(const void *bv, int n)
+{
+    u8 t[1200]; t[0] = gpio_lvl[24] ? 0x40 : 0x00; memcpy(t + 1, bv, (size_t)n); spi_bytes += n;
+    int sv = chip_addr; chip_addr = 0x3C; bus_write(0x3C, t, n + 1); chip_addr = sv; return 0;
+}
+static void radio_cmd(int argc, char **argv) { last_radio[0] = 0; for (int i = 1; i < argc; i++) { strcat(last_radio, argv[i]); if (i + 1 < argc) strcat(last_radio, " "); } }
+static int radio_volume(void) { return 8; }
+static int radio_present(void) { return 1; }
 
 #define DISPLAY_HOST_TEST
 #include "../src/display.c"
@@ -220,7 +236,7 @@ static void reset(int c, int addr, u8 st, const char *cfg)
     memset(gram, 0, sizeof(gram)); memset(ddram, 0, sizeof(ddram));
     l4bit = 0; lnib_hi = -1; last_e = 0; col = page = sh_col = 0;
     cfg_type = -1; cfg_addr = cfg_w = cfg_h = 0; mode = M_STATUS; font = 1; contrast = 0xCF; backlight = 1; ok = 0; busy = 0;
-    cur_r = cur_c = 0; dirty = 0; npend = 0;
+    cur_r = cur_c = 0; dirty = 0; npend = 0; cfg_spi = 0; spi_bus = 0; keys_set = 0; key_raw = key_stable = 0;
     now_us = 0;
 }
 
@@ -389,6 +405,29 @@ int main(void)
     reset(SSD, 0x3C, 0x43, "type none\n");
     display_boot();
     check("not used", !display_found());
+
+    printf("Waveshare 1.3\" OLED HAT (SH1106 on SPI + keys):\n");
+    reset(SH, 0, 0xFF, "bus spi\ntype sh1106\nmode text\n");
+    display_boot();
+    check("found without I2C", display_found() && spi_bus);
+    display_text(0, "SPI hello"); display_text(1, ""); display_text(2, ""); display_text(3, "row 4");
+    { const char *w[] = { "SPI hello", "", "", "row 4" }; expect_rows("spi text", 0, 2, 4, w); }
+    check("bytes went over SPI", spi_bytes > 512);
+    { char *av[] = { "display", "radio" }; display_cmd(2, av); }
+    for (int i = 0; i < 3; i++) { now_us += 25000; display_poll(); }     /* first poll sets the pull-ups */
+    #define PRESS(pin) do { gpio_lvl[pin] = 0; for (int i = 0; i < 3; i++) { now_us += 25000; display_poll(); } gpio_lvl[pin] = 1; for (int i = 0; i < 3; i++) { now_us += 25000; display_poll(); } } while (0)
+    PRESS(20); check("KEY2 -> radio down", !strcmp(last_radio, "down"));
+    PRESS(16); check("KEY3 -> radio up", !strcmp(last_radio, "up"));
+    PRESS(26); check("right -> 104.5", !strcmp(last_radio, "104.5"));
+    PRESS(5);  check("left -> 104.3", !strcmp(last_radio, "104.3"));
+    PRESS(6);  check("up -> vol 9", !strcmp(last_radio, "vol 9"));
+    PRESS(19); check("down -> vol 7", !strcmp(last_radio, "vol 7"));
+    PRESS(13); check("press -> off", !strcmp(last_radio, "off"));
+    last_radio[0] = 0; gpio_lvl[20] = 0; now_us += 25000; display_poll(); gpio_lvl[20] = 1; now_us += 25000; display_poll();
+    check("one-sample glitch ignored", !last_radio[0]);
+    PRESS(21); check("KEY1 -> next screen (console)", mode == M_CONSOLE);
+    PRESS(21); check("KEY1 again -> status", mode == M_STATUS);
+    last_radio[0] = 0; PRESS(16); check("KEY3 does nothing outside the radio screen", !last_radio[0]);
 
     printf(errors ? "\n%d ERRORS\n" : "\nall OK\n", errors);
     return errors != 0;
