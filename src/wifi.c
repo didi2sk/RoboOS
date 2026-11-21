@@ -713,7 +713,13 @@ static volatile int j_ssid_ok, j_link, j_keyed, j_fail, j_need_key, j_told;
 static char j_ssid[33], j_pass[64];
 static int cfg_band;
 static int j_want, j_tries, pmk_ok, j_first;                       /* j_want: keep re-joining j_ssid (until 'wifi leave') */
-static u64 j_next_try, j_started, j_fail_at;      /* when the running try began / first reported a failure */
+static u64 j_next_try, j_started, j_fail_at;
+/* the last joins, for one photo of 'wifi': when each step came (ms after the join was sent) */
+static struct jlog { u32 at_s; u16 ssid_ms, link_ms, m1_ms, keys_ms, end_ms; u8 used, ssid_st, lost_type, lost_reason, m1, m3, ok, keyed; } jl[10];
+static int jl_cur = -1, jl_count;
+static u64 jl_t0;
+static u16 jl_ms(void) { u64 d = (timer_us() - jl_t0) / 1000; return (u16)(d > 65000 ? 65000 : d); }
+static struct jlog *jlc(void) { return jl_cur >= 0 ? &jl[jl_cur] : 0; }      /* when the running try began / first reported a failure */
 static int join_send(const char *ssid, const char *pass);                                      /* 0 auto, 1 = 5 GHz only, 2 = 2.4 GHz only (WLC_SET_BAND) */
 
 /* our own WPA2 supplicant, for firmware without one (Pi 3B+): see wpa.c */
@@ -741,10 +747,13 @@ static void event(const u8 *p, int len)
     switch (type) {
     case 0:                                               /* E_SET_SSID: the join finished */
         if (status == 0) j_ssid_ok = 1; else j_fail = 1 + (int)status;   /* 1 fail, 2 timeout, 3 no network */
+        if (jlc() && !jlc()->ssid_ms) { jlc()->ssid_ms = jl_ms(); jlc()->ssid_st = (u8)status; }
         return;
     case 16:                                              /* E_LINK */
+        if ((flags & 1) && jlc() && !jlc()->link_ms) jlc()->link_ms = jl_ms();
+        if (!(flags & 1) && jlc() && j_link && !jlc()->lost_type) { jlc()->lost_type = 16; jlc()->lost_reason = (u8)reason; }
         if (flags & 1) { if (!j_link && host_sup && !sup_started) { wpa_start(&sup, sup_pmk, w.mac, 0, 0); sup_ie_wanted = 1; sup_started = 1; } j_link = 1; }
-        else { if (j_link) { d_lost_type = 16; d_lost_reason = (int)reason; } j_link = 0; j_keyed = 0; sup_started = 0; }
+        else { if (j_link && timer_us() > j_started + 1000000) { d_lost_type = 16; d_lost_reason = (int)reason; } j_link = 0; j_keyed = 0; sup_started = 0; }
         return;
     case 46:                                              /* E_PSK_SUP: the firmware's WPA supplicant */
         if (host_sup) return;                             /* ours does the handshake (3B+): the firmware's word means nothing -
@@ -753,7 +762,9 @@ static void event(const u8 *p, int len)
         else if (status == 7 || status == 0) { if (j_need_key && !j_keyed) j_fail = 100 + (int)status; }   /* timeout = wrong password? */
         return;
     case 5: case 6: case 11: case 12:                     /* deauth / disassoc (reason = 802.11 reason code) */
+        if (timer_us() < j_started + 1000000) { j_link = 0; j_keyed = 0; sup_started = 0; return; }   /* our own disassoc before a try */
         d_lost_type = (int)type; d_lost_reason = (int)reason;
+        if (jlc() && !jlc()->lost_type) { jlc()->lost_type = (u8)type; jlc()->lost_reason = (u8)reason; }
         j_link = 0; j_keyed = 0; sup_started = 0;
         return;
     }
@@ -1069,6 +1080,7 @@ static void sup_eapol(const u8 *f, int len)
         return;
     }
     if (sup.last == 1) d_m1++; else if (sup.last == 3) d_m3++; else if (sup.last == 5) d_grp++;
+    if (jlc()) { if (sup.last == 1) { if (!jlc()->m1_ms) jlc()->m1_ms = jl_ms(); jlc()->m1++; } else if (sup.last == 3) jlc()->m3++; }
     if (sup.outlen) { memcpy(sup_out, sup.out, (size_t)sup.outlen); sup_outlen = sup.outlen; }
     if (sup.set_ptk || sup.set_gtk) {                     /* after message 4 has left */
         sup_keys = 1;
@@ -1092,6 +1104,7 @@ static void sup_work(void)
         if (r) { sup_err = werr; return; }
         sup_err = 0;
         d_keys++;
+        if (jlc() && !jlc()->keys_ms) jlc()->keys_ms = jl_ms();
         j_keyed = 1;
     }
 }
@@ -1127,7 +1140,9 @@ int wifi_recv(void *buf, int max, int want_data)
              * so killed tries that would have joined - it joined only on the 4th) */
             int failed = !j_link && (j_fail || d_lost_type);   /* never while associated (the WPA handshake runs) */
             if (failed && !j_fail_at) j_fail_at = now;
-            if (failed && now >= j_fail_at + 2000000 && now < j_next_try) j_next_try = now;
+            /* 15 s after a refusal, not at once: the owner's router answered quick retries with
+             * deauth reason 2 again and again (0.49/0.50: 20 tries 8 s apart) */
+            if (failed && now >= j_fail_at + 15000000 && now < j_next_try) j_next_try = now;
             if (!failed && j_link && j_started && now < j_started + 30000000 && now >= j_next_try) j_next_try = now + 2000000;
         }
         if (!wifi_joined() && now >= j_next_try) {
@@ -1149,6 +1164,12 @@ int wifi_recv(void *buf, int max, int want_data)
                 if (j_started) kprintf("  (that try ran %u s)\n", (u32)((now - j_started) / 1000000));
                 con_color(COL_DEFAULT);
             }
+            if (j_tries) {                                   /* leave cleanly first, so the router drops the old state */
+                j_started = timer_us();                      /* (the link-loss events of this are ignored for 1 s) */
+                wlcmd(1, 52, 0, 0, 0, 0);                    /* WLC_DISASSOC */
+                u64 until = timer_us() + 300000;
+                while (timer_us() < until) continue;
+            }
             j_started = timer_us(); j_fail_at = 0;
             d_lost_type = d_lost_reason = 0;                 /* a fresh try: forget the last one's link loss */
             if (join_send(ss, pw[0] ? pw : 0)) kprintf("[NET] WiFi join: %s\n", werr);
@@ -1157,6 +1178,7 @@ int wifi_recv(void *buf, int max, int want_data)
     }
     if (wifi_joined() && !j_told) {                       /* tell once: connected */
         j_told = 1;
+        if (jlc()) { jlc()->ok = 1; jlc()->end_ms = jl_ms(); }
         con_color(COL_CYAN);
         if (j_started) kprintf("\n[NET] WiFi connected to %s (%u s)\n", j_ssid, (u32)((timer_us() - j_started) / 1000000));
         else kprintf("\n[NET] WiFi connected to %s\n", j_ssid);
@@ -1198,6 +1220,12 @@ static int send_frame(const void *f, int len)
 
 static int join_send(const char *ssid, const char *pass)
 {
+    if (jlc() && !jlc()->ok && !jlc()->end_ms) jlc()->end_ms = jl_ms();   /* the last try ends here */
+    jl_cur = jl_count++ % 10;
+    memset(&jl[jl_cur], 0, sizeof(jl[0]));
+    jl[jl_cur].used = 1;
+    jl[jl_cur].at_s = (u32)(timer_us() / 1000000);
+    jl_t0 = timer_us();
     int sl = (int)strlen(ssid), pl = pass ? (int)strlen(pass) : 0;
     if (sl < 1 || sl > 32) { werr = "the network name must be 1-32 characters"; return -1; }
     if (pl && (pl < 8 || pl > 63)) { werr = "a WPA password has 8-63 characters"; return -1; }
@@ -1430,6 +1458,20 @@ void wifi_cmd(int argc, char **argv)
         wpa_diag();
     }
     else kprintf("  not connected ('wifi join <network> <password>')\n");
+    if (jl_count) {                                       /* the last joins: ms after each was sent */
+        kprintf("  joins (ms after the join was sent; ssid = the firmware found + joined the network):\n");
+        for (int k = jl_count > 10 ? jl_count - 10 : 0; k < jl_count; k++) {
+            struct jlog *e = &jl[k % 10];
+            kprintf("  #%d at %us: ssid ", k + 1, e->at_s);
+            if (e->ssid_ms) kprintf("%u%s", e->ssid_ms, e->ssid_st ? "" : ""); else kprintf("-");
+            if (e->ssid_ms && e->ssid_st) kprintf("(st %d)", e->ssid_st);
+            kprintf(" link "); if (e->link_ms) kprintf("%u", e->link_ms); else kprintf("-");
+            if (host_sup) { kprintf(" msg1 "); if (e->m1_ms) kprintf("%u x%d", e->m1_ms, e->m1); else kprintf("-"); kprintf(" msg3 %d keys ", e->m3); if (e->keys_ms) kprintf("%u", e->keys_ms); else kprintf("-"); }
+            if (e->lost_type) kprintf(" lost %s %d", e->lost_type == 16 ? "link" : e->lost_type <= 6 ? "deauth" : "disassoc", e->lost_reason);
+            if (e->ok) kprintf(" -> JOINED %u", e->end_ms); else if (e->end_ms) kprintf(" -> gave up %u", e->end_ms); else kprintf(" (running)");
+            kprintf("\n");
+        }
+    }
     if (cfg_band) kprintf("  band: %s GHz only%s\n", cfg_band == 1 ? "5" : "2.4",
                           w.chipid != 0x4345 ? " - ignored, this chip has 2.4 GHz only" : " ('wifi band auto' allows both)");
 }
