@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.55**
+Current version: **0.56**
 
 ## Supported boards
 
@@ -415,6 +415,8 @@ try whose WPA handshake stalls (msg2 sent, no msg3 within 5 s) - the owner's pho
 dropped the board after 18 s, the second try then joined in 3 s.
 0.55: I2C displays - SSD1306 / SH1106 OLED and 16x2 / 20x4 LCDs with a PCF8574 backpack, found at boot, status screen
 (name, IP, time), `display`, BASIC `DISPLAY`, C API 11 (see "I2C display").
+0.56: `ai` - questions to Claude with your own API key (see "AI"); shell lines up to 255 characters; more root CAs
+for HTTPS (DigiCert G5, SSL.com, Certainly, Microsoft, IdenTrust).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -645,6 +647,27 @@ an I2C level shifter; powered from 3.3 V the text is often too faint. OLED modul
 The contrast trimmer on the LCD backpack must be turned until the text shows. **Not yet tested on hardware** (only the PC test
 `tools/test_display.c`, which plays the three chips).
 
+### AI: questions to Claude (0.56)
+
+With your own Anthropic API key (make one at console.anthropic.com -> API keys; it is paid per use,
+set a monthly spend limit there) the board can ask Claude over HTTPS (certificate checked):
+
+```
+ai key sk-ant-...          store the key (then 'clear' the screen); 'ai key off' removes it
+ai how long does a 2000 mAh battery last at 150 mA
+ai @wifi why does it take so long      runs 'wifi' and sends its output with the question
+ai @"sensors" is it warm in here
+ai model claude-sonnet-5-5             another model; 'ai model' = back to the default
+ai                                     model, whether a key is set, usage
+```
+
+The default model is the cheapest one, `claude-haiku-5-5` (a short question costs a fraction of a
+cent). The answer is shown as plain ASCII (accents are dropped: the font has no diacritics). Claude
+gets a short description of RoboOS and the list of shell commands, so it can answer "how do I ..."
+questions with real commands. The key lives in `/AI.TXT`, **XOR-scrambled** - only so it is not
+readable at a glance; anyone with the card can recover it, so keep the spend limit low. It never
+goes to the shell history. **Not yet tested against the real API** (QEMU test with a fake server).
+
 ### MQTT
 
 MQTT is the usual way IoT devices talk to a server (Home Assistant, Node-RED, Mosquitto...).
@@ -828,6 +851,7 @@ If you connect after boot, press Enter.
 | `update [check\|get [-k] [force]\|url <addr>\|restore]` | kernel updates: download one, or see what came from a PC; the backup back |
 | `bt [on\|scan [s]\|sensors\|pair [mac]\|forget\|off\|auto on\|off]` | Bluetooth: devices, thermometers, phone, keyboard (only when asked) |
 | `sensors [scan]`, `i2c scan\|read\|write` | I2C sensors (BME280, ADS1115, DS3231) |
+| `ai <question>\|@cmd ..\|key\|model` | ask Claude (own Anthropic API key) |
 | `display [scan\|text n ..\|clear\|status on\|off\|size\|type\|addr]` | I2C OLED / LCD display |
 | `mqtt [broker\|user\|pub\|interval\|off]` | MQTT client (IoT) |
 | `users [add\|passwd\|del\|console on\|off]`, `logout` | logins for the web page + API (optional) |

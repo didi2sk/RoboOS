@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.55**
+Aktuálna verzia: **0.56**
 
 ## Podporované dosky
 
@@ -411,6 +411,8 @@ kde WPA handshake zastal (msg2 odoslaná, msg3 do 5 s neprišla) - na fotke vlas
 a po 18 s Pi odpojil, druhý pokus sa potom pripojil za 3 s.
 0.55: I2C displeje - OLED SSD1306 / SH1106 a LCD 16x2 / 20x4 s modulom PCF8574, nájdu sa pri štarte, stavová obrazovka
 (meno, IP, čas), `display`, BASIC `DISPLAY`, C API 11 (pozri „I2C displej“).
+0.56: `ai` - otázky pre Claude s vlastným API kľúčom (pozri „AI“); riadok shellu až 255 znakov; viac koreňových
+certifikátov pre HTTPS (DigiCert G5, SSL.com, Certainly, Microsoft, IdenTrust).
 
 ### Dátum a čas (NTP)
 
@@ -637,6 +639,27 @@ pri napájaní z 3,3 V býva text príliš slabý. OLED moduly sú na 3,3 V - v 
 Trimrom kontrastu na LCD module treba otočiť, kým sa text neukáže. **Na hardvéri ešte neotestované** (len PC test `tools/test_display.c`,
 ktorý hrá všetky tri čipy).
 
+### AI: otázky pre Claude (0.56)
+
+S vlastným API kľúčom Anthropic (vytvoríš ho na console.anthropic.com -> API keys; platí sa podľa
+použitia, nastav si tam mesačný limit) sa doska vie pýtať Claude cez HTTPS (certifikát sa overuje):
+
+```
+ai key sk-ant-...          uloží kľúč (potom 'clear'); 'ai key off' ho zmaže
+ai ako dlho vydrzi 2000 mAh baterka pri 150 mA
+ai @wifi preco to trva tak dlho        spustí 'wifi' a pošle jeho výpis s otázkou
+ai @"sensors" je tu teplo
+ai model claude-sonnet-5-5             iný model; 'ai model' = späť na predvolený
+ai                                     model, či je kľúč, návod
+```
+
+Predvolený je najlacnejší model `claude-haiku-5-5` (krátka otázka stojí zlomok centu). Odpoveď sa
+ukáže v ASCII (bez diakritiky - font ju nemá). Claude dostane krátky popis RoboOS a zoznam príkazov
+shellu, takže na otázky „ako spravím ...“ odpovedá skutočnými príkazmi. Kľúč je v `/AI.TXT`
+**zašifrovaný XOR-om** - len aby nebol čitateľný na prvý pohľad; kto má kartu, vie ho získať, preto
+drž limit výdavkov nízko. Do histórie príkazov sa nikdy nedostane. **Proti skutočnému API ešte
+neotestované** (QEMU test s falošným serverom).
+
 ### MQTT
 
 MQTT je bežný spôsob, ako IoT zariadenia hovoria so serverom (Home Assistant, Node-RED,
@@ -819,6 +842,7 @@ Systém komunikuje po anglicky.
 | `wifi [scan\|join <sieť> [heslo]\|band 2\|5\|auto\|leave\|forget]` | WiFi: siete, pripojenie (uloží sa), stav |
 | `bt [on\|scan [s]\|sensors\|off\|auto on\|off]` | Bluetooth LE: zariadenia, teplomery, mobil (len na požiadanie) |
 | `sensors [scan]`, `i2c scan\|read\|write` | senzory na I2C (BME280, ADS1115, DS3231) |
+| `ai <otázka>\|@príkaz ..\|key\|model` | otázka pre Claude (vlastný API kľúč Anthropic) |
 | `display [scan\|text n ..\|clear\|status on\|off\|size\|type\|addr]` | I2C displej OLED / LCD |
 | `mqtt [broker\|user\|pub\|interval\|off]` | MQTT klient (IoT) |
 | `users [add\|passwd\|del\|console on\|off]`, `logout` | prihlásenie na web a API (voliteľné) |

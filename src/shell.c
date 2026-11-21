@@ -3,7 +3,7 @@
 #include "usb.h"
 #include "sd.h"
 
-#define LINE_MAX  128
+#define LINE_MAX  256
 #define ARGS_MAX  8
 
 static struct le_hist hist;
@@ -710,6 +710,7 @@ static const struct cmd cmds[] = {
     { "users",  "[add|passwd|del|console]", "logins: web page, API, shell", users_cmd },
     { "logout", "",                     "end the shell login",           logout_cmd },
     { "mqtt",   "[broker|pub|off|..]", "MQTT client (IoT broker)",       mqtt_cmd   },
+    { "ai",     "<question>|@cmd ..|key|model", "ask Claude (AI, needs an API key)", ai_cmd },
     { "display", "[scan|text|status|..]", "I2C OLED / LCD display",        display_cmd },
     { "sensors", "[scan]",              "temperature, humidity, ADC, RTC", sensors_cmd },
     { "time",   "[sync|zone|server]",   "date and time (NTP), time zone",  time_cmd   },
@@ -901,6 +902,27 @@ static void execute(char *line)
     con_color(COL_DEFAULT); con_puts("  (try 'help')\n");
 }
 
+/* for ai.c: run one command line, and the command list (name, arguments, help) as text */
+void shell_execute(const char *cmdline)
+{
+    char l[LINE_MAX];
+    int i = 0;
+    for (; cmdline[i] && i < LINE_MAX - 1; i++) l[i] = cmdline[i];
+    l[i] = 0;
+    execute(l);
+}
+
+int shell_commands(char *b, int max)
+{
+    int n = 0;
+    for (u32 i = 0; i < NCMDS; i++) {
+        const char *parts[] = { cmds[i].name, cmds[i].args[0] ? " " : "", cmds[i].args, " - ", cmds[i].help, "\n" };
+        for (int k = 0; k < 6; k++) for (const char *s = parts[k]; *s && n < max - 1; s++) b[n++] = *s;
+    }
+    b[n] = 0;
+    return n;
+}
+
 void shell_run(void)
 {
     char line[LINE_MAX];
@@ -914,6 +936,8 @@ void shell_run(void)
         if (len > 0 && line[0] == '!' && line[1]) {
             if (!hist_expand(line)) { kprintf("%s: not in the history\n", line); hist.n--; continue; }
         }
+        if (len > 0 && !strncmp(line, "ai key ", 7) && hist.n > 0 &&
+            !strcmp(hist.line[(hist.n - 1) % LE_HIST], line)) hist.n--;    /* the API key never goes to the history */
         if (len > 0) { hist_save(); execute(line); }
     }
 }
