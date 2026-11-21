@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.72**
+Current version: **0.73**
 
 ## Supported boards
 
@@ -452,6 +452,7 @@ pulses + a STOP whenever SDA is stuck low (`i2c scan` says so).
 /api/radio, MQTT set/radio); an MPU-6050 on 0x68 is no longer taken for the DS3231 clock (WHO_AM_I check).
 0.72: Waveshare 1.3" OLED HAT (SH1106 on SPI0 + 3 keys + joystick) as a radio panel: `display hat`, `display keys`;
 new SPI0 driver `src/spi.c`.
+0.73: BMP180 (BMP085) pressure + temperature sensor at 0x77 in `sensors`, MQTT, the API and BASIC `SENSOR()`.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -637,6 +638,7 @@ on pin 6. At boot RoboOS looks for these modules by itself (`sensors scan` looks
 | Module | Address | Values |
 |---|---|---|
 | BME280 (BMP280) | 0x76 / 0x77 | temperature, humidity (BME280 only), pressure |
+| BMP180 (BMP085) | 0x77 | temperature, pressure (0.73) |
 | ADS1115 | 0x48-0x4B | 4 analog inputs A0-A3, 0-4.096 V in mV (do not exceed 3.3 V!) |
 | DS3231 (DS1307) | 0x68 | battery clock: the time is known at boot even without a network |
 
