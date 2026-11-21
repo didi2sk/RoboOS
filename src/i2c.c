@@ -218,6 +218,7 @@ static const char *guess(u8 a)
     case 0x40: return "INA219 / HTU21D / Si7021";
     case 0x23: return "BH1750 (light)";
     case 0x50: return "EEPROM (HAT ID)";
+    case 0x10: case 0x11: return "RDA5807M FM radio (see 'radio')";
     }
     return "";
 }

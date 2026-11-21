@@ -544,6 +544,45 @@ logged_in:;
         put("]}\n");
         return olen;
     }
+    if (!strcmp(path, "/api/radio")) {                    /* FM radio (radio.c runs the command on core 0) */
+        if (post) {
+            char key[16], sv[48];
+            long n = 0;
+            int got = 0;
+            jp = body; jend = body + blen; jerr = 0;
+            if (!eat('{')) return fail(400, "expected an object {\"cmd\":\"104.4\"}");
+            do {
+                if (value(&n, key, sizeof(key)) != J_STR) return fail(400, jerr ? jerr : "expected a key");
+                if (!eat(':')) return fail(400, "expected ':'");
+                int k = value(&n, sv, sizeof(sv));
+                if (k != J_STR || strcmp(key, "cmd")) return fail(400, "only {\"cmd\":\"...\"}: 104.4, up, down, on, off, vol 8, mono on");
+                got = 1;
+            } while (eat(','));
+            if (!eat('}') || !got) return fail(400, "expected {\"cmd\":\"...\"}");
+            if (!radio_present()) return fail(409, "no FM radio on the board");
+            int l = 0; while (sv[l]) l++;
+            radio_net(sv, l);
+            head(202);
+            put("{\"ok\":true,\"queued\":"); put_str(sv); put("}\n");
+            return olen;
+        }
+        if (!get) return fail(405, "use GET or POST");
+        head(200);
+        u32 f = radio_freq();
+        char fs[12]; int k = 0;
+        { u32 m = f / 100; char t[6]; int tk = 0; do t[tk++] = (char)('0' + m % 10); while ((m /= 10)); while (tk) fs[k++] = t[--tk]; }
+        fs[k++] = '.'; fs[k++] = (char)('0' + f / 10 % 10); fs[k] = 0;
+        put("{\"ok\":true,\"present\":"); put(radio_present() ? "true" : "false");
+        put(",\"on\":"); put(radio_on() ? "true" : "false");
+        put(",\"freq\":"); put(fs);
+        put(",\"volume\":"); put_i(radio_volume());
+        put(",\"rssi\":"); put_i(radio_rssi());
+        put(",\"stereo\":"); put(radio_stereo() ? "true" : "false");
+        { char p[9]; int j = 0; const char *s = radio_ps(); for (int i = 0; i < 8; i++) if (s[i]) p[j++] = s[i]; p[j] = 0; put(",\"station\":"); put_str(p); }
+        { char r[65]; int j = 0; const char *s = radio_rt(); for (int i = 0; i < 64 && s[i]; i++) r[j++] = s[i]; r[j] = 0; put(",\"text\":"); put_str(r); }
+        put("}\n");
+        return olen;
+    }
     if (!strcmp(path, "/api/reboot")) {
         if (!post) return fail(405, "use POST");
         kprintf("\n[API] reboot asked by %s\n", from);
@@ -552,5 +591,5 @@ logged_in:;
         put("{\"ok\":true,\"rebooting\":true}\n");
         return olen;
     }
-    return fail(404, "unknown: GET /api/status, GET|POST /api/gpio, GET /api/gpio/<pin>, GET|POST /api/sound, GET|POST /api/display, POST /api/reboot");
+    return fail(404, "unknown: GET /api/status, GET|POST /api/gpio, GET /api/gpio/<pin>, GET|POST /api/sound, GET|POST /api/display, GET|POST /api/radio, POST /api/reboot");
 }

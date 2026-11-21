@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.70**
+Aktuálna verzia: **0.71**
 
 ## Podporované dosky
 
@@ -444,6 +444,8 @@ označí také nálezy "[answers writes only]"; `i2c probe <adresa>` ukáže sur
 0.70: uvoľnenie zaseknutej I2C zbernice - LCD modul vlastníka držal SDA dole ("SDA LOW" v `i2c scan`, nič sa
 nenašlo), kým ho neuvoľnil neúspešný prenos; teraz pri štarte, pred `i2c scan` a po vypršaní času RoboOS pošle až
 9 hodinových impulzov + STOP, keď je SDA zaseknutá dole (`i2c scan` to napíše).
+0.71: FM rádio - `radio` pre modul RDA5807M (ladenie, hľadanie, zoznam staníc, hlasitosť, RDS názov + text,
+`display radio`, /api/radio, MQTT set/radio); MPU-6050 na 0x68 sa už nepovažuje za hodiny DS3231 (kontrola WHO_AM_I).
 
 ### Dátum a čas (NTP)
 
@@ -701,6 +703,27 @@ shellu, takže na otázky „ako spravím ...“ odpovedá skutočnými príkazm
 drž limit výdavkov nízko. Do histórie príkazov sa nikdy nedostane. **Proti skutočnému API ešte
 neotestované** (QEMU test s falošným serverom).
 
+### FM rádio (RDA5807M, 0.71)
+
+Malý modul RDA5807M (RRD-102, ~11 x 11 mm) je FM prijímač na I2C zbernici (adresy 0x10/0x11), 3,3 V.
+Zapojenie: VCC pin 1, GND pin 6, SDA pin 3, SCL pin 5, na ANT drôt asi 75 cm; zvuk ide priamo z modulu
+na L / R (slúchadlá 32 ohm priamo, reproduktor cez malý zosilňovač).
+
+```
+radio 104.4          naladí (aj 104,4 alebo 1044), zapne rádio
+radio up / down      hľadá ďalšiu stanicu
+radio scan           vypíše všetky stanice pásma (87-108 MHz) so silou signálu
+radio vol 8          hlasitosť 0-15 (0 = stlmené)
+radio mono on|off    vynútené mono (slabé stanice menej šumia); radio bass on|off
+radio                frekvencia, stereo, signál, RDS názov stanice a text
+radio off / on
+display radio        rádio na OLED: frekvencia, názov stanice, text
+```
+
+Stanica, hlasitosť a zapnutie sa ukladajú do `/RADIO.TXT` a obnovia sa pri štarte. Cez sieť:
+`POST /api/radio` s `{"cmd":"104.4"}` (alebo `up`, `down`, `off`, `vol 8`), `GET /api/radio` (stav +
+RDS), MQTT `roboos/<meno>/set/radio`. **Na hardvéri zatiaľ neotestované** (PC test `tools/test_radio.c` so simulovaným čipom).
+
 ### MQTT
 
 MQTT je bežný spôsob, ako IoT zariadenia hovoria so serverom (Home Assistant, Node-RED,
@@ -884,6 +907,7 @@ Systém komunikuje po anglicky.
 | `bt [on\|scan [s]\|sensors\|off\|auto on\|off]` | Bluetooth LE: zariadenia, teplomery, mobil (len na požiadanie) |
 | `sensors [scan]`, `i2c scan\|read\|write` | senzory na I2C (BME280, ADS1115, DS3231) |
 | `ai <otázka>\|@príkaz ..\|key\|model` | otázka pre Claude (vlastný API kľúč Anthropic) |
+| `radio [MHz\|up\|down\|scan\|vol n\|off]` | FM rádio (modul RDA5807M na I2C) |
 | `display [scan\|text n ..\|clear\|status on\|off\|size\|type\|addr]` | I2C displej OLED / LCD |
 | `mqtt [broker\|user\|pub\|interval\|off]` | MQTT klient (IoT) |
 | `users [add\|passwd\|del\|console on\|off]`, `logout` | prihlásenie na web a API (voliteľné) |

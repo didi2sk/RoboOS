@@ -51,7 +51,9 @@ void sensors_probe(void)
         u8 c[2];
         if (i2c_read_reg(a, 0x01, c, 2) == 0 && (c[0] & 0x7F) == 0x05 && c[1] == 0x83) ads_addr = a;   /* reset value 0x8583 */
     }
-    if (i2c_probe(0x68)) {
+    u8 who = 0;
+    if (i2c_probe(0x68) && !(i2c_read_reg(0x68, 0x75, &who, 1) == 0 && (who == 0x68 || who == 0x70 || who == 0x71 || who == 0x73))) {
+        /* (0.71: an MPU-6050/6500/9250 on 0x68 answers WHO_AM_I 0x68/0x70/0x71/0x73 - it is not a clock) */
         u8 r[7];
         if (i2c_read_reg(0x68, 0x00, r, 7) == 0 && (r[1] & 0x7F) < 0x60 && (r[5] & 0x1F) <= 0x12) rtc_addr = 0x68;
     }

@@ -32,8 +32,8 @@ static const char *const tname[] = { "none", "ssd1306", "sh1106", "lcd" };
 
 #define MAXR 10
 #define MAXC 32
-enum { M_TEXT, M_STATUS, M_CONSOLE, M_CLOCK };
-static const char *const mname[] = { "text", "status", "console", "clock" };
+enum { M_TEXT, M_STATUS, M_CONSOLE, M_CLOCK, M_RADIO };
+static const char *const mname[] = { "text", "status", "console", "clock", "radio" };
 static const char *const fname[] = { "small", "normal", "big", "tiny", "micro" };
 #define NFONTS 5
 static int dtype, daddr, dw, dh, rows, cols;    /* dw x dh: pixels (OLED) or characters (LCD) */
@@ -426,7 +426,7 @@ static void load_cfg(void)
             while (*q >= '0' && *q <= '9') h = h * 10 + (u64)(*q++ - '0');
             if (w && h) { cfg_w = (int)w; cfg_h = (int)h; }
         } else if (kl == 6 && !memcmp_n(k, "status", 6)) mode = !strcmp(vv, "on") ? M_STATUS : M_TEXT;   /* (0.55 files) */
-        else if (kl == 4 && !memcmp_n(k, "mode", 4)) { for (int i = 0; i < 4; i++) if (!strcmp(vv, mname[i])) mode = i; }
+        else if (kl == 4 && !memcmp_n(k, "mode", 4)) { for (int i = 0; i < 5; i++) if (!strcmp(vv, mname[i])) mode = i; }
         else if (kl == 4 && !memcmp_n(k, "font", 4)) { for (int i = 0; i < NFONTS; i++) if (!strcmp(vv, fname[i])) font = i; }
         else if (kl == 8 && !memcmp_n(k, "contrast", 8) && parse_num(vv, &x) && x < 256) contrast = (int)x;
     }
@@ -479,6 +479,49 @@ static void status_draw(void)
             n = apn(up, n, (u32)(s2 / 60 % 60)); ap(up, n, "m");
             set_row(7, up);
         }
+    }
+}
+
+/* the FM radio screen (0.71): frequency + stereo + signal, station name (RDS PS), radio text */
+static void radio_draw(void)
+{
+    char l[4][64], fs[12];
+    u32 f = radio_freq();
+    int n = 0;
+    { u32 m = f / 100; char t[6]; int k = 0; do t[k++] = (char)('0' + m % 10); while ((m /= 10)); while (k) fs[n++] = t[--k]; }
+    fs[n++] = '.'; fs[n++] = (char)('0' + f / 10 % 10); fs[n] = 0;
+    for (int r = 0; r < 4; r++) l[r][0] = 0;
+    char ps[9]; int pn = 0;
+    for (int i = 0; i < 8; i++) { char c = radio_ps()[i]; if (c) ps[pn++] = c; }
+    while (pn && ps[pn - 1] == ' ') pn--;
+    ps[pn] = 0;
+    const char *rt = radio_rt();
+    if (!radio_on()) { ap(l[0], ap(l[0], 0, "radio off "), fs); }
+    else {
+        int k = ap(l[0], 0, fs);
+        k = ap(l[0], k, " MHz");
+        if (radio_stereo()) k = ap(l[0], k, " ST");
+        if (cols >= 20) { k = ap(l[0], k, " "); k = apn(l[0], k, (u32)radio_rssi()); }
+        ap(l[1], 0, ps[0] ? ps : "");
+    }
+    for (int r = 0; r < rows; r++) set_row(r, "");
+    if (rows <= 2) {                                 /* "104.4 NAME" + the text, scrolling */
+        char t[64]; int k = ap(t, 0, fs);
+        if (ps[0]) { t[k++] = ' '; k = ap(t, k, ps); }
+        set_row(0, t);
+        if (rows > 1) {
+            int len = 0; while (len < 64 && rt[len]) len++;
+            int off = len > cols ? (int)(timer_us() / 1000000) % (len - cols + 1) : 0;
+            set_row(1, rt + off);
+        }
+        return;
+    }
+    set_row(0, l[0]);
+    set_row(1, l[1]);
+    for (int r = 2, at = 0; r < rows && rt[at]; r++) {   /* the radio text, wrapped */
+        set_row(r, rt + at);
+        int k = 0; while (k < cols && rt[at + k]) k++;
+        at += k;
     }
 }
 
@@ -574,10 +617,11 @@ void display_poll(void)
         busy = 0;
         return;
     }
-    if ((mode != M_STATUS && mode != M_CLOCK) || timer_us() < next_status) return;
+    if ((mode != M_STATUS && mode != M_CLOCK && mode != M_RADIO) || timer_us() < next_status) return;
     busy = 1;
     next_status = timer_us() + 1000000;
     if (mode == M_CLOCK) clock_draw();
+    else if (mode == M_RADIO) { radio_draw(); flush(); }
     else { status_draw(); flush(); }
     busy = 0;
 }
@@ -618,8 +662,8 @@ void display_cmd(int argc, char **argv)
         if (e) kprintf("no display (try 'display scan')\n");
         return;
     }
-    else if (!strcmp(a, "time") || !strcmp(a, "clock") || !strcmp(a, "info")) {
-        mode = a[0] == 'i' ? M_STATUS : M_CLOCK;
+    else if (!strcmp(a, "time") || !strcmp(a, "clock") || !strcmp(a, "info") || !strcmp(a, "radio")) {
+        mode = a[0] == 'i' ? M_STATUS : a[0] == 'r' ? M_RADIO : M_CLOCK;
         next_status = 0;
         if (ok) { busy = 1; for (int r = 0; r < rows; r++) set_row(r, ""); flush(); busy = 0; }
         save_cfg();
@@ -683,7 +727,7 @@ void display_cmd(int argc, char **argv)
         else if (ok) { u8 c = on ? 0xAF : 0xAE; oled_cmds(&c, 1); }
     }
     else if (a[0]) {
-        kprintf("usage: display [scan | clear | text <row> <words> | info | time | console on|off\n"
+        kprintf("usage: display [scan | clear | text <row> <words> | info | time | radio | console on|off\n"
                 "               | font micro|tiny|small|normal|big | on | off | type auto|lcd|ssd1306|sh1106|none\n"
                 "               | addr <0x..> | size <WxH> | contrast <0-255> | light on|off]\n");
         return;

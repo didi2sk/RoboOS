@@ -38,6 +38,12 @@ static int clock_format(char *b, u64 t, int iso) { (void)t; (void)iso; strcpy(b,
 static const char *os_version(void) { return "0.56"; }
 static const char *board_name(void) { return "Raspberry Pi 3 Model B+"; }
 static int sound_is_exclusive(void) { return 0; }
+static int radio_on(void) { return 1; }
+static unsigned radio_freq(void) { return 10440; }
+static int radio_rssi(void) { return 40; }
+static int radio_stereo(void) { return 1; }
+static const char *radio_ps(void) { return "FUN     "; }
+static const char *radio_rt(void) { return "Now playing: a very long song title"; }
 
 /* ---------------- the fake bus ---------------- */
 enum { NONE, SSD, SH, LCD };
