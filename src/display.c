@@ -46,7 +46,19 @@ static int cur_r, cur_c, esc;                  /* console mode: the cursor, insi
 static u8 st_byte;                              /* OLED status byte read at detection (SSD1306 vs SH1106) */
 static char txt[MAXR][MAXC + 1], sent[MAXR][MAXC + 1];
 static int ok, busy, noack;                    /* noack: the display never ACKs - bit-banged writes */
-static int dwr(u8 a, const void *b, int n) { return noack ? i2c_write_noack(a, b, n) : i2c_write(a, b, n); }
+static int spi_bus, cfg_spi;                   /* 0.72: SH1106 on SPI0 = Waveshare 1.3" OLED HAT (DC GPIO24, RST GPIO25) */
+#define HAT_DC  24
+#define HAT_RST 25
+/* every OLED write starts with the I2C control byte (0x00 commands / 0x40 data): on SPI it becomes the DC pin */
+static int dwr(u8 a, const void *b, int n)
+{
+    if (spi_bus) {
+        const u8 *p = b;
+        gpio_set(HAT_DC, p[0] == 0x40);
+        return spi_write(p + 1, n - 1);
+    }
+    return noack ? i2c_write_noack(a, b, n) : i2c_write(a, b, n);
+}
 static u64 next_status;
 
 /* ---------------- OLED ---------------- */
@@ -353,6 +365,11 @@ static int start(void)
     memset(fbsent, 0xA5, sizeof(fbsent));
     ok = 0;
     if (dtype == D_NONE) return -1;
+    if (spi_bus) {                                /* the HAT: DC + RST outputs, a reset pulse */
+        spi_init(64);
+        gpio_func(HAT_DC, 1); gpio_func(HAT_RST, 1);
+        gpio_set(HAT_RST, 0); delay_us(10000); gpio_set(HAT_RST, 1); delay_us(10000);
+    }
     int e = dtype == D_LCD ? lcd_init() : oled_init();
     if (e) return e;
     ok = 1;
@@ -362,7 +379,8 @@ static int start(void)
 /* find a display: the /DISPLAY.TXT type + address, else 0x3C/0x3D = OLED, 0x27/0x3F = LCD backpack */
 static void detect(void)
 {
-    dtype = D_NONE; daddr = 0; st_byte = 0; noack = 0;
+    dtype = D_NONE; daddr = 0; st_byte = 0; noack = 0; spi_bus = 0;
+    if (cfg_spi) { dtype = cfg_type > 0 && cfg_type != D_LCD ? cfg_type : D_SH1106; spi_bus = 1; return; }   /* SPI: nothing to ask */
     i2c_init();
     if (cfg_type == D_NONE) return;
     if (cfg_type > 0) {
@@ -426,6 +444,7 @@ static void load_cfg(void)
             while (*q >= '0' && *q <= '9') h = h * 10 + (u64)(*q++ - '0');
             if (w && h) { cfg_w = (int)w; cfg_h = (int)h; }
         } else if (kl == 6 && !memcmp_n(k, "status", 6)) mode = !strcmp(vv, "on") ? M_STATUS : M_TEXT;   /* (0.55 files) */
+        else if (kl == 3 && !memcmp_n(k, "bus", 3)) cfg_spi = !strcmp(vv, "spi");
         else if (kl == 4 && !memcmp_n(k, "mode", 4)) { for (int i = 0; i < 5; i++) if (!strcmp(vv, mname[i])) mode = i; }
         else if (kl == 4 && !memcmp_n(k, "font", 4)) { for (int i = 0; i < NFONTS; i++) if (!strcmp(vv, fname[i])) font = i; }
         else if (kl == 8 && !memcmp_n(k, "contrast", 8) && parse_num(vv, &x) && x < 256) contrast = (int)x;
@@ -438,6 +457,7 @@ static void save_cfg(void)
     int n = ap(b, 0, "type ");
     n = ap(b, n, cfg_type < 0 ? "auto" : tname[cfg_type]);
     n = ap(b, n, "\n");
+    if (cfg_spi) n = ap(b, n, "bus spi\n");
     if (cfg_addr) { n = ap(b, n, "addr "); n = aphex(b, n, (u32)cfg_addr); n = ap(b, n, "\n"); }
     if (cfg_w) { n = ap(b, n, "size "); n = apn(b, n, (u32)cfg_w); n = ap(b, n, "x"); n = apn(b, n, (u32)cfg_h); n = ap(b, n, "\n"); }
     n = ap(b, n, "mode "); n = ap(b, n, mname[mode]);
@@ -525,6 +545,72 @@ static void radio_draw(void)
     }
 }
 
+/* ---- the HAT's keys (0.72): KEY1 21, KEY2 20, KEY3 16, joystick up 6, down 19, left 5, right 26, press 13
+ * (active low, pull-ups). KEY1 = next screen (info, time, radio, console); on the radio screen KEY2/KEY3 seek
+ * down/up, left/right = -/+ 0.1 MHz, up/down = volume, press = radio on/off. ---- */
+static const u8 key_pin[8] = { 21, 20, 16, 6, 19, 5, 26, 13 };
+static const char *const key_name[8] = { "KEY1", "KEY2", "KEY3", "up", "down", "left", "right", "press" };
+static u8 key_raw, key_stable, keys_set;
+static u64 key_next;
+static int in_keys;
+
+static u8 keys_read(void)
+{
+    if (!keys_set) { for (int i = 0; i < 8; i++) { gpio_func(key_pin[i], 0); gpio_pull(key_pin[i], 2); } keys_set = 1; delay_us(100); }
+    u8 v = 0;
+    for (int i = 0; i < 8; i++) if (!gpio_get(key_pin[i])) v |= (u8)(1 << i);
+    return v;
+}
+
+static void radio_do(const char *a, const char *b)
+{
+    char x[12], y[12], *av[3] = { "radio", x, y };
+    int n = 0; for (; a[n] && n < 11; n++) x[n] = a[n]; x[n] = 0;
+    if (b) { n = 0; for (; b[n] && n < 11; n++) y[n] = b[n]; y[n] = 0; }
+    radio_cmd(b ? 3 : 2, av);
+}
+
+static void key_pressed(int k)
+{
+    static const int order[4] = { M_STATUS, M_CLOCK, M_RADIO, M_CONSOLE };
+    if (k == 0) {                                 /* next screen */
+        int i = 0; while (i < 4 && order[i] != mode) i++;
+        mode = order[(i + 1) % 4];
+        for (int r = 0; r < rows; r++) set_row(r, "");
+        cur_r = cur_c = 0; next_status = 0; flush();
+        return;
+    }
+    if (mode != M_RADIO || !radio_present()) return;
+    char num[12];
+    if (k == 1) radio_do("down", 0);
+    else if (k == 2) radio_do("up", 0);
+    else if (k == 7) radio_do(radio_on() ? "off" : "on", 0);
+    else if (k == 3 || k == 4) { int v = radio_volume() + (k == 3 ? 1 : -1); if (v < 0) v = 0; if (v > 15) v = 15; apn(num, 0, (u32)v); radio_do("vol", num); }
+    else if (k == 5 || k == 6) {
+        u32 f = radio_freq() + (k == 6 ? 10 : (u32)-10);
+        if (f < 8700) f = 10800; if (f > 10800) f = 8700;
+        int n = apn(num, 0, f / 100); num[n++] = '.'; num[n++] = (char)('0' + f / 10 % 10); num[n] = 0;
+        radio_do(num, 0);
+    }
+    next_status = 0;
+}
+
+static void keys_poll(void)
+{
+    if (!spi_bus || in_keys || timer_us() < key_next) return;
+    key_next = timer_us() + 20000;
+    int first = !keys_set;
+    u8 v = keys_read();
+    if (first) { key_raw = key_stable = v; return; }   /* keys held at start-up do not count */
+    if (v != key_raw) { key_raw = v; return; }    /* changed: wait one more sample (debounce) */
+    u8 down = (u8)(v & ~key_stable);
+    key_stable = v;
+    if (!down) return;
+    in_keys = 1;
+    for (int i = 0; i < 8; i++) if (down & (1 << i)) key_pressed(i);
+    in_keys = 0;
+}
+
 /* ---------------- interface ---------------- */
 
 void display_boot(void)
@@ -592,6 +678,7 @@ void display_con_putc(char c)
 void display_poll(void)
 {
     if (!ok || busy) return;
+    if (spi_bus && !in_keys) { busy = 1; keys_poll(); busy = 0; }
     if (npend) {
         busy = 1;
         while (__atomic_test_and_set(&nlock, __ATOMIC_ACQUIRE)) ;
@@ -691,7 +778,23 @@ void display_cmd(int argc, char **argv)
         if (f < 0) { kprintf("fonts: micro (32 x 10), tiny (25 x 8), small (21 x 8), normal (16 x 4), big (8 x 2) - OLED only\n"); return; }
         font = f; save_cfg(); restart();
     }
+    else if (!strcmp(a, "hat")) {                /* Waveshare 1.3" OLED HAT: SH1106 on SPI + keys */
+        cfg_spi = 1; cfg_type = D_SH1106; cfg_h = 64; save_cfg();
+        busy = 1; detect(); busy = 0; restart();
+        kprintf("Waveshare 1.3\" OLED HAT: SH1106 on SPI0 (CE0, DC GPIO24, RST GPIO25), keys on GPIO21/20/16,\n"
+                "joystick GPIO6/19/5/26/13. KEY1 = next screen; on 'display radio': KEY2/KEY3 seek, left/right tune,\n"
+                "up/down volume, press on/off. 'display type auto' goes back to I2C displays.\n");
+    }
+    else if (!strcmp(a, "keys")) {
+        u8 v = keys_read();
+        kprintf("keys pressed:");
+        int any = 0;
+        for (int i = 0; i < 8; i++) if (v & (1 << i)) { kprintf(" %s", key_name[i]); any = 1; }
+        kprintf("%s\n", any ? "" : " none");
+        return;
+    }
     else if (!strcmp(a, "type") && argc > 2) {
+        cfg_spi = 0;
         int t = -2;
         for (int i = 0; i < 4; i++) if (!strcmp(argv[2], tname[i])) t = i;
         if (!strcmp(argv[2], "auto")) t = -1;
@@ -728,7 +831,7 @@ void display_cmd(int argc, char **argv)
     }
     else if (a[0]) {
         kprintf("usage: display [scan | clear | text <row> <words> | info | time | radio | console on|off\n"
-                "               | font micro|tiny|small|normal|big | on | off | type auto|lcd|ssd1306|sh1106|none\n"
+                "               | hat | keys | font micro|tiny|small|normal|big | on | off | type auto|lcd|ssd1306|sh1106|none\n"
                 "               | addr <0x..> | size <WxH> | contrast <0-255> | light on|off]\n");
         return;
     }
@@ -739,9 +842,11 @@ void display_cmd(int argc, char **argv)
                                   "  'display type ssd1306' (or sh1106) uses it anyway\n");
         return;
     }
-    kprintf("display: %s at 0x%02x, ", tname[dtype], (u32)daddr);
+    if (spi_bus) kprintf("display: %s on SPI (Waveshare 1.3\" OLED HAT), ", tname[dtype]);
+    else kprintf("display: %s at 0x%02x, ", tname[dtype], (u32)daddr);
     if (dtype == D_LCD) kprintf("%dx%d characters", cols, rows);
-    else kprintf("%dx%d pixels, font %s = %dx%d characters, status byte 0x%02x", dw, dh, fname[font], cols, rows, (u32)st_byte);
-    kprintf(", %s, mode %s\n", noack ? "no ACK: written blind (bit-banged)" : ok ? "working" : "NOT answering", mname[mode]);
+    else kprintf("%dx%d pixels, font %s = %dx%d characters", dw, dh, fname[font], cols, rows);
+    if (!spi_bus) kprintf(", status byte 0x%02x", (u32)st_byte);
+    kprintf(", %s, mode %s\n", noack ? "no ACK: written blind (bit-banged)" : spi_bus ? (ok ? "sending (SPI cannot see the display)" : "SPI timeout") : ok ? "working" : "NOT answering", mname[mode]);
     if (cfg_type < 0) kprintf("  (found by itself; the size is a guess - 'display size' if rows are missing)\n");
 }
