@@ -406,8 +406,9 @@ odpovedal na rýchle pokusy odpojením s dôvodom 2 („predošlé prihlásenie 
 0.53: s `bt auto on` a nastavenou WiFi sa Bluetooth zapne až po pripojení WiFi (najneskôr o 15 s) - zdieľajú
 jedno rádio a štart Bluetoothu predĺžil pripojenie WiFi pri štarte na 20 s. QEMU test: `tools/qemu_btkbd_test.py`.
 0.54: `history` vypíše posledných 30 príkazov (predtým 10), `!N` / `!!` spustí príkaz znova, `history clear` ju zmaže; história
-sa ukladá do `/HISTORY.TXT` na karte, takže prežije reštart. WiFi: odmietnutý PRVÝ pokus po štarte sa opakuje o 3 s (nie o 20 s) -
-vlastník videl pripájanie 20 s pri štarte aj bez Bluetoothu (druhý pokus sa potom pripojí za 1 s).
+sa ukladá do `/HISTORY.TXT` na karte, takže prežije reštart. WiFi: odmietnutý PRVÝ pokus po štarte sa opakuje o 3 s (nie o 20 s), rovnako prvý pokus,
+kde WPA handshake zastal (msg2 odoslaná, msg3 do 5 s neprišla) - na fotke vlastníka router pri štarte na našu msg2 neodpovedal
+a po 18 s Pi odpojil, druhý pokus sa potom pripojil za 3 s.
 
 ### Dátum a čas (NTP)
 

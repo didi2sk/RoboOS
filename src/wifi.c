@@ -1148,7 +1148,13 @@ int wifi_recv(void *buf, int max, int want_data)
              * without leaving) and refuses it once; the next try then joins at once (owner: 0.52/0.53
              * joined in 1 s, but only after the 20 s wait) - so retry that one after 3 s */
             if (failed && !j_tries && now >= j_fail_at + 3000000 && now < j_next_try) j_next_try = now;
-            if (!failed && j_link && j_started && now < j_started + 30000000 && now >= j_next_try) j_next_try = now + 2000000;
+            /* owner's photo (0.53, 3B+): the first try after a boot associated, got msg1, sent msg2 and never
+             * got msg3 - the router dropped it 18 s later (deauth reason 2); the next try joined in 3 s.
+             * msg3 normally follows msg2 within milliseconds, so 5 s into the FIRST try without it = retry */
+            if (!j_tries && host_sup && d_sent && !d_m3 && j_started && now >= j_started + 5000000 && now < j_next_try)
+                j_next_try = now;
+            if (!failed && j_link && j_started && now < j_started + 30000000 && now >= j_next_try
+                && !(!j_tries && host_sup && d_sent && !d_m3)) j_next_try = now + 2000000;
         }
         if (!wifi_joined() && now >= j_next_try) {
             char ss[33], pw[64];

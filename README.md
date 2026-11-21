@@ -410,8 +410,9 @@ leaves cleanly (disassociate, 0.3 s) and a refused try is retried after 15 s, no
 0.53: with `bt auto on` and WiFi set up, Bluetooth starts only after WiFi has joined (at most 15 s later) -
 both share one radio, and the Bluetooth start made the boot-time WiFi join take 20 s.
 0.54: `history` lists the last 30 shell commands (was 10), `!N` / `!!` run one again, `history clear`; the history is kept
-in `/HISTORY.TXT` on the card, so it survives a reboot. WiFi: a refused FIRST try after a boot is retried after 3 s (not 20 s) -
-the owner saw the join take 20 s at boot even without Bluetooth (the second try then joins in 1 s).
+in `/HISTORY.TXT` on the card, so it survives a reboot. WiFi: a refused FIRST try after a boot is retried after 3 s (not 20 s), and so is a first
+try whose WPA handshake stalls (msg2 sent, no msg3 within 5 s) - the owner's photo: at boot the router never answered our msg2 and
+dropped the board after 18 s, the second try then joined in 3 s.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
