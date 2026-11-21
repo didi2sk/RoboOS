@@ -28,6 +28,10 @@ static u64 pend_at, edge_at, pulse_at, last_pulse;
 static int nbits;
 static u8 bits[60];
 static u32 shortc[2];                                   /* level periods 40-260 ms long, per level */
+static u32 gapc[2];                                     /* level periods 700-1000 / 1700-2000 ms (between pulses) */
+/* 0.76: how long each level lasted - for 'dcf' (a photo shows at once whether there is a 1 s rhythm) */
+static volatile u32 hist[2][7];                         /* <40, 40-140, 141-260, 261-699, 700-1000, 1001-2100, >2100 ms */
+static volatile u16 per_ms[12]; static volatile u8 per_lv[12]; static volatile u32 per_n;
 
 /* what 'dcf' shows */
 static volatile u32 n_edges, n_pulses, n_bad, n_frames, n_bad_frames, n_set;
@@ -99,14 +103,24 @@ static void minute_mark(u64 t_us)
 static void edge(int lv, u64 t)
 {
     u64 len_ms = edge_at ? (t - edge_at) / 1000 : 0;
+    static int edge_at_prev_ok;
+    if (!edge_at) edge_at_prev_ok = 0;
     int old = lv ^ 1;
     edge_at = t;
     n_edges++;
-    if (len_ms >= 40 && len_ms <= 260 && shortc[old] < 1000000) shortc[old]++;
+    if (edge_at_prev_ok) {
+        int b = len_ms < 40 ? 0 : len_ms <= 140 ? 1 : len_ms <= 260 ? 2 : len_ms < 700 ? 3 : len_ms <= 1000 ? 4 : len_ms <= 2100 ? 5 : 6;
+        hist[old][b]++;
+        per_ms[per_n % 12] = (u16)(len_ms > 65000 ? 65000 : len_ms); per_lv[per_n % 12] = (u8)old; per_n++;
+        if (len_ms >= 40 && len_ms <= 260 && shortc[old] < 1000000) shortc[old]++;
+        if (((len_ms >= 700 && len_ms <= 1000) || (len_ms >= 1700 && len_ms <= 2000)) && gapc[old] < 1000000) gapc[old]++;
+    }
+    edge_at_prev_ok = 1;
     if (invert >= 0) pol = invert ? 0 : 1;
-    else if (pol < 0 && shortc[0] + shortc[1] >= 4) {
-        if (shortc[1] >= 3 * shortc[0] + 2) pol = 1;
-        else if (shortc[0] >= 3 * shortc[1] + 2) pol = 0;
+    else if (pol < 0) {                                 /* pulse level: short periods, the other level ~0.8-0.9 s */
+        u32 s1 = shortc[1] + gapc[0], s0 = shortc[0] + gapc[1];
+        if (s1 >= 6 && s1 >= 3 * s0) pol = 1;
+        else if (s0 >= 6 && s0 >= 3 * s1) pol = 0;
     }
     if (pol < 0) return;
     if (lv == pol) {                                    /* a pulse starts */
@@ -157,7 +171,8 @@ static void setup_pins(void)
     gpio_pull(pin, pull);
     if (pon >= 0) { gpio_func(pon, 1); gpio_set(pon, on ? 0 : 1); }   /* PON high = receiver powered down */
     stable = -1; pol = invert >= 0 ? (invert ? 0 : 1) : -1;
-    shortc[0] = shortc[1] = 0; nbits = 0; last_pulse = pulse_at = 0; prev_frame = 0; synced_ok = 0;
+    shortc[0] = shortc[1] = 0; gapc[0] = gapc[1] = 0; nbits = 0; per_n = 0; edge_at = 0;
+    for (int i = 0; i < 7; i++) hist[0][i] = hist[1][i] = 0; last_pulse = pulse_at = 0; prev_frame = 0; synced_ok = 0;
 }
 
 static void save(void)
@@ -219,6 +234,17 @@ static void status(void)
             pol < 0 ? "not found yet" : pol ? "HIGH" : "LOW", invert < 0 ? "auto" : "set by hand");
     kprintf("  level changes %u, pulses %u, bad %u, minutes ok %u / bad %u, clock set %u times\n",
             n_edges, n_pulses, n_bad, n_frames, n_bad_frames, n_set);
+    kprintf("  how long each level lasted (ms):  <40 40-140 141-260 261-699 700-1000 1001-2100 >2100\n");
+    for (int l = 1; l >= 0; l--) {
+        kprintf("    %s", l ? "HIGH" : "LOW ");
+        kprintf(" %4u %7u %8u %8u %9u %10u %6u", hist[l][0], hist[l][1], hist[l][2], hist[l][3], hist[l][4], hist[l][5], hist[l][6]);
+        kprintf("\n");
+    }
+    kprintf("  (a good signal: one level mostly 40-140/141-260, the other 700-1000 + a few 1001-2100;\n"
+            "   many <40 = noise / interference)\n  last periods:");
+    { u32 n = per_n, k2 = n < 12 ? n : 12;
+      for (u32 i = 0; i < k2; i++) { u32 j = (n - k2 + i) % 12; kprintf(" %c%u", per_lv[j] ? 'H' : 'L', (u32)per_ms[j]); }
+      kprintf(k2 ? "\n" : " none\n"); }
     kprintf("  last pulses (ms):");
     int k = last_lens < 8 ? last_lens : 8;
     for (int i = 0; i < k; i++) kprintf(" %d", last_len[(last_lens - k + i) & 7]);

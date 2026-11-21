@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.75**
+Current version: **0.76**
 
 ## Supported boards
 
@@ -455,6 +455,7 @@ new SPI0 driver `src/spi.c`.
 0.73: BMP180 (BMP085) pressure + temperature sensor at 0x77 in `sensors`, MQTT, the API and BASIC `SENSOR()`.
 0.74: DCF77 radio clock receiver on a GPIO pin (`dcf`): the time without a network.
 0.75: `dcf on` / `dcf off` (the pin is kept; with `dcf pon` the receiver is powered down too).
+0.76: `dcf` shows how long each level lasted (a table + the last 12 periods) to tell a real signal from noise.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
