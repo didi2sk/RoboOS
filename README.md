@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.61**
+Current version: **0.62**
 
 ## Supported boards
 
@@ -429,6 +429,7 @@ only the changed 8-pixel stripes are sent. Rows 1-10 in BASIC, the API and MQTT.
 `display console off` goes back to the status screen (in 0.59 it left the display empty). The mode is saved.
 0.61: the clock in thin digits (DejaVu Sans, `tools/mkclock.py`) instead of the blocky 3x font, the seconds smaller
 right beside HH:MM, the date in the 8x16 font below.
+0.62: `font tiny` is now the clearer X11 5x8 (25 x 8); the cramped 4x6 (32 x 10) is `font micro`.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -649,7 +650,7 @@ display size 20x4        the LCD size can not be detected: 16x2 is assumed (also
 display type ssd1306     also for an OLED that does not answer at all (no ACK): written blind
 display type sh1106      if the OLED picture is shifted / the right edge is noise (auto, lcd, ssd1306, sh1106, none)
 display addr 0x26        another LCD backpack address (A0-A2 jumpers: 0x20-0x27, PCF8574A 0x38-0x3F)
-display font small       OLED font: tiny 32 x 10, small 21 x 8, normal 16 x 4, big 8 x 2 (big digits) - saved
+display font small       OLED font: micro 32 x 10, tiny 25 x 8, small 21 x 8, normal 16 x 4, big 8 x 2 (big digits) - saved
 display time             big digital clock: thin HH:MM with smaller seconds beside, weekday + date below (128x64), LCD = time + date
 display info             back to the status screen (name, IP, time, link)
 display console on       a copy of the terminal on the display (best with the small font); off = back to info

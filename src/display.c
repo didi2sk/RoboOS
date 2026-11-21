@@ -22,6 +22,7 @@
 extern const unsigned char font8x16[95][16];
 extern const unsigned char font5x7[95][5];
 extern const unsigned char font4x6[95][4];
+extern const unsigned char font5x8[95][5];
 extern const int clk_big_h, clk_sec_h;                  /* fontclock.c: thin DejaVu Sans digits "0123456789:-" */
 extern const unsigned char clk_big_w[12], clk_sec_w[12];
 extern const unsigned int clk_big_g[12][30], clk_sec_g[12][15];
@@ -33,8 +34,8 @@ static const char *const tname[] = { "none", "ssd1306", "sh1106", "lcd" };
 #define MAXC 32
 enum { M_TEXT, M_STATUS, M_CONSOLE, M_CLOCK };
 static const char *const mname[] = { "text", "status", "console", "clock" };
-static const char *const fname[] = { "small", "normal", "big", "tiny" };
-#define NFONTS 4
+static const char *const fname[] = { "small", "normal", "big", "tiny", "micro" };
+#define NFONTS 5
 static int dtype, daddr, dw, dh, rows, cols;    /* dw x dh: pixels (OLED) or characters (LCD) */
 static int cfg_type = -1, cfg_addr, cfg_w, cfg_h, contrast = 0xCF, backlight = 1;
 static int mode = M_STATUS, font = 1, cw = 8, chh = 16;   /* OLED font: 0 small 6x8, 1 normal 8x16, 2 big 16x32, 3 tiny 4x6 */
@@ -76,7 +77,8 @@ static int glyph_px(unsigned char ch, int x, int y)
 {
     if (ch < 32 || ch > 126) ch = ch ? '?' : ' ';
     switch (font) {
-    case 3: return x < 4 && y < 6 && (font4x6[ch - 32][x] >> y & 1);          /* 4x6 */
+    case 4: return x < 4 && y < 6 && (font4x6[ch - 32][x] >> y & 1);          /* micro 4x6 */
+    case 3: return x < 5 && y < 8 && (font5x8[ch - 32][x] >> y & 1);          /* tiny 5x8 (0.62) */
     case 0: return x < 5 && y < 8 && (font5x7[ch - 32][x] >> y & 1);          /* 5x7 in a 6x8 cell */
     case 1: return (font8x16[ch - 32][y] & (0x80 >> x)) != 0;                 /* rows, bit 7 = left */
     default: return (font8x16[ch - 32][y / 2] & (0x80 >> (x / 2))) != 0;      /* the 8x16 doubled */
@@ -312,7 +314,8 @@ static void geometry(void)
         if (rows > MAXR) rows = dh = MAXR;
     } else {
         dw = 128; dh = cfg_h == 32 ? 32 : 64;
-        cw = font == 3 ? 4 : font == 0 ? 6 : font == 1 ? 8 : 16; chh = font == 3 ? 6 : font == 0 ? 8 : font == 1 ? 16 : 32;
+        static const int fw[] = { 6, 8, 16, 5, 4 }, fh[] = { 8, 16, 32, 8, 6 };
+        cw = fw[font]; chh = fh[font];
         cols = 128 / cw; rows = dh / chh;
     }
     if (cur_r >= rows) cur_r = rows - 1;
@@ -635,13 +638,13 @@ void display_cmd(int argc, char **argv)
             busy = 0;
         }
         save_cfg();
-        if (mode == M_CONSOLE && (font == 1 || font == 2) && dtype && dtype != D_LCD) kprintf("(tip: 'display font small' shows 21 x 8 characters, 'tiny' 32 x 10)\n");
+        if (mode == M_CONSOLE && (font == 1 || font == 2) && dtype && dtype != D_LCD) kprintf("(tip: 'display font tiny' shows 25 x 8 characters, 'small' 21 x 8)\n");
         return;
     }
     else if (!strcmp(a, "font") && argc > 2) {
         int f = -1;
         for (int i = 0; i < NFONTS; i++) if (!strcmp(argv[2], fname[i])) f = i;
-        if (f < 0) { kprintf("fonts: tiny (32 x 10), small (21 x 8), normal (16 x 4), big (8 x 2) - OLED only\n"); return; }
+        if (f < 0) { kprintf("fonts: micro (32 x 10), tiny (25 x 8), small (21 x 8), normal (16 x 4), big (8 x 2) - OLED only\n"); return; }
         font = f; save_cfg(); restart();
     }
     else if (!strcmp(a, "type") && argc > 2) {
@@ -681,7 +684,7 @@ void display_cmd(int argc, char **argv)
     }
     else if (a[0]) {
         kprintf("usage: display [scan | clear | text <row> <words> | info | time | console on|off\n"
-                "               | font tiny|small|normal|big | on | off | type auto|lcd|ssd1306|sh1106|none\n"
+                "               | font micro|tiny|small|normal|big | on | off | type auto|lcd|ssd1306|sh1106|none\n"
                 "               | addr <0x..> | size <WxH> | contrast <0-255> | light on|off]\n");
         return;
     }
