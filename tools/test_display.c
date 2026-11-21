@@ -120,6 +120,27 @@ static int i2c_probe(u8 a) { u8 b; return i2c_read(a, &b, 1) == 0; }
 /* ---------------- reading the picture back ---------------- */
 extern const unsigned char font5x7[95][5];
 extern const unsigned char font4x6[95][4];
+static int gpx(int x, int y) { return gram[y >> 3][x] >> (y & 7) & 1; }
+static void read_big(int x0, int y0, int k, int n, char *out)   /* n chars of the 8x16 font scaled k times */
+{
+    for (int c = 0; c < n; c++) {
+        u8 g[16] = { 0 };
+        for (int y = 0; y < 16; y++) for (int x = 0; x < 8; x++) if (gpx(x0 + c * 8 * k + x * k, y0 + y * k)) g[y] |= (u8)(0x80 >> x);
+        out[c] = '?';
+        for (int q = 0; q < 95; q++) if (!memcmp(g, font8x16[q], 16)) { out[c] = (char)(32 + q); break; }
+    }
+    out[n] = 0;
+}
+static void read_small(int x0, int y0, int n, char *out)
+{
+    for (int c = 0; c < n; c++) {
+        u8 g[5] = { 0 };
+        for (int x = 0; x < 5; x++) for (int y = 0; y < 8; y++) if (gpx(x0 + c * 6 + x, y0 + y)) g[x] |= (u8)(1 << y);
+        out[c] = '?';
+        for (int q = 0; q < 95; q++) if (!memcmp(g, font5x7[q], 5)) { out[c] = (char)(32 + q); break; }
+    }
+    out[n] = 0;
+}
 static void oled_textrow_tiny(int r, char *out)         /* 4x6 cells, 32 columns, rows NOT page-aligned */
 {
     for (int c = 0; c < 32; c++) {
@@ -311,6 +332,21 @@ int main(void)
         if (r < 9) { char t[40]; snprintf(t, sizeof(t), "%02d The quick brown fox jumps!", r + 4); snprintf(w, sizeof(w), "%-32.32s", t); } else snprintf(w, sizeof(w), "%-32s", "");
         printf("  tiny row %2d: [%s]%s\n", r + 1, got, strcmp(got, w) ? " WRONG" : ""); if (strcmp(got, w)) bad = 1; }
       check("tiny rows", !bad); }
+
+    printf("clock (display time), 128x64 and 128x32, LCD 16x2\n");
+    reset(SSD, 0x3C, 0x43, "mode clock\n");
+    display_boot(); now_us += 2100000; display_poll();
+    { char a[8], b[20], c[4]; read_big(4, 0, 3, 5, a); read_small(4, 54, 14, b); read_small(106, 54, 3, c);
+      printf("  big [%s] date [%s] sec [%s]\n", a, b, c);
+      check("128x64: 11:01, Sat 21.11.2026, :27", !strcmp(a, "11:01") && !strcmp(b, "Sat 21.11.2026") && !strcmp(c, ":27")); }
+    reset(SSD, 0x3C, 0x43, "mode clock\nsize 128x32\n");
+    display_boot(); now_us += 2100000; display_poll();
+    { char a[10]; read_big(0, 0, 2, 8, a); printf("  big [%s]\n", a); check("128x32: 11:01:27", !strcmp(a, "11:01:27")); }
+    reset(LCD, 0x27, 0xFF, "mode clock\n");
+    display_boot(); now_us += 2100000; display_poll();
+    { const char *w[] = { "    11:01:27", " Sat 21.11.2026" }; expect_rows("lcd clock", 16, 0, 2, w); }
+    { char *av[] = { "display", "info" }; display_cmd(2, av); check("display info -> status", mode == M_STATUS); }
+    { char *av[] = { "display", "console", "off" }; display_cmd(3, av); check("console off -> status", mode == M_STATUS); }
 
     printf("big font: 8 x 2\n");
     reset(SSD, 0x3C, 0x43, "font big\nmode text\n");
