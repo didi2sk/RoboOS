@@ -23,10 +23,13 @@ static int loaded;
 static const char pad[] = "RoboOS:keep-this-key-off-the-screen";
 static u8 scramble(int i) { return (u8)(pad[i % (int)(sizeof(pad) - 1)] ^ (u8)(i * 29 + 7)); }
 
+static void save(void);
+
 static void load(void)
 {
     struct fat_file f;
     static char b[600];
+    int plain = 0;
     loaded = 1;
     key[0] = 0;
     memcpy(model, DEF_MODEL, sizeof(DEF_MODEL));
@@ -41,9 +44,16 @@ static void load(void)
         char save = *e; *e = 0;
         if (!strncmp(l, "model ", 6) && e - l - 6 < (int)sizeof(model) && e - l > 6) memcpy(model, l + 6, (size_t)(e - l - 6 + 1));
         if (!strncmp(l, "url ", 4) && e - l - 4 < (int)sizeof(url) && e - l > 4) memcpy(url, l + 4, (size_t)(e - l - 4 + 1));   /* tests / a proxy */
-        if (!strncmp(l, "key ", 4)) {                     /* hex of key ^ scramble */
+        const char *kv = 0;
+        if (!strncmp(l, "key", 3) && (l[3] == ' ' || l[3] == '=')) { kv = l + 3; while (*kv == ' ' || *kv == '=') kv++; }
+        if (kv && !strncmp(kv, "sk-", 3)) {               /* typed in by hand on a PC: plain text - scrambled below */
             int k = 0;
-            for (const char *h = l + 4; h[0] && h[1] && k < (int)sizeof(key) - 1; h += 2) {
+            while (kv[k] && kv[k] != ' ' && kv[k] != '\t' && k < (int)sizeof(key) - 1) { key[k] = kv[k]; k++; }
+            key[k] = 0;
+            plain = 1;
+        } else if (kv) {                                  /* hex of key ^ scramble */
+            int k = 0;
+            for (const char *h = kv; h[0] && h[1] && k < (int)sizeof(key) - 1; h += 2) {
                 int v = 0;
                 for (int j = 0; j < 2; j++) { char c = h[j]; v = v * 16 + (c >= '0' && c <= '9' ? c - '0' : (c | 32) - 'a' + 10); }
                 key[k] = (char)(v ^ scramble(k)); k++;
@@ -53,6 +63,10 @@ static void load(void)
         *e = save;
         l = *e ? e + 1 : e;
         while (*l == '\n' || *l == '\r') l++;
+    }
+    if (plain) {                                          /* write it back scrambled at once */
+        save();
+        kprintf("(the plain API key in /AI.TXT was scrambled now)\n");
     }
 }
 
