@@ -738,8 +738,7 @@ display keys         ktoré tlačidlá sú práve stlačené (test)
 
 Tlačidlá: KEY1 = ďalšia obrazovka (info, hodiny, rádio, konzola); na obrazovke rádia KEY2 / KEY3 = hľadanie
 dole / hore, joystick vľavo / vpravo = -/+ 0,1 MHz, hore / dole = hlasitosť, stlačenie = rádio zap / vyp.
-Pozor: GPIO24/25/16 sú aj výstupy IoT shieldu - nepoužívať naraz. **Na hardvéri zatiaľ neotestované** (PC test
-so simulovaným SPI SH1106 + tlačidlami).
+Pozor: GPIO24/25/16 sú aj výstupy IoT shieldu - nepoužívať naraz. **Na hardvéri funguje** (0.72).
 
 ### MQTT
 

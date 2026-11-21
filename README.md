@@ -746,7 +746,7 @@ display keys         which keys are pressed now (test)
 
 Keys: KEY1 = next screen (info, clock, radio, console); on the radio screen KEY2 / KEY3 = seek down / up,
 joystick left / right = -/+ 0.1 MHz, up / down = volume, press = radio on / off. Note: GPIO24/25/16 are also
-outputs of the IoT shield - do not use both. **Not yet tested on hardware** (PC test with a fake SPI SH1106 + keys).
+outputs of the IoT shield - do not use both. **Works on hardware** (owner, 0.72).
 
 ### MQTT
 
