@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.49**
+Current version: **0.50**
 
 ## Supported boards
 
@@ -402,7 +402,8 @@ at once (before, the 3B+ often joined only on the retry 20 s later).
 and Bluetooth share one radio, and the 50 % scan made the WPA handshake fail until the 3rd try on the 3B+;
 WiFi retries say why the last try failed. 0.49: a retry never cuts short a try that is still
 associating or doing the WPA handshake (0.46 retried after 10 s and so joined only on the 4th try): after an
-error 2 s, otherwise 20 s; the time a try took is printed (`connected to ... (N s)`).
+error 2 s, otherwise 20 s; the time a try took is printed (`connected to ... (N s)`). 0.50: on the 3B+ (RoboOS does the WPA handshake) the firmware's
+own WPA status is ignored - 0.49 took it for a failure and restarted joins in the middle of the handshake (10 tries).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)

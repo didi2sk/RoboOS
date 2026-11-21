@@ -747,6 +747,8 @@ static void event(const u8 *p, int len)
         else { if (j_link) { d_lost_type = 16; d_lost_reason = (int)reason; } j_link = 0; j_keyed = 0; sup_started = 0; }
         return;
     case 46:                                              /* E_PSK_SUP: the firmware's WPA supplicant */
+        if (host_sup) return;                             /* ours does the handshake (3B+): the firmware's word means nothing -
+                                                           * 0.49 took its status as a failure and restarted joins mid-handshake */
         if (status == 6) j_keyed = 1;                     /* keyed */
         else if (status == 7 || status == 0) { if (j_need_key && !j_keyed) j_fail = 100 + (int)status; }   /* timeout = wrong password? */
         return;
@@ -1123,7 +1125,7 @@ int wifi_recv(void *buf, int max, int want_data)
             /* a try that failed for sure (an error event, or the link dropped) is retried soon; one that is
              * still associating or doing the WPA handshake is never cut short (0.46 retried after 10 s and
              * so killed tries that would have joined - it joined only on the 4th) */
-            int failed = j_fail || (d_lost_type && !j_link);
+            int failed = !j_link && (j_fail || d_lost_type);   /* never while associated (the WPA handshake runs) */
             if (failed && !j_fail_at) j_fail_at = now;
             if (failed && now >= j_fail_at + 2000000 && now < j_next_try) j_next_try = now;
             if (!failed && j_link && j_started && now < j_started + 30000000 && now >= j_next_try) j_next_try = now + 2000000;

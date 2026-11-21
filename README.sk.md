@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.49**
+Aktuálna verzia: **0.50**
 
 ## Podporované dosky
 
@@ -398,7 +398,8 @@ takže WPA handshake routera dostane odpoveď hneď (predtým sa 3B+ často prip
 jedno rádio a 50 % hľadanie na 3B+ kazilo WPA handshake až do 3. pokusu; WiFi pri ďalšom pokuse vypíše, prečo
 predošlý zlyhal. 0.49: ďalší pokus nikdy nepreruší ten, ktorý sa ešte pripája alebo robí WPA handshake (0.46 skúšala
 znova po 10 s, a preto sa pripojila až na 4. pokus): po chybe o 2 s, inak o 20 s; vypíše aj, ako dlho pokus trval
-(`connected to ... (N s)`). QEMU test: `tools/qemu_btkbd_test.py`.
+(`connected to ... (N s)`). 0.50: na 3B+ (WPA handshake robí RoboOS) sa ignoruje WPA hlásenie
+firmvéru - 0.49 ho brala ako chybu a reštartovala pripájanie uprostred handshake (10 pokusov). QEMU test: `tools/qemu_btkbd_test.py`.
 
 ### Dátum a čas (NTP)
 
