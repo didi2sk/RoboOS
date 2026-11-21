@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.66**
+Current version: **0.67**
 
 ## Supported boards
 
@@ -436,6 +436,9 @@ right beside HH:MM, the date in the 8x16 font below.
 stop after "asking ..." with no clue where.
 0.66: more for the hang hunt: the answer line shows the HTTP status, length and chunked; while waiting, every 5 s
 "still waiting: N bytes in so far, core 1: <what it does> (loops)".
+0.67: FIX the `ai` freeze: after a chunked answer (the API answered HTTP 429) BearSSL's polite TLS close
+(`br_sslio_close`) spun forever - reproduced in QEMU; the HTTPS client now just closes the TCP connection.
+A 429 now hints at the rate / spend limit and the credit.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)

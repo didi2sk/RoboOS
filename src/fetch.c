@@ -284,7 +284,7 @@ static long fetch_core(const char *url0, const char *extra, const char *body, in
                 nu[j] = 0;
                 memcpy(url, nu, (size_t)j + 1);
             } else { int j = 0; for (; loc[j] && j < (int)sizeof(url) - 1; j++) url[j] = loc[j]; url[j] = 0; }
-            if (tls) br_sslio_close(&ioc);
+            /* no br_sslio_close: it can spin forever when the server closes without close_notify */
             sock_close(sock_h);
             kprintf("  -> redirect %d\n", status);
             continue;
@@ -324,7 +324,8 @@ static long fetch_core(const char *url0, const char *extra, const char *body, in
             }
         }
         if (clen >= 0 && got != (u32)clen) { fetch_err = "the download broke off"; sock_close(sock_h); return -1; }
-        if (tls) br_sslio_close(&ioc);
+        /* NOT br_sslio_close(): after a chunked answer (api.anthropic.com, HTTP 429) it spun forever on
+         * the owner's 3B+ and in QEMU - the whole body is in, so the TCP close is enough */
         sock_close(sock_h);
         return (long)got;
     }
