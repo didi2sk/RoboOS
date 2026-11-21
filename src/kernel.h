@@ -347,6 +347,8 @@ long fetch_post(const char *url, const char *extra, const char *body, int blen,
 void ai_cmd(int argc, char **argv);
 void shell_execute(const char *cmdline);          /* shell.c */
 int  shell_commands(char *b, int max);
+extern volatile const char *io_where;   /* smp.c: what core 1 does now */
+extern volatile u32 io_beats;           /* + 1 per core-1 loop */
 void con_capture(char *buf, int max);             /* console.c: record printed text */
 int  con_capture_end(void);   /* ai.c - questions to Claude (Anthropic API) */
 /* sockets for programs: handles 1..8, errors < 0 (sock_error); idle() polls the network */

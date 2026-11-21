@@ -1116,8 +1116,11 @@ int wifi_recv(void *buf, int max, int want_data)
 {
     if (!w.up) return 0;
     for (int guard = 0; guard < 8; guard++) {
+        io_where = "wifi pending";
         if (!rx_more) { if (!pending()) break; rx_more = 1; }
+        io_where = "wifi readpkt";
         int n = readpkt();
+        io_where = "wifi frame";
         if (n <= 0) { rx_more = 0; break; }
         u16 id;
         int ch = dispatch(n, &id);
@@ -1131,6 +1134,7 @@ int wifi_recv(void *buf, int max, int want_data)
             return len;
         }
     }
+    io_where = "wifi join";
     if (host_sup) sup_work();
     if (j_want) {                                         /* keep trying: at boot, after a lost link, a rebooted router */
         u64 now = timer_us();
