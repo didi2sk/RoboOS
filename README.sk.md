@@ -402,7 +402,7 @@ znova po 10 s, a preto sa pripojila až na 4. pokus): po chybe o 2 s, inak o 20 
 firmvéru - 0.49 ho brala ako chybu a reštartovala pripájanie uprostred handshake (10 pokusov). 0.51: `wifi` vypíše posledných 10 pokusov s časom
 každého kroku (sieť nájdená, spojenie, WPA msg1/msg3, kľúče, strata + dôvod) - jedna fotka ukáže, kde sa pripájanie zastaví. 0.52: router
 odpovedal na rýchle pokusy odpojením s dôvodom 2 („predošlé prihlásenie už neplatí“) 20-krát: teraz sa pred každým
-ďalším pokusom Pi najprv korektne odpojí (disassociate, 0,3 s) a po odmietnutí skúša znova o 15 s, nie o 2 s. QEMU test: `tools/qemu_btkbd_test.py`.
+ďalším pokusom Pi najprv korektne odpojí (disassociate, 0,3 s) a po odmietnutí skúša znova o 15 s, nie o 2 s. Na Pi 3B+ sa WiFi teraz pripojí na prvý pokus do sekundy. QEMU test: `tools/qemu_btkbd_test.py`.
 
 ### Dátum a čas (NTP)
 
