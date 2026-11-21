@@ -142,7 +142,7 @@ void con_clreol(void);                  /* clear from the cursor to the end of t
 void con_size(int *cols, int *rows);    /* HDMI text size, 80x24 on UART only */
 
 /* lineedit.c - line editor with cursor keys and history */
-#define LE_MAX  160
+#define LE_MAX  256
 #define LE_HIST 30
 struct le_hist { char line[LE_HIST][LE_MAX]; int n; };
 /* returns the length, -1 on Ctrl+C; h, complete and prompt (for Ctrl+L) may be 0 */
@@ -335,6 +335,13 @@ int  api_admin_ok(const char *auth, int role, const char *from);   /* webapi.c: 
 void api_reboot_later(u32 ms);
 long fetch_url(const char *url, u8 *buf, u32 max, int insecure);   /* fetch.c: HTTP(S) GET; -1 + fetch_err */
 extern const char *fetch_err;
+long fetch_post(const char *url, const char *extra, const char *body, int blen,
+                u8 *buf, u32 max, int *status, u32 timeout_s);   /* HTTPS POST, certificate checked */
+void ai_cmd(int argc, char **argv);
+void shell_execute(const char *cmdline);          /* shell.c */
+int  shell_commands(char *b, int max);
+void con_capture(char *buf, int max);             /* console.c: record printed text */
+int  con_capture_end(void);   /* ai.c - questions to Claude (Anthropic API) */
 /* sockets for programs: handles 1..8, errors < 0 (sock_error); idle() polls the network */
 int  sock_tcp_connect(const char *host, int port, int (*idle)(void));
 int  sock_tcp_listen(int port);

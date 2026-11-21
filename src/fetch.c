@@ -100,11 +100,12 @@ static br_ssl_client_context cc;
 static u8 iobuf[BR_SSL_BUFSIZE_BIDI];
 static br_sslio_context ioc;
 static int sock_h;
+static u64 read_timeout = 20000000;                  /* no byte for this long = give up (the AI may think longer) */
 
 static int low_read(void *ctx, unsigned char *b, size_t len)
 {
     (void)ctx;
-    u64 end = timer_us() + 20000000;
+    u64 end = timer_us() + read_timeout;
     for (;;) {
         int n = sock_read(sock_h, b, (int)len);
         if (n > 0) return n;
@@ -129,12 +130,12 @@ static int rd(void *b, int n)                       /* body / header bytes, plai
     return r < 0 ? 0 : r;
 }
 
-static int wr(const char *s)
+static int wrn(const char *s, int n)
 {
-    int n = (int)strlen(s);
     if (tls) return br_sslio_write_all(&ioc, s, (size_t)n) == 0 ? 0 : -1;
     return low_write(0, (const u8 *)s, (size_t)n) == n ? 0 : -1;
 }
+static int wr(const char *s) { return wrn(s, (int)strlen(s)); }
 
 static int parse_url(const char *u, int *https, char *host, int hmax, int *port, char *path, int pmax)
 {
@@ -155,8 +156,11 @@ static int parse_url(const char *u, int *https, char *host, int hmax, int *port,
 
 static int lower_eq(const char *a, const char *b, int n) { for (int i = 0; i < n; i++) if ((a[i] | 32) != (b[i] | 32)) return 0; return 1; }
 
-/* GET url into buf (max bytes); the length, or -1 (fetch_err says why). Redirects: 5 at most. */
-long fetch_url(const char *url0, u8 *buf, u32 max, int insecure)
+/* one request: GET (body 0) or POST; extra = more header lines ("Name: value\r\n"...); quiet = do not
+ * print the address; status != 0: any HTTP status is accepted (the body is kept) and stored there.
+ * Redirects: 5 at most (GET only). The body length, or -1 (fetch_err says why). */
+static long fetch_core(const char *url0, const char *extra, const char *body, int blen,
+                       u8 *buf, u32 max, int insecure, int quiet, int *status_out)
 {
     static char url[512], host[128], path[384], hdr[4096];
     int k = 0;
@@ -167,7 +171,8 @@ long fetch_url(const char *url0, u8 *buf, u32 max, int insecure)
     for (int hop = 0; hop < 6; hop++) {
         int https, port;
         if (parse_url(url, &https, host, sizeof(host), &port, path, sizeof(path))) { fetch_err = "the address must start with http:// or https://"; return -1; }
-        if (port != (https ? 443 : 80)) kprintf("  %s://%s:%d%s\n", https ? "https" : "http", host, port, path);
+        if (quiet) ;
+        else if (port != (https ? 443 : 80)) kprintf("  %s://%s:%d%s\n", https ? "https" : "http", host, port, path);
         else kprintf("  %s://%s%s\n", https ? "https" : "http", host, path);
         sock_h = sock_tcp_connect(host, port, stop_key);
         if (sock_h < 0) { fetch_err = sock_h == -2 ? "name not found (DNS)" : sock_h == -1 ? "no network" : "no connection"; return -1; }
@@ -188,13 +193,16 @@ long fetch_url(const char *url0, u8 *buf, u32 max, int insecure)
             br_ssl_client_reset(&cc, ip || insecure ? 0 : host, 0);
             br_sslio_init(&ioc, &cc.eng, low_read, 0, low_write, 0);
         }
-        char req[640];
+        static char req[1536];
         int n = 0;
-        const char *parts[] = { "GET ", path, " HTTP/1.1\r\nHost: ", host, "\r\nUser-Agent: RoboOS/", os_version(),
-                                "\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n" };
-        for (int i = 0; i < 7; i++) for (const char *s = parts[i]; *s && n < (int)sizeof(req) - 1; s++) req[n++] = *s;
+        char cl[16]; int ck = 0, bv = blen;
+        { char t[12]; int tk = 0; do t[tk++] = (char)('0' + bv % 10); while ((bv /= 10)); while (tk) cl[ck++] = t[--tk]; cl[ck] = 0; }
+        const char *parts[] = { body ? "POST " : "GET ", path, " HTTP/1.1\r\nHost: ", host, "\r\nUser-Agent: RoboOS/", os_version(),
+                                "\r\nAccept-Encoding: identity\r\nConnection: close\r\n", extra ? extra : "",
+                                body ? "Content-Length: " : "", body ? cl : "", body ? "\r\n" : "", "\r\n" };
+        for (int i = 0; i < 12; i++) for (const char *s = parts[i]; *s && n < (int)sizeof(req) - 1; s++) req[n++] = *s;
         req[n] = 0;
-        if (wr(req) || (tls && br_sslio_flush(&ioc))) {
+        if (wr(req) || (body && wrn(body, blen)) || (tls && br_sslio_flush(&ioc))) {
             int e = tls ? br_ssl_engine_last_error(&cc.eng) : 0;
             sock_close(sock_h);
             fetch_err = e >= 32 && e < 64 ? "the server's certificate is not trusted (BR_ERR_X509; 'insecure' skips the check)"
@@ -229,7 +237,7 @@ long fetch_url(const char *url0, u8 *buf, u32 max, int insecure)
             else if (lower_eq(h, "transfer-encoding:", 18) && strstr(h, "chunked") && strstr(h, "chunked") < strstr(h, "\r\n")) chunked = 1;
             else if (lower_eq(h, "location:", 9)) { loc = h + 9; while (*loc == ' ') loc++; }
         }
-        if (status >= 300 && status < 400 && loc) {
+        if (status >= 300 && status < 400 && loc && !body) {
             char *e = strstr(loc, "\r\n"); if (e) *e = 0;
             if (loc[0] == '/') {                    /* relative: same server */
                 char nu[512]; int j = 0;
@@ -250,7 +258,8 @@ long fetch_url(const char *url0, u8 *buf, u32 max, int insecure)
             kprintf("  -> redirect %d\n", status);
             continue;
         }
-        if (status != 200) {
+        if (status_out) *status_out = status;
+        if (status != 200 && !status_out) {
             sock_close(sock_h);
             static char m[40] = "the server answered HTTP ";
             m[25] = (char)('0' + status / 100); m[26] = (char)('0' + status / 10 % 10); m[27] = (char)('0' + status % 10); m[28] = 0;
@@ -280,7 +289,7 @@ long fetch_url(const char *url0, u8 *buf, u32 max, int insecure)
                 int r = rd(buf + got, (int)(want > 16384 ? 16384 : want));
                 if (r <= 0) break;
                 got += (u32)r;
-                if (got - shown >= 131072) { kprintf("  %u KB\r", got / 1024); shown = got; }
+                if (!quiet && got - shown >= 131072) { kprintf("  %u KB\r", got / 1024); shown = got; }
             }
         }
         if (clen >= 0 && got != (u32)clen) { fetch_err = "the download broke off"; sock_close(sock_h); return -1; }
@@ -290,4 +299,21 @@ long fetch_url(const char *url0, u8 *buf, u32 max, int insecure)
     }
     fetch_err = "too many redirects";
     return -1;
+}
+
+long fetch_url(const char *url, u8 *buf, u32 max, int insecure)
+{
+    read_timeout = 20000000;
+    return fetch_core(url, 0, 0, 0, buf, max, insecure, 0, 0);
+}
+
+/* POST body (JSON etc.) with extra header lines; any HTTP status comes back in *status with its body */
+long fetch_post(const char *url, const char *extra, const char *body, int blen,
+                u8 *buf, u32 max, int *status, u32 timeout_s)
+{
+    read_timeout = (u64)timeout_s * 1000000;
+    *status = 0;
+    long r = fetch_core(url, extra, body, blen, buf, max, 0, 1, status);
+    read_timeout = 20000000;
+    return r;
 }

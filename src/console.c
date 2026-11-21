@@ -11,8 +11,15 @@ static const u32 rgb[] = {
 };
 
 /* all output holds the console lock: core 1 prints too (USB, network messages) */
+/* ai.c: copy what is printed (text only, no colours) into a buffer while a command runs */
+static char *cap_buf;
+static int cap_len, cap_max;
+void con_capture(char *buf, int max) { cap_len = 0; cap_max = max; cap_buf = buf; }
+int  con_capture_end(void) { int n = cap_len; if (cap_buf) cap_buf[n] = 0; cap_buf = 0; return n; }
+
 void con_putc(char c)
 {
+    if (cap_buf && cap_len < cap_max - 1 && c != 7) cap_buf[cap_len++] = c;
     if (c == 7) { uart_putc(7); if (smp_core() == 0) sound_tone(880, 80); return; }   /* BEL = a short beep */
     con_lock();
     if (c == '\n') uart_putc('\r');

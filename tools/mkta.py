@@ -13,7 +13,12 @@ ROOTS = ["ISRG_Root_X1", "ISRG_Root_X2", "DigiCert_Global_Root_CA", "DigiCert_Gl
          "USERTrust_RSA_Certification_Authority", "USERTrust_ECC_Certification_Authority",
          "Sectigo_Public_Server_Authentication_Root_R46", "Sectigo_Public_Server_Authentication_Root_E46",
          "GTS_Root_R1", "GTS_Root_R2", "GTS_Root_R3", "GTS_Root_R4", "GlobalSign_Root_CA_-_R3", "GlobalSign_Root_R46",
-         "Baltimore_CyberTrust_Root", "Amazon_Root_CA_1", "Amazon_Root_CA_3"]
+         "Baltimore_CyberTrust_Root", "Amazon_Root_CA_1", "Amazon_Root_CA_3",
+         # more big public CAs (0.56, for api.anthropic.com and other APIs whose CA is not known in advance)
+         "DigiCert_TLS_RSA4096_Root_G5", "DigiCert_TLS_ECC_P384_Root_G5", "SSL.com_TLS_RSA_Root_CA_2022",
+         "SSL.com_TLS_ECC_Root_CA_2022", "SSL.com_Root_Certification_Authority_RSA", "SSL.com_Root_Certification_Authority_ECC",
+         "Certainly_Root_R1", "Certainly_Root_E1", "Microsoft_RSA_Root_Certificate_Authority_2017",
+         "Microsoft_ECC_Root_Certificate_Authority_2017", "IdenTrust_Commercial_Root_CA_1"]
 d = sys.argv[1] if len(sys.argv) > 1 else "/etc/ssl/certs"
 out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src", "ta_roots.h")
 
