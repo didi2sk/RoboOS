@@ -512,7 +512,7 @@ logged_in:;
                 int k = value(&n, sv, sizeof(sv));
                 if (k == J_NONE) return fail(400, jerr);
                 if (!strcmp(key, "text")) { if (k != J_STR) return fail(400, "text: a string (\\n = new row)"); scopy(tx, sv, sizeof(tx)); have_text = 1; }
-                else if (!strcmp(key, "row")) { if (k != J_NUM || n < 1 || n > 8) return fail(400, "row: 1-8"); row = n; }
+                else if (!strcmp(key, "row")) { if (k != J_NUM || n < 1 || n > 10) return fail(400, "row: 1-10"); row = n; }
                 else if (!strcmp(key, "clear")) clear = k == J_TRUE || (k == J_NUM && n);
                 else return fail(400, "unknown key (text, row, clear)");
             } while (eat(','));

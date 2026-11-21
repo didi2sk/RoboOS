@@ -1,7 +1,7 @@
 /*
  * PC test of src/display.c: fake SSD1306 / SH1106 / HD44780-on-PCF8574 chips decode every I2C byte
  * the driver sends, then the picture is read back as text (OLED pixels matched against the font).
- * build + run:  cc -O1 -o /tmp/test_display tools/test_display.c src/font.c src/font5x7.c && /tmp/test_display
+ * build + run:  cc -O1 -o /tmp/test_display tools/test_display.c src/font.c src/font5x7.c src/font4x6.c && /tmp/test_display
  */
 #include <stdio.h>
 #include <string.h>
@@ -119,6 +119,18 @@ static int i2c_probe(u8 a) { u8 b; return i2c_read(a, &b, 1) == 0; }
 
 /* ---------------- reading the picture back ---------------- */
 extern const unsigned char font5x7[95][5];
+extern const unsigned char font4x6[95][4];
+static void oled_textrow_tiny(int r, char *out)         /* 4x6 cells, 32 columns, rows NOT page-aligned */
+{
+    for (int c = 0; c < 32; c++) {
+        u8 g[4] = { 0 };
+        for (int x = 0; x < 4; x++)
+            for (int y = 0; y < 6; y++) { int py = r * 6 + y; if (gram[py >> 3][c * 4 + x] >> (py & 7) & 1) g[x] |= (u8)(1 << y); }
+        out[c] = '?';
+        for (int k = 0; k < 95; k++) if (!memcmp(g, font4x6[k], 4)) { out[c] = (char)(32 + k); break; }
+    }
+    out[32] = 0;
+}
 static void oled_textrow_small(int r, char *out)        /* 6x8 cells, 21 columns */
 {
     for (int c = 0; c < 21; c++) {
@@ -288,6 +300,17 @@ int main(void)
     for (const char *c = "0123456789012345678901234\n"; *c; c++) display_con_putc(*c);
     now_us += 200000; display_poll();
     { const char *w[] = { "line 5  x", "line 6  x", "line 7  x", "line 8  x", "line 9  x", "robo$ ls0123456789012", "345678901234", "" }; expect_small("wrap", 8, w); }
+
+    printf("tiny font: 32 x 10 (rows across page borders)\n");
+    reset(SSD, 0x3C, 0x43, "font tiny\nmode console\n");
+    display_boot();
+    check("32 x 10", cols == 32 && rows == 10);
+    for (int i = 1; i <= 12; i++) { char l[48]; snprintf(l, sizeof(l), "%02d The quick brown fox jumps!\n", i); for (char *c = l; *c; c++) display_con_putc(*c); }
+    now_us += 200000; display_poll();
+    { int bad = 0; for (int r = 0; r < 10; r++) { char got[33], w[40]; oled_textrow_tiny(r, got);
+        if (r < 9) { char t[40]; snprintf(t, sizeof(t), "%02d The quick brown fox jumps!", r + 4); snprintf(w, sizeof(w), "%-32.32s", t); } else snprintf(w, sizeof(w), "%-32s", "");
+        printf("  tiny row %2d: [%s]%s\n", r + 1, got, strcmp(got, w) ? " WRONG" : ""); if (strcmp(got, w)) bad = 1; }
+      check("tiny rows", !bad); }
 
     printf("big font: 8 x 2\n");
     reset(SSD, 0x3C, 0x43, "font big\nmode text\n");

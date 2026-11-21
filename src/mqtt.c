@@ -231,9 +231,10 @@ static void incoming(const char *t, int tl, const char *p, int pl)
     }
     if (!strcmp(sub, "set/publish")) { publish_state(); return; }
     if (!strcmp(sub, "set/display")) { display_net(-1, p, pl); return; }        /* the whole screen, \n = next row */
-    if (!strncmp(sub, "set/display/", 12)) {                                     /* one row: set/display/<1..8> */
-        int r = sub[12] - '0';
-        if (r >= 1 && r <= 8 && !sub[13]) display_net(r - 1, p, pl);
+    if (!strncmp(sub, "set/display/", 12)) {                                     /* one row: set/display/<1..10> */
+        int r = 0, k = 12;
+        while (sub[k] >= '0' && sub[k] <= '9' && k < 14) r = r * 10 + (sub[k++] - '0');
+        if (r >= 1 && r <= 10 && !sub[k] && k > 12) display_net(r - 1, p, pl);
         return;
     }
     if (!strncmp(sub, "cmd/", 4) || !strcmp(sub, "cmd")) {
