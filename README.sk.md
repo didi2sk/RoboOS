@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.74**
+Aktuálna verzia: **0.75**
 
 ## Podporované dosky
 
@@ -450,6 +450,7 @@ nenašlo), kým ho neuvoľnil neúspešný prenos; teraz pri štarte, pred `i2c 
 nový ovládač SPI0 `src/spi.c`.
 0.73: senzor tlaku a teploty BMP180 (BMP085) na 0x77 v `sensors`, MQTT, API a BASIC `SENSOR()`.
 0.74: prijímač rádiových hodín DCF77 na GPIO pine (`dcf`): čas bez siete.
+0.75: `dcf on` / `dcf off` (pin ostane uložený; s `dcf pon` sa vypne aj prijímač).
 
 ### Dátum a čas (NTP)
 
@@ -755,7 +756,7 @@ dcf pin 17           výstup prijímača je na GPIO17 (uloží sa do /DCF.TXT, n
 dcf                  signál: zmeny úrovne, dĺžky impulzov (100 ms = 0, 200 ms = 1), posledná minúta, čas
 dcf invert on|off    polarita impulzov ručne (inak automaticky - moduly sa líšia)
 dcf pull up|down|off pull rezistor na pine (up = pre výstup s otvoreným kolektorom)
-dcf off
+dcf off / dcf on     vypne / zapne čítanie (uloží sa; pin ostane; PON ide hore = prijímač vypnutý)
 ```
 
 Impulzy číta jadro 1 každú milisekundu, krátke špičky sa odfiltrujú; keď sa dve minúty po sebe dekódujú
@@ -949,7 +950,7 @@ Systém komunikuje po anglicky.
 | `sensors [scan]`, `i2c scan\|read\|write` | senzory na I2C (BME280, ADS1115, DS3231) |
 | `ai <otázka>\|@príkaz ..\|key\|model` | otázka pre Claude (vlastný API kľúč Anthropic) |
 | `radio [MHz\|up\|down\|scan\|vol n\|off]` | FM rádio (modul RDA5807M na I2C) |
-| `dcf [pin n\|invert\|pull\|pon\|off]` | prijímač rádiových hodín DCF77 na GPIO |
+| `dcf [on\|off\|pin n\|invert\|pull\|pon]` | prijímač rádiových hodín DCF77 na GPIO |
 | `display [scan\|text n ..\|clear\|status on\|off\|size\|type\|addr\|hat\|keys]` | I2C displej OLED / LCD, Waveshare SPI OLED HAT |
 | `mqtt [broker\|user\|pub\|interval\|off]` | MQTT klient (IoT) |
 | `users [add\|passwd\|del\|console on\|off]`, `logout` | prihlásenie na web a API (voliteľné) |

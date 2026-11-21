@@ -13,7 +13,7 @@
  * unless NTP set it less than 2 hours ago (then the DCF time is only compared).
  *
  * /DCF.TXT (core 0 at boot, written by 'dcf ...'):  pin 17 / invert auto|on|off / pull up|down|off /
- * pon 4 (some modules have a PON input: low = receiver on).
+ * pon 4 (some modules have a PON input: low = receiver on) / state on|off ('dcf on' / 'dcf off').
  */
 #include "kernel.h"
 #ifndef DCF_HOST_TEST
@@ -21,6 +21,7 @@
 #endif
 
 static int pin = -1, pon = -1, pull = 2, invert = -1;   /* invert -1 = auto */
+static volatile int on = 1;                             /* 0.75: dcf off keeps the pin, dcf on resumes */
 static volatile int pol = -1;                           /* the pulse level once known */
 static int stable = -1, raw_prev = -1;
 static u64 pend_at, edge_at, pulse_at, last_pulse;
@@ -142,7 +143,7 @@ static void dcf_sample(int lv, u64 t)
 static u64 next_us;
 void dcf_poll(void)                                     /* core 1 */
 {
-    if (pin < 0) return;
+    if (pin < 0 || !on) return;
     u64 t = timer_us();
     if (t < next_us) return;
     next_us = t + 1000;                                 /* 1 ms is plenty */
@@ -154,7 +155,7 @@ static void setup_pins(void)
     if (pin < 0) return;
     gpio_func(pin, 0);
     gpio_pull(pin, pull);
-    if (pon >= 0) { gpio_func(pon, 1); gpio_set(pon, 0); }
+    if (pon >= 0) { gpio_func(pon, 1); gpio_set(pon, on ? 0 : 1); }   /* PON high = receiver powered down */
     stable = -1; pol = invert >= 0 ? (invert ? 0 : 1) : -1;
     shortc[0] = shortc[1] = 0; nbits = 0; last_pulse = pulse_at = 0; prev_frame = 0; synced_ok = 0;
 }
@@ -169,6 +170,7 @@ static void save(void)
     PUT("invert "); PUT(invert < 0 ? "auto" : invert ? "on" : "off"); b[n++] = '\n';
     PUT("pull "); PUT(pull == 2 ? "up" : pull == 1 ? "down" : "off"); b[n++] = '\n';
     if (pon >= 0) { PUT("pon "); NUM(pon); b[n++] = '\n'; }
+    PUT(on ? "state on\n" : "state off\n");
     #undef PUT
     #undef NUM
     if (fat_mounted()) fat_write_file("/DCF.TXT", b, (u32)n);
@@ -195,11 +197,12 @@ void dcf_boot(void)                                     /* core 0, before core 1
         if (!strncmp(l, "pin ", 4)) pin = pin_arg(l + 4);
         else if (!strncmp(l, "pon ", 4)) pon = pin_arg(l + 4);
         else if (!strncmp(l, "invert ", 7)) invert = !strcmp(l + 7, "on") ? 1 : !strcmp(l + 7, "off") ? 0 : -1;
+        else if (!strncmp(l, "state ", 6)) on = strcmp(l + 6, "off") != 0;
         else if (!strncmp(l, "pull ", 5)) pull = !strcmp(l + 5, "up") ? 2 : !strcmp(l + 5, "down") ? 1 : 0;
         *e = sv; l = *e ? e + 1 : e; while (*l == '\n' || *l == '\r') l++;
     }
     setup_pins();
-    if (pin >= 0) kprintf("DCF77 receiver on GPIO%d (the time comes after ~2-3 minutes of good signal)\n", pin);
+    if (pin >= 0 && on) kprintf("DCF77 receiver on GPIO%d (the time comes after ~2-3 minutes of good signal)\n", pin);
 }
 
 static void status(void)
@@ -208,6 +211,7 @@ static void status(void)
         kprintf("DCF77: off. 'dcf pin <gpio>' = the receiver's output pin (e.g. dcf pin 17)\n");
         return;
     }
+    if (!on) { kprintf("DCF77: off (GPIO%d kept, 'dcf on' turns it on again)\n", pin); return; }
     u64 now = timer_us();
     kprintf("DCF77 on GPIO%d (pull %s", pin, pull == 2 ? "up" : pull == 1 ? "down" : "off");
     if (pon >= 0) kprintf(", PON GPIO%d low", pon);
@@ -241,14 +245,20 @@ void dcf_cmd(int argc, char **argv)
         int p = !strcmp(argv[2], "none") ? -1 : pin_arg(argv[2]);
         if (p < 0 && strcmp(argv[2], "none")) { kprintf("pin: a GPIO number 0-27\n"); return; }
         pin = p;
+        on = 1;
     }
-    else if (!strcmp(a, "off")) pin = -1;
+    else if (!strcmp(a, "off")) on = 0;
+    else if (!strcmp(a, "on")) {
+        if (pin < 0) { kprintf("first 'dcf pin <gpio>' (the receiver's output pin)\n"); return; }
+        on = 1;
+    }
     else if (!strcmp(a, "pon") && argc > 2) pon = !strcmp(argv[2], "none") ? -1 : pin_arg(argv[2]);
     else if (!strcmp(a, "invert") && argc > 2) invert = !strcmp(argv[2], "on") ? 1 : !strcmp(argv[2], "off") ? 0 : -1;
     else if (!strcmp(a, "pull") && argc > 2) pull = !strcmp(argv[2], "up") ? 2 : !strcmp(argv[2], "down") ? 1 : 0;
     else {
         kprintf("usage: dcf                     status (signal, pulses, last time)\n"
-                "       dcf pin <gpio>|none     the receiver's output (off = dcf off)\n"
+                "       dcf on | off            start / stop reading the receiver (saved)\n"
+                "       dcf pin <gpio>|none     the receiver's output pin (also turns it on)\n"
                 "       dcf invert auto|on|off  pulse polarity (auto finds it)\n"
                 "       dcf pull up|down|off    pull resistor (up for open-collector outputs)\n"
                 "       dcf pon <gpio>|none     PON input of the module (held low = on)\n");
