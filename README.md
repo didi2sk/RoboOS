@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.57**
+Current version: **0.58**
 
 ## Supported boards
 
@@ -421,6 +421,8 @@ for HTTPS (DigiCert G5, SSL.com, Certainly, Microsoft, IdenTrust).
 whose software I2C ignores ACK): `display type ssd1306` uses them anyway, written by bit-banged I2C on GPIO2/3.
 Also OLED controllers that answer writes but not reads (SSD1309) are now found: `i2c scan` and the display search try
 0x3C/0x3D with a write too.
+0.58: display fonts (small 21 x 8 / normal / big), `display console on` (a copy of the terminal), text over the network
+(`/api/display`, MQTT `set/display`). The 2.42" OLED works on the 3B+ (owner: IP and time shown).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -641,8 +643,15 @@ display size 20x4        the LCD size can not be detected: 16x2 is assumed (also
 display type ssd1306     also for an OLED that does not answer at all (no ACK): written blind
 display type sh1106      if the OLED picture is shifted / the right edge is noise (auto, lcd, ssd1306, sh1106, none)
 display addr 0x26        another LCD backpack address (A0-A2 jumpers: 0x20-0x27, PCF8574A 0x38-0x3F)
+display font small       OLED font: small 21 x 8, normal 16 x 4, big 8 x 2 (big digits) - saved
+display console on       a copy of the terminal on the display (best with the small font); off = empty
 display contrast 128     OLED brightness 0-255;  display light on|off = LCD backlight;  display on|off
 ```
+
+Text over the network: JSON API `POST /api/display` with `{"text":"line 1\nline 2"}` (whole screen) or
+`{"row":3,"text":"..."}`, `{"clear":true}`; `GET /api/display` shows what is on it. MQTT: `roboos/<name>/set/display`
+(the payload = the screen, new line = next row) and `roboos/<name>/set/display/<row>`. Example:
+`curl -X POST http://<board>/api/display -H "Authorization: Bearer <token>" -d '{"text":"Hello\nfrom the PC"}'`.
 
 The settings go to `/DISPLAY.TXT`. BASIC: `DISPLAY 1, "T="; T` and `DISPLAY CLS` (example
 `/APPS/display.bas`), C (API 11): `displayText(row, text)`, `displaySize()`. **Careful with 5 V LCDs:**

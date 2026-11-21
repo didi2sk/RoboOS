@@ -9,20 +9,31 @@
  * The text lives in txt[][]; only changed rows go out (the bus is 100 kHz: a full OLED is ~0.1 s,
  * a row ~25 ms). Status screen (default on): name, IP, time, link - refreshed once a second from
  * display_poll() on core 0 (con_trygetc); text from a command / BASIC / a program turns it off.
+ * 0.58: fonts on the OLED: small 5x7 (21 x 8), normal 8x16 (16 x 4), big 16x32 (8 x 2); modes: status,
+ * text, console (a copy of the terminal: con_putc -> display_con_putc, the screen follows every 0.1 s);
+ * text over the network (JSON API /api/display, MQTT set/display) is stored by core 1 and drawn by core 0.
  */
 #ifndef DISPLAY_HOST_TEST
 #include "kernel.h"
 #include "sd.h"
 #endif
 extern const unsigned char font8x16[95][16];
+extern const unsigned char font5x7[95][5];
 
 enum { D_NONE, D_SSD1306, D_SH1106, D_LCD };
 static const char *const tname[] = { "none", "ssd1306", "sh1106", "lcd" };
 
-#define MAXR 4
-#define MAXC 20
+#define MAXR 8
+#define MAXC 21
+enum { M_TEXT, M_STATUS, M_CONSOLE };
+static const char *const mname[] = { "text", "status", "console" };
+static const char *const fname[] = { "small", "normal", "big" };
 static int dtype, daddr, dw, dh, rows, cols;    /* dw x dh: pixels (OLED) or characters (LCD) */
-static int cfg_type = -1, cfg_addr, cfg_w, cfg_h, status_on = 1, contrast = 0xCF, backlight = 1;
+static int cfg_type = -1, cfg_addr, cfg_w, cfg_h, contrast = 0xCF, backlight = 1;
+static int mode = M_STATUS, font = 1, cw = 8, chh = 16;   /* OLED font: 0 small 6x8, 1 normal 8x16, 2 big 16x32 */
+#define status_on (mode == M_STATUS)
+static volatile int dirty;                     /* console mode: txt changed since the last flush */
+static int cur_r, cur_c, esc;                  /* console mode: the cursor, inside an escape sequence */
 static u8 st_byte;                              /* OLED status byte read at detection (SSD1306 vs SH1106) */
 static char txt[MAXR][MAXC + 1], sent[MAXR][MAXC + 1];
 static int ok, busy, noack;                    /* noack: the display never ACKs - bit-banged writes */
@@ -52,24 +63,29 @@ static int oled_init(void)
     return oled_cmds(c, sizeof(c));
 }
 
-/* one text row = 2 pages of 128 columns; the 8x16 font is 16 row bytes, bit 7 = the left pixel */
+/* the column byte (bit 0 = top) of character ch, pixel column x, page p of its cell (font-dependent) */
+static u8 glyph_col(unsigned char ch, int x, int p)
+{
+    if (ch < 32 || ch > 126) ch = ch ? '?' : ' ';
+    if (font == 0) return x < 5 ? font5x7[ch - 32][x] : 0;          /* 5x7 in a 6x8 cell */
+    const unsigned char *g = font8x16[ch - 32];                     /* rows, bit 7 = the left pixel */
+    u8 v = 0;
+    if (font == 1) { for (int y = 0; y < 8; y++) if (g[p * 8 + y] & (0x80 >> x)) v |= (u8)(1 << y); }
+    else for (int y = 0; y < 8; y++) if (g[(p * 8 + y) / 2] & (0x80 >> (x / 2))) v |= (u8)(1 << y);   /* 2x */
+    return v;
+}
+
+/* one text row = chh/8 pages of 128 columns */
 static int oled_row(int r)
 {
     u8 b[1 + 128];
-    for (int half = 0; half < 2; half++) {
-        int page = r * 2 + half;
+    for (int half = 0; half < chh / 8; half++) {
+        int page = r * (chh / 8) + half;
         if (page * 8 >= dh) break;
         b[0] = 0x40;                             /* control byte: data follow */
-        for (int c = 0; c < 16; c++) {
-            unsigned char ch = (unsigned char)txt[r][c];
-            if (ch < 32 || ch > 126) ch = ch ? '?' : ' ';
-            const unsigned char *g = font8x16[ch - 32] + half * 8;
-            for (int x = 0; x < 8; x++) {
-                u8 v = 0;
-                for (int y = 0; y < 8; y++) if (g[y] & (0x80 >> x)) v |= (u8)(1 << y);
-                b[1 + c * 8 + x] = v;
-            }
-        }
+        memset(b + 1, 0, 128);
+        for (int c = 0; c < cols; c++)
+            for (int x = 0; x < cw; x++) b[1 + c * cw + x] = glyph_col((unsigned char)txt[r][c], x, half);
         int e;
         if (dtype == D_SH1106) {                 /* page addressing; the 132-column RAM shows from column 2 */
             u8 c[] = { (u8)(0xB0 + page), 0x02, 0x10 };
@@ -155,8 +171,11 @@ static void geometry(void)
         if (rows > MAXR) rows = dh = MAXR;
     } else {
         dw = 128; dh = cfg_h == 32 ? 32 : 64;
-        cols = 16; rows = dh / 16;
+        cw = font == 0 ? 6 : font == 1 ? 8 : 16; chh = font == 0 ? 8 : font == 1 ? 16 : 32;
+        cols = 128 / cw; rows = dh / chh;
     }
+    if (cur_r >= rows) cur_r = rows - 1;
+    if (cur_c >= cols) cur_c = 0;
 }
 
 static int flush(void)
@@ -259,7 +278,9 @@ static void load_cfg(void)
             if (*q == 'x' || *q == 'X') q++;
             while (*q >= '0' && *q <= '9') h = h * 10 + (u64)(*q++ - '0');
             if (w && h) { cfg_w = (int)w; cfg_h = (int)h; }
-        } else if (kl == 6 && !memcmp_n(k, "status", 6)) status_on = !strcmp(vv, "on");
+        } else if (kl == 6 && !memcmp_n(k, "status", 6)) mode = !strcmp(vv, "on") ? M_STATUS : M_TEXT;   /* (0.55 files) */
+        else if (kl == 4 && !memcmp_n(k, "mode", 4)) { for (int i = 0; i < 3; i++) if (!strcmp(vv, mname[i])) mode = i; }
+        else if (kl == 4 && !memcmp_n(k, "font", 4)) { for (int i = 0; i < 3; i++) if (!strcmp(vv, fname[i])) font = i; }
         else if (kl == 8 && !memcmp_n(k, "contrast", 8) && parse_num(vv, &x) && x < 256) contrast = (int)x;
     }
 }
@@ -272,7 +293,8 @@ static void save_cfg(void)
     n = ap(b, n, "\n");
     if (cfg_addr) { n = ap(b, n, "addr "); n = aphex(b, n, (u32)cfg_addr); n = ap(b, n, "\n"); }
     if (cfg_w) { n = ap(b, n, "size "); n = apn(b, n, (u32)cfg_w); n = ap(b, n, "x"); n = apn(b, n, (u32)cfg_h); n = ap(b, n, "\n"); }
-    n = ap(b, n, "status "); n = ap(b, n, status_on ? "on" : "off");
+    n = ap(b, n, "mode "); n = ap(b, n, mname[mode]);
+    n = ap(b, n, "\nfont "); n = ap(b, n, fname[font]);
     n = ap(b, n, "\ncontrast "); n = apn(b, n, (u32)contrast); n = ap(b, n, "\n");
     if (fat_mounted() && fat_write_file("/DISPLAY.TXT", b, (u32)n)) kprintf("could not write /DISPLAY.TXT\n");
 }
@@ -296,8 +318,21 @@ static void status_draw(void)
     } else ap(l[2], ap(l[2], 0, "RoboOS "), os_version());
     if (link_up()) { if (link_wifi()) ap(l[3], ap(l[3], 0, "WiFi "), wifi_ssid()); else ap(l[3], 0, "Ethernet"); }
     else ap(l[3], ap(l[3], 0, "RoboOS "), os_version());
-    if (rows == 2) { set_row(0, have_ip ? l[1] : l[0]); set_row(1, l[2]); }
-    else for (int r = 0; r < 4; r++) set_row(r, l[r]);
+    for (int r = 0; r < rows; r++) set_row(r, "");
+    if (rows == 1) set_row(0, have_ip ? l[1] : l[2]);
+    else if (rows == 2) { set_row(0, have_ip ? l[1] : l[0]); set_row(1, l[2]); }
+    else {
+        int r0 = rows >= 8 ? 1 : 0;              /* small font: a title line and a gap */
+        if (r0) { char tt[32]; ap(tt, ap(tt, 0, "RoboOS "), os_version()); set_row(0, tt); }
+        for (int r = 0; r < 4; r++) set_row(r0 + r + (r0 && r >= 2), l[r]);
+        if (rows >= 8) {
+            char up[32]; u64 s2 = timer_us() / 1000000;
+            int n = ap(up, 0, "up ");
+            n = apn(up, n, (u32)(s2 / 3600)); n = ap(up, n, "h ");
+            n = apn(up, n, (u32)(s2 / 60 % 60)); ap(up, n, "m");
+            set_row(7, up);
+        }
+    }
 }
 
 /* ---------------- interface ---------------- */
@@ -308,6 +343,7 @@ void display_boot(void)
     detect();
     if (!dtype) return;
     if (start()) { kprintf("display: %s at 0x%02x does not answer\n", tname[dtype], (u32)daddr); return; }
+    if (mode == M_CONSOLE) { cur_r = cur_c = 0; next_status = 0; return; }   /* the boot messages from here on */
     set_row(0, "RoboOS"); set_row(1, os_version());
     if (rows > 2) { set_row(2, board_name()); set_row(3, ""); }
     flush();
@@ -318,11 +354,80 @@ int display_found(void) { return ok; }
 int display_rows(void) { return ok ? rows : 0; }
 int display_cols(void) { return ok ? cols : 0; }
 
-/* core 0, from con_trygetc: the status screen once a second */
+/* ---- text from the network (core 1: JSON API, MQTT) - stored here, drawn by core 0 ---- */
+static volatile int nlock, npend;
+static char ntext[MAXR][MAXC + 1];
+static int nrow;                                 /* -1 = the whole screen (lines split at \n), else that row */
+
+void display_net(int row, const char *t, int len)
+{
+    while (__atomic_test_and_set(&nlock, __ATOMIC_ACQUIRE)) ;
+    nrow = row;
+    memset(ntext, 0, sizeof(ntext));
+    int r = 0, c = 0;
+    for (int i = 0; i < len && r < MAXR; i++) {
+        char ch = t[i];
+        if (ch == '\n' && row < 0) { r++; c = 0; continue; }
+        if (ch == '\r') continue;
+        if (c < MAXC) ntext[r][c++] = ch;
+    }
+    npend = 1;
+    __atomic_clear(&nlock, __ATOMIC_RELEASE);
+}
+
+/* the console copy: called for every character printed (any core, under the console lock) */
+static void scroll(void)
+{
+    for (int r = 0; r + 1 < rows; r++) memcpy(txt[r], txt[r + 1], MAXC + 1);
+    memset(txt[rows - 1], ' ', MAXC); txt[rows - 1][MAXC] = 0;
+}
+
+void display_con_putc(char c)
+{
+    if (!ok || mode != M_CONSOLE) return;
+    if (esc) { if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) esc = 0; return; }
+    if (c == 27) { esc = 1; return; }
+    if (c == '\n') { cur_c = 0; if (++cur_r >= rows) { cur_r = rows - 1; scroll(); } }
+    else if (c == '\r') cur_c = 0;
+    else if (c == '\b') { if (cur_c) cur_c--; }
+    else if (c == '\t') { do display_con_putc(' '); while (cur_c % 4); return; }
+    else if ((u8)c >= 32 && (u8)c < 127) {
+        if (cur_c >= cols) { cur_c = 0; if (++cur_r >= rows) { cur_r = rows - 1; scroll(); } }
+        txt[cur_r][cur_c++] = c;
+    } else return;
+    dirty = 1;
+}
+
+/* core 0, from con_trygetc: the status screen once a second, the console copy, network text */
 void display_poll(void)
 {
-    if (!ok || !status_on || busy || timer_us() < next_status) return;
+    if (!ok || busy) return;
+    if (npend) {
+        busy = 1;
+        while (__atomic_test_and_set(&nlock, __ATOMIC_ACQUIRE)) ;
+        int row = nrow;
+        char t[MAXR][MAXC + 1];
+        memcpy(t, ntext, sizeof(t));
+        npend = 0;
+        __atomic_clear(&nlock, __ATOMIC_RELEASE);
+        mode = M_TEXT;
+        if (row < 0) for (int r = 0; r < rows; r++) set_row(r, t[r]);
+        else if (row < rows) set_row(row, t[0]);
+        flush();
+        busy = 0;
+        return;
+    }
     if (sound_is_exclusive()) return;            /* a WAV / video plays: no 25 ms pauses */
+    if (mode == M_CONSOLE) {
+        if (!dirty || timer_us() < next_status) return;
+        busy = 1;
+        dirty = 0;
+        next_status = timer_us() + 100000;
+        flush();
+        busy = 0;
+        return;
+    }
+    if (mode != M_STATUS || timer_us() < next_status) return;
     busy = 1;
     next_status = timer_us() + 1000000;
     status_draw();
@@ -336,7 +441,7 @@ int display_text(int row, const char *s)
     if (!ok) return -1;
     if (busy) return -2;
     busy = 1;
-    status_on = 0;
+    mode = M_TEXT;
     if (row < 0) for (int r = 0; r < rows; r++) set_row(r, "");
     else if (row < rows) set_row(row, s);
     int e = flush();
@@ -344,11 +449,18 @@ int display_text(int row, const char *s)
     return e;
 }
 
+/* for GET /api/display (core 1 reads; a torn row is harmless) */
+const char *display_type_name(void) { return ok ? tname[dtype] : "none"; }
+const char *display_mode_name(void) { return mname[mode]; }
+const char *display_row_text(int r) { return r >= 0 && r < rows ? txt[r] : ""; }
+
+static void restart(void) { busy = 1; if (dtype) start(); busy = 0; next_status = 0; cur_r = cur_c = 0; }
+
 void display_cmd(int argc, char **argv)
 {
     const char *a = argc > 1 ? argv[1] : "";
     u64 x;
-    if (!strcmp(a, "scan") || !strcmp(a, "init")) { busy = 1; detect(); if (dtype) start(); busy = 0; }
+    if (!strcmp(a, "scan") || !strcmp(a, "init")) { busy = 1; detect(); busy = 0; restart(); }
     else if (!strcmp(a, "clear")) { display_text(-1, ""); return; }
     else if (!strcmp(a, "text") && argc > 2 && parse_num(argv[2], &x)) {
         char b[64]; int n = 0;
@@ -359,10 +471,26 @@ void display_cmd(int argc, char **argv)
         if (e) kprintf("no display (try 'display scan')\n");
         return;
     }
-    else if (!strcmp(a, "status") && argc > 2) {
-        status_on = !strcmp(argv[2], "on"); next_status = 0;
-        if (!status_on) display_text(-1, "");
-        save_cfg(); return;
+    else if ((!strcmp(a, "status") || !strcmp(a, "console")) && argc > 2) {
+        int on = !strcmp(argv[2], "on");
+        mode = on ? (a[0] == 's' ? M_STATUS : M_CONSOLE) : M_TEXT;
+        next_status = 0;
+        if (ok) {
+            busy = 1;
+            for (int r = 0; r < rows; r++) set_row(r, "");
+            cur_r = cur_c = 0;
+            flush();
+            busy = 0;
+        }
+        save_cfg();
+        if (mode == M_CONSOLE && font != 0 && dtype && dtype != D_LCD) kprintf("(tip: 'display font small' shows 21 x 8 characters)\n");
+        return;
+    }
+    else if (!strcmp(a, "font") && argc > 2) {
+        int f = -1;
+        for (int i = 0; i < 3; i++) if (!strcmp(argv[2], fname[i])) f = i;
+        if (f < 0) { kprintf("fonts: small (21 x 8), normal (16 x 4), big (8 x 2) - OLED only\n"); return; }
+        font = f; save_cfg(); restart();
     }
     else if (!strcmp(a, "type") && argc > 2) {
         int t = -2;
@@ -371,11 +499,11 @@ void display_cmd(int argc, char **argv)
         if (!strcmp(argv[2], "oled")) t = D_SSD1306;
         if (t == -2) { kprintf("types: auto lcd ssd1306 sh1106 none\n"); return; }
         cfg_type = t; save_cfg();
-        busy = 1; detect(); if (dtype) start(); busy = 0;
+        busy = 1; detect(); busy = 0; restart();
     }
     else if (!strcmp(a, "addr") && argc > 2 && parse_num(argv[2], &x) && x < 0x78) {
         cfg_addr = (int)x; save_cfg();
-        busy = 1; detect(); if (dtype) start(); busy = 0;
+        busy = 1; detect(); busy = 0; restart();
     }
     else if (!strcmp(a, "size") && argc > 2) {
         u64 w = 0, h = 0; const char *q = argv[2];
@@ -384,7 +512,7 @@ void display_cmd(int argc, char **argv)
         while (*q >= '0' && *q <= '9') h = h * 10 + (u64)(*q++ - '0');
         if (!w || !h) { kprintf("size: 16x2, 20x4, 16x4 (LCD) or 128x64, 128x32 (OLED)\n"); return; }
         cfg_w = (int)w; cfg_h = (int)h; save_cfg();
-        busy = 1; if (dtype) start(); busy = 0;
+        restart();
     }
     else if (!strcmp(a, "contrast") && argc > 2 && parse_num(argv[2], &x) && x < 256) {
         contrast = (int)x; save_cfg();
@@ -400,9 +528,9 @@ void display_cmd(int argc, char **argv)
         else if (ok) { u8 c = on ? 0xAF : 0xAE; oled_cmds(&c, 1); }
     }
     else if (a[0]) {
-        kprintf("usage: display [scan | clear | text <row> <words> | status on|off | on | off\n"
-                "               | type auto|lcd|ssd1306|sh1106|none | addr <0x..> | size <WxH>\n"
-                "               | contrast <0-255> | light on|off]\n");
+        kprintf("usage: display [scan | clear | text <row> <words> | status on|off | console on|off\n"
+                "               | font small|normal|big | on | off | type auto|lcd|ssd1306|sh1106|none\n"
+                "               | addr <0x..> | size <WxH> | contrast <0-255> | light on|off]\n");
         return;
     }
     if (!dtype) {
@@ -414,8 +542,7 @@ void display_cmd(int argc, char **argv)
     }
     kprintf("display: %s at 0x%02x, ", tname[dtype], (u32)daddr);
     if (dtype == D_LCD) kprintf("%dx%d characters", cols, rows);
-    else kprintf("%dx%d pixels = %dx%d characters, status byte 0x%02x", dw, dh, cols, rows, (u32)st_byte);
-    kprintf(", %s, status screen %s\n", noack ? "no ACK: written blind (bit-banged)" : ok ? "working" : "NOT answering",
-            status_on ? "on" : "off");
+    else kprintf("%dx%d pixels, font %s = %dx%d characters, status byte 0x%02x", dw, dh, fname[font], cols, rows, (u32)st_byte);
+    kprintf(", %s, mode %s\n", noack ? "no ACK: written blind (bit-banged)" : ok ? "working" : "NOT answering", mname[mode]);
     if (cfg_type < 0) kprintf("  (found by itself; the size is a guess - 'display size' if rows are missing)\n");
 }

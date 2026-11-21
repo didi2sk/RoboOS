@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.57**
+Aktuálna verzia: **0.58**
 
 ## Podporované dosky
 
@@ -417,6 +417,8 @@ certifikátov pre HTTPS (DigiCert G5, SSL.com, Certainly, Microsoft, IdenTrust).
 ACK ignoruje): `display type ssd1306` ich použije aj tak, zápis softvérovým I2C na GPIO2/3.
 Nájdu sa aj OLED radiče, ktoré odpovedajú na zápis, ale nie na čítanie (SSD1309): `i2c scan` a hľadanie displeja
 skúšajú 0x3C/0x3D aj zápisom.
+0.58: písma displeja (small 21 x 8 / normal / big), `display console on` (kópia terminálu), text cez sieť
+(`/api/display`, MQTT `set/display`). 2,42" OLED na 3B+ funguje (vlastník: ukazuje IP aj čas).
 
 ### Dátum a čas (NTP)
 
@@ -633,8 +635,15 @@ display size 20x4        veľkosť LCD sa nedá zistiť: predpokladá sa 16x2 (a
 display type ssd1306     aj pre OLED, ktorý vôbec neodpovedá (bez ACK): zapisuje sa naslepo
 display type sh1106      ak je obraz OLED posunutý / pravý okraj je šum (auto, lcd, ssd1306, sh1106, none)
 display addr 0x26        iná adresa LCD modulu (prepojky A0-A2: 0x20-0x27, PCF8574A 0x38-0x3F)
+display font small       písmo OLED: small 21 x 8, normal 16 x 4, big 8 x 2 (veľké číslice) - uloží sa
+display console on       kópia terminálu na displeji (najlepšie s malým písmom); off = prázdny
 display contrast 128     jas OLED 0-255;  display light on|off = podsvietenie LCD;  display on|off
 ```
+
+Text cez sieť: JSON API `POST /api/display` s `{"text":"riadok 1\nriadok 2"}` (celý displej) alebo
+`{"row":3,"text":"..."}`, `{"clear":true}`; `GET /api/display` ukáže, čo na ňom je. MQTT: `roboos/<meno>/set/display`
+(obsah = obrazovka, nový riadok = ďalší riadok) a `roboos/<meno>/set/display/<riadok>`. Príklad:
+`curl -X POST http://<doska>/api/display -H "Authorization: Bearer <token>" -d '{"text":"Ahoj\nz PC"}'`.
 
 Nastavenia sa ukladajú do `/DISPLAY.TXT`. BASIC: `DISPLAY 1, "T="; T` a `DISPLAY CLS` (príklad
 `/APPS/display.bas`), C (API 11): `displayText(riadok, text)`, `displaySize()`. **Pozor na 5 V LCD:**

@@ -109,7 +109,7 @@ static int value(long *num, char *str, int smax)
         jp++;
         while (jp < jend && *jp != '"') {
             char ch = *jp++;
-            if (ch == '\\' && jp < jend) ch = *jp++;
+            if (ch == '\\' && jp < jend) { ch = *jp++; if (ch == 'n') ch = '\n'; else if (ch == 't') ch = ' '; }
             if (n < smax - 1) str[n++] = ch;
         }
         if (jp >= jend) { jerr = "unfinished string"; return J_NONE; }
@@ -498,6 +498,52 @@ logged_in:;
         if (!get) return fail(405, "use GET or POST");
         return get_sound();
     }
+    if (!strcmp(path, "/api/display")) {                  /* the I2C display (display.c draws it on core 0) */
+        if (post) {
+            char key[16], sv[192];
+            long n = 0, row = 0;
+            int have_text = 0, clear = 0, tl = 0;
+            static char tx[192];
+            jp = body; jend = body + blen; jerr = 0;
+            if (!eat('{')) return fail(400, "expected an object {...}");
+            do {
+                if (value(&n, key, sizeof(key)) != J_STR) return fail(400, jerr ? jerr : "expected a key");
+                if (!eat(':')) return fail(400, "expected ':'");
+                int k = value(&n, sv, sizeof(sv));
+                if (k == J_NONE) return fail(400, jerr);
+                if (!strcmp(key, "text")) { if (k != J_STR) return fail(400, "text: a string (\\n = new row)"); scopy(tx, sv, sizeof(tx)); have_text = 1; }
+                else if (!strcmp(key, "row")) { if (k != J_NUM || n < 1 || n > 8) return fail(400, "row: 1-8"); row = n; }
+                else if (!strcmp(key, "clear")) clear = k == J_TRUE || (k == J_NUM && n);
+                else return fail(400, "unknown key (text, row, clear)");
+            } while (eat(','));
+            if (!eat('}')) return fail(400, "expected ',' or '}'");
+            if (!have_text && !clear) return fail(400, "give text (and row) or clear");
+            if (!display_rows()) return fail(409, "no display found on the board");
+            while (tx[tl]) tl++;
+            display_net(row ? (int)row - 1 : -1, have_text ? tx : "", have_text ? tl : 0);
+            head(202);
+            put("{\"ok\":true}\n");
+            return olen;
+        }
+        if (!get) return fail(405, "use GET or POST");
+        head(200);
+        put("{\"ok\":true,\"display\":"); put_str(display_type_name());
+        put(",\"rows\":"); put_i(display_rows());
+        put(",\"cols\":"); put_i(display_cols());
+        put(",\"mode\":"); put_str(display_mode_name());
+        put(",\"text\":[");
+        for (int r = 0; r < display_rows(); r++) {
+            char rt[32]; int k = 0;
+            const char *s = display_row_text(r);
+            for (; k < display_cols() && s[k]; k++) rt[k] = s[k];
+            while (k && rt[k - 1] == ' ') k--;
+            rt[k] = 0;
+            if (r) put(",");
+            put_str(rt);
+        }
+        put("]}\n");
+        return olen;
+    }
     if (!strcmp(path, "/api/reboot")) {
         if (!post) return fail(405, "use POST");
         kprintf("\n[API] reboot asked by %s\n", from);
@@ -506,5 +552,5 @@ logged_in:;
         put("{\"ok\":true,\"rebooting\":true}\n");
         return olen;
     }
-    return fail(404, "unknown: GET /api/status, GET|POST /api/gpio, GET /api/gpio/<pin>, GET|POST /api/sound, POST /api/reboot");
+    return fail(404, "unknown: GET /api/status, GET|POST /api/gpio, GET /api/gpio/<pin>, GET|POST /api/sound, GET|POST /api/display, POST /api/reboot");
 }
