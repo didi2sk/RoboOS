@@ -247,7 +247,7 @@ static void ask(const char *question, const char *cmdline)
     for (int i = 0; i < 3; i++) for (const char *s = h[i]; *s && hn < (int)sizeof(hdr) - 1; s++) hdr[hn++] = *s;
     hdr[hn] = 0;
 
-    con_color(COL_GRAY); kprintf("asking %s ... (Ctrl+C stops)\n", model); con_color(COL_DEFAULT);
+    con_color(COL_GRAY); kprintf("asking %s ... (waits up to 2 min, Ctrl+C stops)\n", model); con_color(COL_DEFAULT);
     u64 t0 = timer_us();
     int status = 0;
     long n = fetch_post(url, hdr, body, jn, (u8 *)resp, sizeof(resp) - 1, &status, 120);

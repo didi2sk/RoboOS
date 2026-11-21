@@ -100,7 +100,10 @@ static br_ssl_client_context cc;
 static u8 iobuf[BR_SSL_BUFSIZE_BIDI];
 static br_sslio_context ioc;
 static int sock_h;
-static u64 read_timeout = 20000000;                  /* no byte for this long = give up (the AI may think longer) */
+static u64 read_timeout = 20000000;
+static int trace;                                     /* fetch_post: print every step (for photos of the screen) */
+static u64 t_start;
+static void step(const char *what) { if (trace) { con_color(COL_GRAY); kprintf("  %s (%u ms)\n", what, (u32)((timer_us() - t_start) / 1000)); con_color(COL_DEFAULT); } }                  /* no byte for this long = give up (the AI may think longer) */
 
 static int low_read(void *ctx, unsigned char *b, size_t len)
 {
@@ -174,6 +177,8 @@ static long fetch_core(const char *url0, const char *extra, const char *body, in
         if (quiet) ;
         else if (port != (https ? 443 : 80)) kprintf("  %s://%s:%d%s\n", https ? "https" : "http", host, port, path);
         else kprintf("  %s://%s%s\n", https ? "https" : "http", host, path);
+        t_start = timer_us();
+        if (trace) { con_color(COL_GRAY); kprintf("  connecting to %s:%d ...\n", host, port); con_color(COL_DEFAULT); }
         sock_h = sock_tcp_connect(host, port, stop_key);
         if (sock_h < 0) { fetch_err = sock_h == -2 ? "name not found (DNS)" : sock_h == -1 ? "no network" : "no connection"; return -1; }
         tls = https;
@@ -202,7 +207,12 @@ static long fetch_core(const char *url0, const char *extra, const char *body, in
                                 body ? "Content-Length: " : "", body ? cl : "", body ? "\r\n" : "", "\r\n" };
         for (int i = 0; i < 12; i++) for (const char *s = parts[i]; *s && n < (int)sizeof(req) - 1; s++) req[n++] = *s;
         req[n] = 0;
-        if (wr(req) || (body && wrn(body, blen)) || (tls && br_sslio_flush(&ioc))) {
+        step(tls ? "connected, TLS handshake ..." : "connected");
+        int werr = wr(req);
+        if (!werr && body) { step(tls ? "TLS ok, sending the request ..." : "sending the request ..."); werr = wrn(body, blen); }
+        if (!werr && tls) werr = br_sslio_flush(&ioc);
+        if (!werr) step("sent, waiting for the answer ...");
+        if (werr) {
             int e = tls ? br_ssl_engine_last_error(&cc.eng) : 0;
             sock_close(sock_h);
             fetch_err = e >= 32 && e < 64 ? "the server's certificate is not trusted (BR_ERR_X509; 'insecure' skips the check)"
@@ -221,6 +231,8 @@ static long fetch_core(const char *url0, const char *extra, const char *body, in
         hdr[hl] = 0;
         int status = 0;
         if (hl > 12 && !strncmp(hdr, "HTTP/1.", 7)) for (int i = 9; i < 12; i++) status = status * 10 + (hdr[i] - '0');
+        if (status) step("answer started, reading ...");
+        else if (trace) step("no answer");
         if (!status) {
             int e = tls ? br_ssl_engine_last_error(&cc.eng) : 0;
             sock_close(sock_h);
@@ -313,7 +325,10 @@ long fetch_post(const char *url, const char *extra, const char *body, int blen,
 {
     read_timeout = (u64)timeout_s * 1000000;
     *status = 0;
+    trace = 1;
     long r = fetch_core(url, extra, body, blen, buf, max, 0, 1, status);
+    if (r >= 0) step("done");
+    trace = 0;
     read_timeout = 20000000;
     return r;
 }

@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.64**
+Aktuálna verzia: **0.65**
 
 ## Podporované dosky
 
@@ -428,6 +428,8 @@ hneď vedľa HH:MM, dátum písmom 8x16 pod nimi.
 0.62: `font tiny` je teraz čitateľnejšie X11 5x8 (25 x 8); stiesnené 4x6 (32 x 10) je `font micro`.
 0.63: nezašifrovaný API kľúč zapísaný do `/AI.TXT` na PC (`key sk-ant-...`) sa prijme a pri prvom `ai` zašifruje.
 0.64: aj samotný kľúč v `/AI.TXT`, alebo `API_KEY="sk-ant-..."` - hocijaký riadok s `sk-ant-`.
+0.65: `ai` vypisuje každý krok (pripájanie, TLS, odosielanie, čakanie, čítanie, s ms) - vlastníkovi to zastalo
+po "asking ..." a nebolo vidno kde.
 
 ### Dátum a čas (NTP)
 

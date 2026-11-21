@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.64**
+Current version: **0.65**
 
 ## Supported boards
 
@@ -432,6 +432,8 @@ right beside HH:MM, the date in the 8x16 font below.
 0.62: `font tiny` is now the clearer X11 5x8 (25 x 8); the cramped 4x6 (32 x 10) is `font micro`.
 0.63: a plain API key typed into `/AI.TXT` on a PC (`key sk-ant-...`) is accepted and scrambled at the first `ai`.
 0.64: also just the bare key in `/AI.TXT`, or `API_KEY="sk-ant-..."` - any line with `sk-ant-`.
+0.65: `ai` prints every step (connecting, TLS handshake, sending, waiting, reading, with ms) - the owner saw it
+stop after "asking ..." with no clue where.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
