@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.74**
+Current version: **0.75**
 
 ## Supported boards
 
@@ -454,6 +454,7 @@ pulses + a STOP whenever SDA is stuck low (`i2c scan` says so).
 new SPI0 driver `src/spi.c`.
 0.73: BMP180 (BMP085) pressure + temperature sensor at 0x77 in `sensors`, MQTT, the API and BASIC `SENSOR()`.
 0.74: DCF77 radio clock receiver on a GPIO pin (`dcf`): the time without a network.
+0.75: `dcf on` / `dcf off` (the pin is kept; with `dcf pon` the receiver is powered down too).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -763,7 +764,7 @@ dcf pin 17           the receiver's output is on GPIO17 (saved in /DCF.TXT, read
 dcf                  signal: level changes, pulse lengths (100 ms = 0, 200 ms = 1), last minute, last time
 dcf invert on|off    pulse polarity by hand (auto by default - modules differ)
 dcf pull up|down|off pull resistor on the pin (up = for open-collector outputs)
-dcf off
+dcf off / dcf on     stop / start reading it (saved; the pin is kept; PON goes high = receiver off)
 ```
 
 The pulses are read by core 1 every millisecond, short spikes are filtered out, and once two minutes in a
@@ -958,7 +959,7 @@ If you connect after boot, press Enter.
 | `sensors [scan]`, `i2c scan\|read\|write` | I2C sensors (BME280, ADS1115, DS3231) |
 | `ai <question>\|@cmd ..\|key\|model` | ask Claude (own Anthropic API key) |
 | `radio [MHz\|up\|down\|scan\|vol n\|off]` | FM radio (RDA5807M module on I2C) |
-| `dcf [pin n\|invert\|pull\|pon\|off]` | DCF77 radio clock receiver on a GPIO |
+| `dcf [on\|off\|pin n\|invert\|pull\|pon]` | DCF77 radio clock receiver on a GPIO |
 | `display [scan\|text n ..\|clear\|status on\|off\|size\|type\|addr\|hat\|keys]` | I2C OLED / LCD display, Waveshare SPI OLED HAT |
 | `mqtt [broker\|user\|pub\|interval\|off]` | MQTT client (IoT) |
 | `users [add\|passwd\|del\|console on\|off]`, `logout` | logins for the web page + API (optional) |

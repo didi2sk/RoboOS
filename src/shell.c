@@ -712,7 +712,7 @@ static const struct cmd cmds[] = {
     { "mqtt",   "[broker|pub|off|..]", "MQTT client (IoT broker)",       mqtt_cmd   },
     { "ai",     "<question>|@cmd ..|key|model", "ask Claude (AI, needs an API key)", ai_cmd },
     { "radio",  "[MHz|up|down|scan|vol|off]", "FM radio (RDA5807M module)",  radio_cmd  },
-    { "dcf",    "[pin n|invert|pull|pon|off]", "DCF77 radio clock receiver", dcf_cmd    },
+    { "dcf",    "[on|off|pin n|invert|pull|pon]", "DCF77 radio clock receiver", dcf_cmd    },
     { "display", "[scan|text|status|..]", "I2C OLED / LCD display",        display_cmd },
     { "sensors", "[scan]",              "temperature, humidity, ADC, RTC", sensors_cmd },
     { "time",   "[sync|zone|server]",   "date and time (NTP), time zone",  time_cmd   },
