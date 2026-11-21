@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.56**
+Current version: **0.57**
 
 ## Supported boards
 
@@ -417,6 +417,8 @@ dropped the board after 18 s, the second try then joined in 3 s.
 (name, IP, time), `display`, BASIC `DISPLAY`, C API 11 (see "I2C display").
 0.56: `ai` - questions to Claude with your own API key (see "AI"); shell lines up to 255 characters; more root CAs
 for HTTPS (DigiCert G5, SSL.com, Certainly, Microsoft, IdenTrust).
+0.57: OLED displays that never acknowledge on I2C (2.42" SSD1309 boards with the D2 jumper open - they worked on an ESP,
+whose software I2C ignores ACK): `display type ssd1306` uses them anyway, written by bit-banged I2C on GPIO2/3.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -634,6 +636,7 @@ display text 2 Hello     text on row 2 (turns the status screen off until the ne
 display clear            empty display
 display status on|off    the status screen (saved)
 display size 20x4        the LCD size can not be detected: 16x2 is assumed (also 128x32 for a small OLED)
+display type ssd1306     also for an OLED that does not answer at all (no ACK): written blind
 display type sh1106      if the OLED picture is shifted / the right edge is noise (auto, lcd, ssd1306, sh1106, none)
 display addr 0x26        another LCD backpack address (A0-A2 jumpers: 0x20-0x27, PCF8574A 0x38-0x3F)
 display contrast 128     OLED brightness 0-255;  display light on|off = LCD backlight;  display on|off

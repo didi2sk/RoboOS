@@ -35,13 +35,13 @@ static int link_up(void) { return 1; }
 static int link_wifi(void) { return 1; }
 static u64 clock_now(void) { return 1795000000; }
 static int clock_format(char *b, u64 t, int iso) { (void)t; (void)iso; strcpy(b, "2026-11-21 11:01:27"); return 19; }
-static const char *os_version(void) { return "0.55"; }
+static const char *os_version(void) { return "0.56"; }
 static const char *board_name(void) { return "Raspberry Pi 3 Model B+"; }
 static int sound_is_exclusive(void) { return 0; }
 
 /* ---------------- the fake bus ---------------- */
 enum { NONE, SSD, SH, LCD };
-static int chip, chip_addr;
+static int chip, chip_addr, chip_noack;            /* chip_noack: never ACKs (2.42" board, D2 open) */
 static u8 status_byte;
 static u8 gram[8][132];
 static int col, page, c0 = 0, c1 = 127, p0 = 0, p1 = 7, sh_col;
@@ -97,7 +97,10 @@ static void lcd_byte(u8 v)
     last_e = e;
 }
 
-static int i2c_write(u8 a, const void *bv, int n)
+static int bus_write(u8 a, const void *bv, int n);
+static int i2c_write(u8 a, const void *bv, int n) { if (chip_noack) return -1; return bus_write(a, bv, n); }
+static int i2c_write_noack(u8 a, const void *bv, int n) { bus_write(a, bv, n); return 0; }
+static int bus_write(u8 a, const void *bv, int n)
 {
     const u8 *b = bv;
     if (!chip || a != chip_addr) return -1;
@@ -107,7 +110,7 @@ static int i2c_write(u8 a, const void *bv, int n)
     else { printf("bad control byte 0x%02x\n", b[0]); errors++; }
     return 0;
 }
-static int i2c_read(u8 a, void *b, int n) { (void)n; if (!chip || a != chip_addr) return -1; *(u8 *)b = status_byte; return 0; }
+static int i2c_read(u8 a, void *b, int n) { (void)n; if (chip_noack || !chip || a != chip_addr) return -1; *(u8 *)b = status_byte; return 0; }
 static int i2c_probe(u8 a) { u8 b; return i2c_read(a, &b, 1) == 0; }
 
 #define DISPLAY_HOST_TEST
@@ -139,7 +142,7 @@ static void lcd_textrow(int r, int w, char *out)
 
 static void reset(int c, int addr, u8 st, const char *cfg)
 {
-    chip = c; chip_addr = addr; status_byte = st; cfg_text = cfg;
+    chip = c; chip_addr = addr; chip_noack = 0; status_byte = st; cfg_text = cfg;
     memset(gram, 0, sizeof(gram)); memset(ddram, 0, sizeof(ddram));
     l4bit = 0; lnib_hi = -1; last_e = 0; col = page = sh_col = 0;
     cfg_type = -1; cfg_addr = cfg_w = cfg_h = 0; status_on = 1; contrast = 0xCF; backlight = 1; ok = 0; busy = 0;
@@ -167,7 +170,7 @@ int main(void)
     reset(SSD, 0x3C, 0x43, 0);
     display_boot();
     check("found as ssd1306", dtype == D_SSD1306 && daddr == 0x3C && rows == 4);
-    { const char *w[] = { "RoboOS", "0.55", "Raspberry Pi 3 M", "" }; expect_rows("boot", 0, 0, 4, w); }
+    { const char *w[] = { "RoboOS", "0.56", "Raspberry Pi 3 M", "" }; expect_rows("boot", 0, 0, 4, w); }
     now_us += 2100000; display_poll();
     { const char *w[] = { "rpi3b-1234", "192.168.1.104", "21.11. 11:01:27", "WiFi iot" }; expect_rows("status", 0, 0, 4, w); }
     display_text(1, "Hello, world!");
@@ -185,14 +188,14 @@ int main(void)
     reset(SH, 0x3C, 0x08, 0);
     display_boot();
     check("found as sh1106", dtype == D_SH1106);
-    { const char *w[] = { "RoboOS", "0.55", "Raspberry Pi 3 M", "" }; expect_rows("boot (columns 2..129)", 0, 2, 4, w); }
+    { const char *w[] = { "RoboOS", "0.56", "Raspberry Pi 3 M", "" }; expect_rows("boot (columns 2..129)", 0, 2, 4, w); }
 
     printf("LCD 16x2 on a PCF8574 at 0x27:\n");
     reset(LCD, 0x27, 0xFF, 0);
     display_boot();
     check("found as lcd 16x2", dtype == D_LCD && cols == 16 && rows == 2);
     check("backlight on", lbl);
-    { const char *w[] = { "RoboOS", "0.55" }; expect_rows("boot", 16, 0, 2, w); }
+    { const char *w[] = { "RoboOS", "0.56" }; expect_rows("boot", 16, 0, 2, w); }
     now_us += 2100000; display_poll();
     { const char *w[] = { "192.168.1.104", "21.11. 11:01:27" }; expect_rows("status", 16, 0, 2, w); }
 
@@ -214,6 +217,16 @@ int main(void)
     reset(NONE, 0, 0, 0);
     display_boot();
     check("no display", !display_found() && display_text(0, "x") == -1);
+    { char *av[] = { "display" }; display_cmd(1, av); }
+
+    printf("2.42\" SSD1309 without ACK, auto: not found; type ssd1306: written blind\n");
+    reset(SSD, 0x3C, 0, 0); chip_noack = 1;
+    display_boot();
+    check("auto: not found", !display_found());
+    reset(SSD, 0x3C, 0, "type ssd1306\n"); chip_noack = 1;
+    display_boot();
+    check("type set: used without ACK", display_found() && noack && daddr == 0x3C);
+    { const char *w[] = { "RoboOS", "0.56", "Raspberry Pi 3 M", "" }; expect_rows("boot", 0, 0, 4, w); }
     { char *av[] = { "display" }; display_cmd(1, av); }
 
     printf("type none in DISPLAY.TXT (an OLED is there):\n");

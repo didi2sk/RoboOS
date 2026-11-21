@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.56**
+Aktuálna verzia: **0.57**
 
 ## Podporované dosky
 
@@ -413,6 +413,8 @@ a po 18 s Pi odpojil, druhý pokus sa potom pripojil za 3 s.
 (meno, IP, čas), `display`, BASIC `DISPLAY`, C API 11 (pozri „I2C displej“).
 0.56: `ai` - otázky pre Claude s vlastným API kľúčom (pozri „AI“); riadok shellu až 255 znakov; viac koreňových
 certifikátov pre HTTPS (DigiCert G5, SSL.com, Certainly, Microsoft, IdenTrust).
+0.57: OLED displeje, ktoré na I2C nepotvrdzujú (ACK) - 2,42" dosky SSD1309 s otvoreným D2 (na ESP išli, jeho softvérové I2C
+ACK ignoruje): `display type ssd1306` ich použije aj tak, zápis softvérovým I2C na GPIO2/3.
 
 ### Dátum a čas (NTP)
 
@@ -626,6 +628,7 @@ display text 2 Ahoj      text na 2. riadok (vypne stavovú obrazovku do ďalšie
 display clear            prázdny displej
 display status on|off    stavová obrazovka (uloží sa)
 display size 20x4        veľkosť LCD sa nedá zistiť: predpokladá sa 16x2 (aj 128x32 pre malý OLED)
+display type ssd1306     aj pre OLED, ktorý vôbec neodpovedá (bez ACK): zapisuje sa naslepo
 display type sh1106      ak je obraz OLED posunutý / pravý okraj je šum (auto, lcd, ssd1306, sh1106, none)
 display addr 0x26        iná adresa LCD modulu (prepojky A0-A2: 0x20-0x27, PCF8574A 0x38-0x3F)
 display contrast 128     jas OLED 0-255;  display light on|off = podsvietenie LCD;  display on|off

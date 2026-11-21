@@ -25,7 +25,8 @@ static int dtype, daddr, dw, dh, rows, cols;    /* dw x dh: pixels (OLED) or cha
 static int cfg_type = -1, cfg_addr, cfg_w, cfg_h, status_on = 1, contrast = 0xCF, backlight = 1;
 static u8 st_byte;                              /* OLED status byte read at detection (SSD1306 vs SH1106) */
 static char txt[MAXR][MAXC + 1], sent[MAXR][MAXC + 1];
-static int ok, busy;
+static int ok, busy, noack;                    /* noack: the display never ACKs - bit-banged writes */
+static int dwr(u8 a, const void *b, int n) { return noack ? i2c_write_noack(a, b, n) : i2c_write(a, b, n); }
 static u64 next_status;
 
 /* ---------------- OLED ---------------- */
@@ -35,7 +36,7 @@ static int oled_cmds(const u8 *c, int n)
     u8 b[32];
     b[0] = 0x00;                                 /* control byte: commands follow */
     memcpy(b + 1, c, (size_t)n);
-    return i2c_write((u8)daddr, b, n + 1);
+    return dwr((u8)daddr, b, n + 1);
 }
 
 static int oled_init(void)
@@ -77,7 +78,7 @@ static int oled_row(int r)
             u8 c[] = { 0x21, 0, 127, 0x22, (u8)page, (u8)page };
             e = oled_cmds(c, 6);
         }
-        if (!e) e = i2c_write((u8)daddr, b, sizeof(b));
+        if (!e) e = dwr((u8)daddr, b, sizeof(b));
         if (e) return e;
     }
     return 0;
@@ -102,7 +103,7 @@ static int lcd_cmd(u8 v)
 {
     u8 o[4];
     lcd_bytes(o, v, 0);
-    int e = i2c_write((u8)daddr, o, 4);
+    int e = dwr((u8)daddr, o, 4);
     delay_us(v < 4 ? 2000 : 50);                 /* clear / home take 1.5 ms */
     return e;
 }
@@ -113,11 +114,11 @@ static int lcd_init(void)
     delay_us(50000);
     for (int i = 0; i < 3; i++) {                /* to 8-bit mode for sure, then 4-bit (HD44780 datasheet fig. 24) */
         u8 o[2] = { (u8)(0x30 | bl | L_E), (u8)(0x30 | bl) };
-        if (i2c_write((u8)daddr, o, 2)) return -1;
+        if (dwr((u8)daddr, o, 2)) return -1;
         delay_us(i ? 200 : 4500);
     }
     u8 o[2] = { (u8)(0x20 | bl | L_E), (u8)(0x20 | bl) };
-    if (i2c_write((u8)daddr, o, 2)) return -1;
+    if (dwr((u8)daddr, o, 2)) return -1;
     delay_us(200);
     lcd_cmd(0x28);                               /* 4-bit, 2 lines (also 4-line modules), 5x8 */
     lcd_cmd(0x0C);                               /* display on, no cursor */
@@ -136,7 +137,7 @@ static int lcd_row(int r)
         if (ch < 32 || ch > 126) ch = ch ? '?' : ' ';
         n += lcd_bytes(o + n, (u8)ch, L_RS);
     }
-    return i2c_write((u8)daddr, o, n);
+    return dwr((u8)daddr, o, n);
 }
 
 /* ---------------- common ---------------- */
@@ -195,7 +196,7 @@ static int start(void)
 /* find a display: the /DISPLAY.TXT type + address, else 0x3C/0x3D = OLED, 0x27/0x3F = LCD backpack */
 static void detect(void)
 {
-    dtype = D_NONE; daddr = 0; st_byte = 0;
+    dtype = D_NONE; daddr = 0; st_byte = 0; noack = 0;
     i2c_init();
     if (cfg_type == D_NONE) return;
     if (cfg_type > 0) {
@@ -203,6 +204,7 @@ static void detect(void)
         if (cfg_type == D_LCD && !cfg_addr && !i2c_probe(0x27) && i2c_probe(0x3F)) a = 0x3F;
         if (cfg_type != D_LCD && !cfg_addr && !i2c_probe(0x3C) && i2c_probe(0x3D)) a = 0x3D;
         if (i2c_probe((u8)a)) { dtype = cfg_type; daddr = a; }
+        else if (cfg_type != D_LCD) { dtype = cfg_type; daddr = a; noack = 1; }   /* an OLED that never ACKs */
         return;
     }
     static const u8 oled[] = { 0x3C, 0x3D }, lcd[] = { 0x27, 0x3F };
@@ -385,7 +387,7 @@ void display_cmd(int argc, char **argv)
     }
     else if (!strcmp(a, "light") && argc > 2) {
         backlight = !strcmp(argv[2], "on");
-        if (ok && dtype == D_LCD) { u8 o = backlight ? L_BL : 0; i2c_write((u8)daddr, &o, 1); }
+        if (ok && dtype == D_LCD) { u8 o = backlight ? L_BL : 0; dwr((u8)daddr, &o, 1); }
     }
     else if (!strcmp(a, "on") || !strcmp(a, "off")) {
         int on = !strcmp(a, "on");
@@ -401,11 +403,14 @@ void display_cmd(int argc, char **argv)
     if (!dtype) {
         kprintf("no display found (OLED at 0x3c/0x3d, LCD backpack at 0x27/0x3f)%s\n",
                 cfg_type == D_NONE ? " - type is 'none'" : "");
+        if (cfg_type < 0) kprintf("  an OLED that does not answer (no ACK, e.g. 2.42\" boards with D2 open):\n"
+                                  "  'display type ssd1306' (or sh1106) uses it anyway\n");
         return;
     }
     kprintf("display: %s at 0x%02x, ", tname[dtype], (u32)daddr);
     if (dtype == D_LCD) kprintf("%dx%d characters", cols, rows);
     else kprintf("%dx%d pixels = %dx%d characters, status byte 0x%02x", dw, dh, cols, rows, (u32)st_byte);
-    kprintf(", %s, status screen %s\n", ok ? "working" : "NOT answering", status_on ? "on" : "off");
+    kprintf(", %s, status screen %s\n", noack ? "no ACK: written blind (bit-banged)" : ok ? "working" : "NOT answering",
+            status_on ? "on" : "off");
     if (cfg_type < 0) kprintf("  (found by itself; the size is a guess - 'display size' if rows are missing)\n");
 }
