@@ -21,7 +21,22 @@ static u64 clock_synced_ago(void) { return 10; }
 #include "../src/dcf.c"
 
 static int level_for(int pulse, int p) { return pulse ? p : !p; }
-static void run(int lv, u64 ms) { for (u64 i = 0; i < ms; i++) { now_us += 1000; dcf_sample(lv, now_us); } }
+static int noise_pml;                                    /* per-mille chance per ms to start a 3-35 ms spike */
+static u32 rng = 12345;
+static u32 rnd(void) { rng = rng * 1103515245u + 12345u; return rng >> 16; }
+static int spike_left, spike_lv;
+static void run(int lv, u64 ms)
+{
+    for (u64 i = 0; i < ms; i++) {
+        now_us += 1000;
+        int v = lv;
+        if (noise_pml) {
+            if (!spike_left && (int)(rnd() % 1000) < noise_pml) { spike_left = 3 + (int)(rnd() % 33); spike_lv = !lv; }
+            if (spike_left) { v = spike_lv; spike_left--; }
+        }
+        dcf_sample(v, now_us);
+    }
+}
 
 /* one minute of local time y-mo-d h:mi (cest), polarity p; glitch = add 5 ms spikes */
 static void minute(int y, int mo, int d, int wd, int h, int mi, int cest, int p, int glitch, int drop_sec)
@@ -46,8 +61,7 @@ static void minute(int y, int mo, int d, int wd, int h, int mi, int cest, int p,
 
 static int errors;
 static void check(const char *what, int ok) { printf("  %-50s %s\n", what, ok ? "ok" : "WRONG"); if (!ok) errors++; }
-static void reset_all(void) { stable = -1; pol = invert >= 0 ? (invert ? 0 : 1) : -1; shortc[0] = shortc[1] = 0; gapc[0] = gapc[1] = 0; nbits = 0;
-    last_pulse = pulse_at = edge_at = 0; prev_frame = 0; synced_ok = 0; set_count = 0; set_t = 0; n_frames = n_bad_frames = 0; }
+static void reset_all(void) { dcf_reset_state(); set_count = 0; set_t = 0; n_frames = n_bad_frames = 0; }
 
 int main(void)
 {
@@ -79,6 +93,16 @@ int main(void)
     run(1, 100);
     check("decoded but clock not touched", n_frames >= 2 && set_count == 0 && synced_ok);
     how = 0;
+
+    printf("heavy interference (spikes 3-35 ms, ~3 per second, like the owner's photo):\n");
+    reset_all(); now_us += 5000000; noise_pml = 3; set_count = 0;
+    run(0, 3000);
+    for (int m = 0; m < 5; m++) minute(2026, 11, 22, 7, 9, 10 + m, 0, 1, 0, -1);
+    run(1, 100);
+    noise_pml = 0;
+    printf("  level changes %u, lock %d%%, minutes ok %u bad %u\n", n_edges, lock_q, n_frames, n_bad_frames);
+    want = clock_make(2026, 11, 22, 8, 14, 0);
+    check("time = 08:14 UTC despite the noise", set_count && set_t + 1 >= want && set_t <= want + 1);
 
     printf("noise only:\n");
     reset_all(); now_us += 5000000;

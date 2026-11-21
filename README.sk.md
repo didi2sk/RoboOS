@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.76**
+Aktuálna verzia: **0.77**
 
 ## Podporované dosky
 
@@ -452,6 +452,8 @@ nový ovládač SPI0 `src/spi.c`.
 0.74: prijímač rádiových hodín DCF77 na GPIO pine (`dcf`): čas bez siete.
 0.75: `dcf on` / `dcf off` (pin ostane uložený; s `dcf pon` sa vypne aj prijímač).
 0.76: `dcf` ukazuje, ako dlho trvala každá úroveň (tabuľka + posledných 12 úsekov) - rozlíši signál od šumu.
+0.77: dekodér DCF77 odolný voči šumu: zachytí sekundový rytmus a posudzuje každú sekundu ako celok (špičky už
+neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny aj so zlými minútami medzi nimi.
 
 ### Dátum a čas (NTP)
 
@@ -760,8 +762,9 @@ dcf pull up|down|off pull rezistor na pine (up = pre výstup s otvoreným kolekt
 dcf off / dcf on     vypne / zapne čítanie (uloží sa; pin ostane; PON ide hore = prijímač vypnutý)
 ```
 
-Impulzy číta jadro 1 každú milisekundu, krátke špičky sa odfiltrujú; keď sa dve minúty po sebe dekódujú
-rovnako (všetky paritné bity sedia, rozdiel 1 minúta), nastavia sa hodiny (`time` napíše "from the DCF77
+Pin číta jadro 1 každú milisekundu; dekodér zachytí sekundový rytmus (priemer za ~16 s, `dcf` ukazuje
+kvalitu zachytenia) a posudzuje každú sekundu ako celok, takže krátke špičky mu nevadia. Keď sa dve minúty
+dekódujú a sedia k sebe (všetky paritné bity, rozdiel N minút), nastavia sa hodiny (`time` napíše "from the DCF77
 radio signal") aj batériové hodiny. Ak čas nastavilo NTP za posledné 2 hodiny, DCF77 ho len kontroluje.
 Prvý čas príde po ~2-3 minútach čistého signálu. Anténu drž asi 1 m od Pi, monitorov a nabíjačiek, bokom
 k Frankfurtu; v noci je príjem najlepší. **Na hardvéri zatiaľ neotestované** (PC test `tools/test_dcf.c`:

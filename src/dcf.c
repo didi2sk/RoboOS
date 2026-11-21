@@ -24,23 +24,21 @@ static int pin = -1, pon = -1, pull = 2, invert = -1;   /* invert -1 = auto */
 static volatile int on = 1;                             /* 0.75: dcf off keeps the pin, dcf on resumes */
 static volatile int pol = -1;                           /* the pulse level once known */
 static int stable = -1, raw_prev = -1;
-static u64 pend_at, edge_at, pulse_at, last_pulse;
-static int nbits;
+static u64 pend_at, edge_at;
+static volatile int nbits;
+static int pos_known;                                   /* 0.77: the last minute had 59 bits */
 static u8 bits[60];
-static u32 shortc[2];                                   /* level periods 40-260 ms long, per level */
-static u32 gapc[2];                                     /* level periods 700-1000 / 1700-2000 ms (between pulses) */
 /* 0.76: how long each level lasted - for 'dcf' (a photo shows at once whether there is a 1 s rhythm) */
 static volatile u32 hist[2][7];                         /* <40, 40-140, 141-260, 261-699, 700-1000, 1001-2100, >2100 ms */
 static volatile u16 per_ms[12]; static volatile u8 per_lv[12]; static volatile u32 per_n;
 
 /* what 'dcf' shows */
 static volatile u32 n_edges, n_pulses, n_bad, n_frames, n_bad_frames, n_set;
-static volatile int last_len[8], last_lens;
 static volatile u64 last_time, last_time_at, set_at;   /* last decoded frame (UTC) + when */
 static volatile int last_cest;
 static const char *volatile last_err = "";
 static char bitstr[61];
-static volatile u64 prev_frame;                         /* the frame before, for the 2-in-a-row check */
+static volatile u64 prev_frame, prev_at;                         /* the frame before, for the 2-in-a-row check */
 static volatile int synced_ok;
 
 static int bcd(const u8 *b, int from, int n)
@@ -73,18 +71,20 @@ static void minute_mark(u64 t_us)
     for (int i = 0; i < n && i < 60; i++) bitstr[i] = (char)('0' + bits[i]);
     bitstr[n < 60 ? n : 60] = 0;
     nbits = 0;
+    pos_known = n == 59;
     if (n != 59) {
         if (n) { n_bad_frames++; last_err = n < 59 ? "bits missing (weak signal / noise)" : "too many bits (noise)"; }
-        prev_frame = 0;
         return;
     }
     int cest;
     u64 t = decode(bits, &cest);
-    if (!t) { n_bad_frames++; prev_frame = 0; return; }
+    if (!t) { n_bad_frames++; return; }
     n_frames++;
     last_time = t; last_time_at = t_us; last_cest = cest; last_err = "";
-    int agree = prev_frame && t == prev_frame + 60;
-    prev_frame = t;
+    /* 0.77: two good minutes that fit together (bad ones in between are fine, up to 30 minutes apart) */
+    u64 mins = prev_frame ? (t_us - prev_at + 30000000) / 60000000 : 0;
+    int agree = prev_frame && mins >= 1 && mins <= 30 && t == prev_frame + 60 * mins;
+    prev_frame = t; prev_at = t_us;
     if (!agree) return;
     synced_ok = 1;
     u64 now_t = t + (timer_us() - t_us) / 1000000;
@@ -112,40 +112,116 @@ static void edge(int lv, u64 t)
         int b = len_ms < 40 ? 0 : len_ms <= 140 ? 1 : len_ms <= 260 ? 2 : len_ms < 700 ? 3 : len_ms <= 1000 ? 4 : len_ms <= 2100 ? 5 : 6;
         hist[old][b]++;
         per_ms[per_n % 12] = (u16)(len_ms > 65000 ? 65000 : len_ms); per_lv[per_n % 12] = (u8)old; per_n++;
-        if (len_ms >= 40 && len_ms <= 260 && shortc[old] < 1000000) shortc[old]++;
-        if (((len_ms >= 700 && len_ms <= 1000) || (len_ms >= 1700 && len_ms <= 2000)) && gapc[old] < 1000000) gapc[old]++;
     }
     edge_at_prev_ok = 1;
-    if (invert >= 0) pol = invert ? 0 : 1;
-    else if (pol < 0) {                                 /* pulse level: short periods, the other level ~0.8-0.9 s */
-        u32 s1 = shortc[1] + gapc[0], s0 = shortc[0] + gapc[1];
-        if (s1 >= 6 && s1 >= 3 * s0) pol = 1;
-        else if (s0 >= 6 && s0 >= 3 * s1) pol = 0;
-    }
-    if (pol < 0) return;
-    if (lv == pol) {                                    /* a pulse starts */
-        if (last_pulse) {
-            u64 gap = (t - last_pulse) / 1000;
-            if (gap > 1500 && gap < 2300) minute_mark(t);
-            else if (gap >= 2300) { nbits = 0; prev_frame = 0; last_err = "signal lost"; }
-            else if (gap < 850) { n_bad++; last_err = "pulse too early (noise)"; return; }
-        }
-        pulse_at = t;
-        last_pulse = t;
-    } else if (pulse_at) {                              /* a pulse ends */
-        u64 len = (t - pulse_at) / 1000;
-        pulse_at = 0;
-        n_pulses++;
-        last_len[last_lens++ & 7] = (int)len;
-        int bit = len >= 40 && len <= 140 ? 0 : len >= 150 && len <= 260 ? 1 : -1;
-        if (bit < 0) { n_bad++; last_err = "pulse length wrong"; nbits = 60; return; }   /* spoils this minute */
-        if (nbits < 60) bits[nbits++] = (u8)bit;
-    }
 }
 
-/* the raw pin level at time t: 15 ms glitch filter, then edge() */
+/* ---- 0.77: phase-locked decoder (noise tolerant) ----
+ * The owner's first module, next to the Pi + monitor, gave ~5 level changes a second with many spikes
+ * < 40 ms: an edge-based decoder never saw a clean pulse. But the 1 s rhythm is still there, so:
+ * the pin is averaged in 10 ms slots, every slot of the second (100) keeps a slow average, and the phase
+ * where 0-100 ms differs most from 200-1000 ms is the pulse start (its sign = the pulse level). Then each
+ * second is judged as a whole: pulse level in 0-100 ms most of the time = a pulse (else second 59 = the
+ * minute mark), pulse level in 100-200 ms more than half the time = bit 1. */
+static u64 t_base, slot_now = (u64)-1;
+static u32 slot_hi, slot_n;
+static u8 frac_ring[200];                               /* last 2 s of 10 ms slots: high fraction 0-255 */
+static u32 avg[100];                                    /* slow average per slot of the second (x16) */
+static volatile int phase = -1, lock_q, lock_pol = -1;  /* pulse start slot, quality %, pulse level */
+static u32 seconds_seen;
+static volatile u32 n_secs;
+static volatile u8 sec_w0[8], sec_w1[8]; static volatile u32 sec_n;   /* last seconds: % pulse level */
+static u64 mark_due;                                    /* the minute starts then (after a missing pulse) */
+
+static void find_phase(void)
+{
+    int best_p = -1; long best = 0;
+    for (int p = 0; p < 100; p++) {
+        long a = 0, b = 0;
+        for (int j = 0; j < 10; j++) a += avg[(p + j) % 100];
+        for (int j = 20; j < 100; j++) b += avg[(p + j) % 100];
+        long c = a * 8 - b;                             /* = 80 * (mean 0-100 ms - mean 200-1000 ms) */
+        if (invert == 0 && c < 0) continue;
+        if (invert == 1 && c > 0) continue;
+        if ((c < 0 ? -c : c) > (best < 0 ? -best : best)) { best = c; best_p = p; }
+    }
+    long full = 80L * 16 * 255;                         /* the biggest possible difference */
+    lock_q = (int)((best < 0 ? -best : best) * 100 / full);
+    if (best_p >= 0 && lock_q >= 20 && seconds_seen >= 8) {
+        if (phase >= 0 && best_p != phase && lock_pol == (best > 0)) {
+            int d = (best_p - phase + 100) % 100;       /* small drifts follow; a jump needs a clearly better phase */
+            if (d > 2 && d < 98) { long a = 0, b = 0;
+                for (int j = 0; j < 10; j++) a += avg[(phase + j) % 100];
+                for (int j = 20; j < 100; j++) b += avg[(phase + j) % 100];
+                long cur = a * 8 - b; if (cur < 0) cur = -cur;
+                if ((best < 0 ? -best : best) < cur * 5 / 4) return; }
+        }
+        phase = best_p; lock_pol = best > 0;
+        pol = lock_pol;
+    } else if (lock_q < 10) { phase = -1; lock_pol = -1; if (invert < 0) pol = -1; }
+}
+
+/* the second that started at slot s0 (absolute slot number) is complete enough: judge it */
+static void judge_second(u64 s0)
+{
+    u32 w0 = 0, w1 = 0;
+    for (int j = 0; j < 10; j++) {
+        u32 f0 = frac_ring[(s0 + (u64)j) % 200], f1 = frac_ring[(s0 + 10 + (u64)j) % 200];
+        if (!lock_pol) { f0 = 255 - f0; f1 = 255 - f1; }
+        w0 += f0; w1 += f1;
+    }
+    w0 = w0 * 100 / 2550; w1 = w1 * 100 / 2550;        /* % of the time at the pulse level */
+    sec_w0[sec_n & 7] = (u8)w0; sec_w1[sec_n & 7] = (u8)w1; sec_n++;
+    n_secs++;
+    u64 start_us = t_base + s0 * 10000;
+    /* once a minute had exactly 59 bits we know where second 59 is: a noisy second elsewhere is not
+     * taken for the minute mark, and second 59 is one even if a spike looks a bit like a pulse */
+    int mark = pos_known ? (nbits >= 59 && w0 < 60) : (w0 < 35);
+    if (mark) { mark_due = start_us + 1000000; return; }
+    if (w0 < 35) { n_bad++; last_err = "pulse missing (noise)"; }
+    if (w0 < 60) { n_bad++; last_err = "weak / noisy second"; }
+    n_pulses++;
+    if (nbits < 60) bits[nbits++] = (u8)(w1 > 50);
+    else last_err = "too many bits (noise)";
+}
+
+static void slot_done(u64 slot)
+{
+    u32 f = slot_n ? slot_hi * 255 / slot_n : (slot ? frac_ring[(slot - 1) % 200] : 0);
+    frac_ring[slot % 200] = (u8)f;
+    u32 i = (u32)(slot % 100);
+    avg[i] = avg[i] - avg[i] / 16 + f;                  /* ~16 s memory */
+    if (i == 99) { seconds_seen++; find_phase(); }
+    if (phase >= 0 && slot >= 100 && (u32)((slot + 100 - 25) % 100) == (u32)phase)
+        judge_second(slot - 25);                        /* 250 ms after a pulse start: 0-200 ms are in */
+}
+
+static void phase_sample(int lv, u64 t)
+{
+    if (!t_base) t_base = t;
+    u64 slot = (t - t_base) / 10000;
+    if (slot != slot_now) {
+        if (slot_now != (u64)-1) for (u64 s = slot_now; s < slot; s++) { slot_done(s); slot_hi = slot_n = 0; }
+        slot_now = slot;
+    }
+    slot_hi += (u32)lv; slot_n++;
+    if (mark_due && t >= mark_due) { u64 m = mark_due; mark_due = 0; minute_mark(m); }
+}
+
+static void dcf_reset_state(void)
+{
+    stable = -1; pol = invert >= 0 ? (invert ? 0 : 1) : -1;
+    nbits = 0; per_n = 0; edge_at = 0; prev_frame = 0; synced_ok = 0;
+    for (int i = 0; i < 7; i++) hist[0][i] = hist[1][i] = 0;
+    t_base = 0; slot_now = (u64)-1; slot_hi = slot_n = 0; seconds_seen = 0; mark_due = 0;
+    phase = -1; lock_pol = -1; lock_q = 0; pos_known = 0;
+    for (int i = 0; i < 100; i++) avg[i] = 0;
+}
+
+/* the raw pin level at time t: the phase decoder + (for the statistics) a 15 ms glitch filter, then edge() */
 static void dcf_sample(int lv, u64 t)
 {
+    phase_sample(lv, t);
     if (stable < 0) { stable = lv; edge_at = 0; return; }
     if (lv == stable) { pend_at = 0; return; }
     if (!pend_at || lv != raw_prev) pend_at = t;
@@ -170,9 +246,7 @@ static void setup_pins(void)
     gpio_func(pin, 0);
     gpio_pull(pin, pull);
     if (pon >= 0) { gpio_func(pon, 1); gpio_set(pon, on ? 0 : 1); }   /* PON high = receiver powered down */
-    stable = -1; pol = invert >= 0 ? (invert ? 0 : 1) : -1;
-    shortc[0] = shortc[1] = 0; gapc[0] = gapc[1] = 0; nbits = 0; per_n = 0; edge_at = 0;
-    for (int i = 0; i < 7; i++) hist[0][i] = hist[1][i] = 0; last_pulse = pulse_at = 0; prev_frame = 0; synced_ok = 0;
+    dcf_reset_state();
 }
 
 static void save(void)
@@ -230,9 +304,12 @@ static void status(void)
     u64 now = timer_us();
     kprintf("DCF77 on GPIO%d (pull %s", pin, pull == 2 ? "up" : pull == 1 ? "down" : "off");
     if (pon >= 0) kprintf(", PON GPIO%d low", pon);
-    kprintf("), level now %d, pulses %s (%s)\n", gpio_get(pin) ? 1 : 0,
-            pol < 0 ? "not found yet" : pol ? "HIGH" : "LOW", invert < 0 ? "auto" : "set by hand");
-    kprintf("  level changes %u, pulses %u, bad %u, minutes ok %u / bad %u, clock set %u times\n",
+    kprintf("), level now %d\n", gpio_get(pin) ? 1 : 0);
+    if (phase >= 0) kprintf("  1 s rhythm LOCKED: quality %d%%, pulses %s (%s), seconds judged %u\n",
+                            lock_q, lock_pol ? "HIGH" : "LOW", invert < 0 ? "auto" : "set by hand", n_secs);
+    else kprintf("  1 s rhythm not found yet (quality %d%%, needs 20%% after 8 s)%s\n", lock_q,
+                 lock_q < 5 ? " - no signal or only noise" : "");
+    kprintf("  level changes %u, seconds with a pulse %u (noisy %u), minutes ok %u / bad %u, clock set %u times\n",
             n_edges, n_pulses, n_bad, n_frames, n_bad_frames, n_set);
     kprintf("  how long each level lasted (ms):  <40 40-140 141-260 261-699 700-1000 1001-2100 >2100\n");
     for (int l = 1; l >= 0; l--) {
@@ -245,11 +322,13 @@ static void status(void)
     { u32 n = per_n, k2 = n < 12 ? n : 12;
       for (u32 i = 0; i < k2; i++) { u32 j = (n - k2 + i) % 12; kprintf(" %c%u", per_lv[j] ? 'H' : 'L', (u32)per_ms[j]); }
       kprintf(k2 ? "\n" : " none\n"); }
-    kprintf("  last pulses (ms):");
-    int k = last_lens < 8 ? last_lens : 8;
-    for (int i = 0; i < k; i++) kprintf(" %d", last_len[(last_lens - k + i) & 7]);
-    kprintf(k ? "   (100 = bit 0, 200 = bit 1)\n" : " none - no signal? check the pin, power, antenna\n");
-    if (last_pulse) kprintf("  last pulse %u ms ago, bits this minute: %d\n", (u32)((now - last_pulse) / 1000), nbits > 59 ? 0 : nbits);
+    if (sec_n) {
+        u32 k = sec_n < 8 ? sec_n : 8;
+        kprintf("  last seconds (%% at the pulse level in 0-100 / 100-200 ms):");
+        for (u32 i = 0; i < k; i++) { u32 j = (sec_n - k + i) & 7; kprintf(" %u/%u", (u32)sec_w0[j], (u32)sec_w1[j]); }
+        kprintf("\n  (a pulse = first > 60; second > 50 = bit 1; no pulse = the minute mark)\n");
+    }
+    kprintf("  bits this minute: %d\n", nbits > 59 ? 59 : nbits);
     if (bitstr[0]) kprintf("  last minute: %s\n", bitstr);
     if (last_time) {
         char b[32];
