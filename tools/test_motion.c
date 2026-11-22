@@ -20,7 +20,7 @@ static int i2c_read_reg(u8 a, u8 r, void *bv, int n)
     u8 *b = bv;
     if (a != 0x68) return -1;
     if (r == 0x75) { b[0] = 0x68; return 0; }
-    if (r == 0x6B) { b[0] = woke ? 0x01 : 0x40; return 0; }
+    if (r == 0x6B) { b[0] = woke ? 0x00 : 0x40; return 0; }
     if (r == 0x3B && n == 14 && !woke) { memset(b, 0, 14); return 0; }   /* asleep: all 0 */
     if (r == 0x3B && n == 14) {
         short v[7] = { reg_a[0], reg_a[1], reg_a[2], reg_t, reg_g[0], reg_g[1], reg_g[2] };
@@ -30,7 +30,7 @@ static int i2c_read_reg(u8 a, u8 r, void *bv, int n)
     return -1;
 }
 static int sleepy;                                         /* the chip ignores the first wake-up writes */
-static int i2c_write_reg(u8 a, u8 r, const void *b, int n) { if (a != 0x68) return -1; if (r == 0x6B && *(const u8 *)b == 1) { if (sleepy) sleepy--; else woke = 1; } return 0; }
+static int i2c_write_reg(u8 a, u8 r, const void *b, int n) { if (a != 0x68) return -1; if (r == 0x6B && *(const u8 *)b == 0) { if (sleepy) sleepy--; else woke = 1; } return 0; }
 #include "../src/motion.c"
 static int errors; static void check(const char *w, int ok) { printf("  %-50s %s\n", w, ok ? "ok" : "WRONG"); if (!ok) errors++; }
 static void tilt(double pitch, double roll)               /* gravity for this pitch / roll, 16384 = 1 g */

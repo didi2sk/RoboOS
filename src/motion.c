@@ -3,7 +3,7 @@
  *
  * 3-axis accelerometer (+-2 g, 16384 LSB/g), 3-axis gyroscope (+-250 deg/s, 131 LSB/(deg/s)) and a die
  * thermometer. Registers: WHO_AM_I 0x75 (0x68 = 6050, 0x70 = 6500, 0x71 / 0x73 = 9250 / 9255),
- * PWR_MGMT_1 0x6B (0x01 = awake, PLL clock), SMPLRT_DIV 0x19, CONFIG 0x1A (DLPF), GYRO_CONFIG 0x1B,
+ * PWR_MGMT_1 0x6B (0x00 = awake, internal clock), SMPLRT_DIV 0x19, CONFIG 0x1A (DLPF), GYRO_CONFIG 0x1B,
  * ACCEL_CONFIG 0x1C, data 0x3B..0x48 = ax ay az temp gx gy gz (big endian, signed).
  * Tilt (pitch / roll) from gravity with an integer CORDIC atan2 - the kernel has no floating point.
  * motion_poll (core 0, con_trygetc) reads it every 50 ms: a shake (|a| off 1 g by more than the threshold
@@ -58,14 +58,15 @@ static int wr(u8 reg, u8 v) { return i2c_write_reg((u8)addr, reg, &v, 1); }
 static u8 pwr;                                          /* PWR_MGMT_1 read back (0x40 = asleep) */
 static u64 next_wake;
 
-/* 0.84: wake it up and check (owner's GY-521: all data 0 = still in sleep after the old reset + one write) */
+/* 0.84: wake it up and check. 0.86: stay on the INTERNAL 8 MHz oscillator (0x00, like the Arduino examples):
+ * the owner's GY-521 was awake with the gyro PLL clock (0x01) but sampled nothing - all data 0 - the gyro
+ * clock of cheap / fake chips does not start. */
 static int wake(void)
 {
     for (int t = 0; t < 3; t++) {
         wr(0x6B, 0x00);                                 /* sleep bit off, internal clock */
         delay_us(50000);
-        wr(0x6B, 0x01);                                 /* gyro PLL clock */
-        delay_us(10000);
+        wr(0x6C, 0x00);                                 /* no axis in standby */
         if (i2c_read_reg((u8)addr, 0x6B, &pwr, 1) == 0 && !(pwr & 0x40)) return 1;
     }
     return 0;
