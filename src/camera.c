@@ -48,7 +48,7 @@ static u32 last_s;
 #define UNI_GATE  (MMIO_BASE + 0x802004)
 #define CM_CAM1CTL (MMIO_BASE + 0x101048)
 #define CM_CAM1DIV (MMIO_BASE + 0x10104C)
-static int W = 1296, H = 976;                          /* 0.94: the firmware's own 1296x976 mode by default */
+static int W = 1296, H = 972;                          /* 0.99: the Linux 1296x972 mode by default (works under Linux on the same board) */
 #define FRAME_BYTES ((u32)(W * H * 2))
 #define BUF_A 0x13000000UL
 #define BUF_B 0x13400000UL
@@ -219,7 +219,7 @@ static const struct rv fwmode[] = {
     {0x4000,0x09},{0x4837,0x16},{0x4800,0x24},{0x3503,0x03},{0x3820,0x41},{0x3821,0x03},{0x380E,0x05},
     {0x380F,0x9B},{0x350A,0x00},{0x350B,0x10},{0x3500,0x00},{0x3501,0x1A},{0x3502,0xF0},{0x3212,0xA0},
 };
-static int vga_mode = 2, gate_val = 0x155;           /* vga_mode: 2 = firmware 1296x976, 0 = Linux 1296x972, 1 = 640x480 */                /* 0.93: gate 0x155 as the firmware writes it (Linux: 0x15) */
+static int vga_mode = 0, gate_val = 0x15;             /* vga_mode: 2 = firmware 1296x976, 0 = Linux 1296x972, 1 = 640x480 */                /* 0.93: gate 0x155 as the firmware writes it (Linux: 0x15) */
 static const struct rv vga[] = {
     {0x3036,0x46},{0x3821,0x01},{0x3820,0x41},{0x3612,0x59},{0x3618,0x00},{0x3814,0x35},{0x3815,0x35},
     {0x3708,0x64},{0x3709,0x52},{0x3800,0x00},{0x3801,0x10},{0x3802,0x00},{0x3803,0x00},{0x3804,0x0a},
@@ -346,7 +346,7 @@ static void print_sta(u32 s)
     for (int i = 0; i < 25; i++) if (s & (1u << i)) kprintf(" %s", sta_names[i]);
 }
 
-static int sensor_first = 1;                            /* 0.95: start order, `cam order sensor|rx` */
+static int sensor_first = 0;   /* 0.99: Linux order (receiver first) by default - Linux works on the same board */                            /* 0.95: start order, `cam order sensor|rx` */
 static int trace = 1;                                    /* 0.90: print each step (a freeze shows where) */
 #define STEP(...) do { if (trace) { kprintf(__VA_ARGS__); delay_us(30000); } } while (0)
 
@@ -403,19 +403,21 @@ static u16 *next_frame(u32 ms)
     int started = 0;
     while (timer_us() < end) {
         u32 is = ur(0x104), st = ur(0x004);
-        if (st) { sta_or |= st; uw(0x004, st); }
+        if (st) sta_or |= st;
+        if (st & 0x1B6FCu) uw(0x004, st & 0x1B6FCu);    /* 0.99: clear only error/event bits - writing SYN/CS back nonstop (polling) reset the lane sync */
         if (is) uw(0x104, is);
         if (is & 1) {                                    /* frame start: this frame goes to cur_buf, queue the other */
             n_fs++; started = 1;
             set_buf(cur_buf ? BUF_A : BUF_B);
         }
-        if ((is & 2) && started) {                       /* frame end */
+        if (((is & 2) || (st & (1u << 15))) && started) {   /* frame end (FEI, or PI0 = the FE packet captured, like Linux) */
             n_fe++;
             u64 done = cur_buf ? BUF_B : BUF_A;
             cur_buf ^= 1;
             dcache_clean_inval((void *)done, FRAME_BYTES);
             return (u16 *)done;
         }
+        delay_us(20);                                    /* do not hammer the receiver's registers */
     }
     return 0;
 }
@@ -615,13 +617,13 @@ void camera_cmd(int argc, char **argv)
         return;
     }
     kprintf("usage: cam                 power the camera, find the sensor (OV5647 / IMX219)\n"
-            "       cam live            live picture on HDMI (640x480 sensor mode), any key stops\n"
+            "       cam live            live picture on HDMI, any key stops\n"
             "       cam snap            one picture, any key\n"
             "       cam bars            the sensor's test colour bars (checks the link without the lens)\n"
             "       cam dump            receiver registers while streaming (compare with Linux: tools/camdump.py)\n"
-            "       cam mode fw|1296|640 sensor mode (default fw = the Pi firmware's 1296x976 list)\n"
-            "       cam gate 0x155|0x15 lane clock gate (default 0x155 like the Pi firmware)\n"
-            "       cam order sensor|rx start order (default sensor first, like rsta2/libcamera)\n"
+            "       cam mode 1296|fw|640 sensor mode (default 1296 = the Linux 1296x972 mode)\n"
+            "       cam gate 0x15|0x155 lane clock gate (default 0x15 like Linux)\n"
+            "       cam order sensor|rx start order (default rx = receiver first, like Linux)\n"
             "       cam sregs           sensor registers while streaming (compare with Linux: tools/ov5647regs.sh)\n"
             "       cam clock cont|ncont  MIPI clock mode (test; default ncont)\n"
             "       cam reg <a> [v]     read / write a sensor register (16-bit address)\n"
