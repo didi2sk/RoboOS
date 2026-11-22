@@ -210,6 +210,7 @@ static const char *guess(u8 a)
     switch (a) {
     case 0x76: case 0x77: return "BME280 / BMP280 / BMP180 (temperature, humidity, pressure)";
     case 0x38: return "AHT20 / AHT10 (humidity, temperature)";
+    case 0x64: return "DFRobot DF2301Q offline voice recognition";
     case 0x48: case 0x49: case 0x4A: case 0x4B: return "ADS1115 (ADC) or a TMP102 / LM75 thermometer";
     case 0x68: return "DS3231 / DS1307 (clock) or an MPU6050";
     case 0x57: return "AT24C32 EEPROM (on DS3231 boards)";

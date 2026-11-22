@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.79**
+Aktuálna verzia: **0.80**
 
 ## Podporované dosky
 
@@ -457,6 +457,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.78: DCF77 so slabým / zarušeným signálom: začiatok minúty sa nájde sám a bity sa sčítavajú cez viac minút
 (hodina a dátum ostávajú, minúta rastie o 1), takže čas príde, aj keď má každá minúta chyby.
 0.79: senzor vlhkosti a teploty AHT20 / AHT10 na 0x38 (napr. doska AHT20 + BMP280) v `sensors`, MQTT, API, BASIC.
+0.80: hlasové príkazy offline s modulom DFRobot DF2301Q (`voice`): počutá veta spustí príkaz shellu.
 
 ### Dátum a čas (NTP)
 
@@ -774,6 +775,28 @@ Prvý čas príde po ~2-3 minútach čistého signálu. Anténu drž asi 1 m od 
 k Frankfurtu; v noci je príjem najlepší. **Na hardvéri zatiaľ neotestované** (PC test `tools/test_dcf.c`:
 SEČ/SELČ, obe polarity, špičky, stratený impulz, šum).
 
+### Hlasové príkazy offline (DFRobot DF2301Q, 0.80)
+
+Modul DFRobot Gravity offline voice recognition (DF2301Q, SKU SEN0539) rozpoznáva reč sám, bez siete:
+budiace slovo ("Hello robot" alebo vlastné naučené), 121 pevných anglických príkazov a až 17 naučených
+(učia sa priamo na module). Prepínač na module daj na **I2C** a zapoj ho na I2C piny (VCC 3,3 V pin 1,
+GND pin 6, SDA pin 3, SCL pin 5); adresa je 0x64. RoboOS číta číslo každého rozpoznaného príkazu
+a spustí príkaz shellu, ktorý mu priradíš:
+
+```
+voice                      stav, posledné počuté číslo, akcie
+voice add 5 gpio 17 1      naučený príkaz 5 zapne GPIO17
+voice add 6 gpio 17 0
+voice add 7 radio off      hocijaký príkaz shellu
+voice del 6
+voice volume 1-7 | mute on|off | wake <sekundy> | play <číslo>
+```
+
+Povedz budiace slovo a potom príkaz: `[VOICE] 5 -> gpio 17 1` a príkaz sa vykoná. Číslo bez akcie sa vypíše,
+takže zistíš číslo každej vety. Akcie sa ukladajú do `/VOICE.TXT` (`<číslo> <príkaz>` na riadok). Spúšťajú sa
+len pri výzve shellu (nie keď beží program alebo BASIC; príkaz počutý vtedy čaká až 10 s). **Na hardvéri
+zatiaľ neotestované** (PC test `tools/test_voice.c` so simulovaným modulom).
+
 ### MQTT
 
 MQTT je bežný spôsob, ako IoT zariadenia hovoria so serverom (Home Assistant, Node-RED,
@@ -958,6 +981,7 @@ Systém komunikuje po anglicky.
 | `sensors [scan]`, `i2c scan\|read\|write` | senzory na I2C (BME280, ADS1115, DS3231) |
 | `ai <otázka>\|@príkaz ..\|key\|model` | otázka pre Claude (vlastný API kľúč Anthropic) |
 | `radio [MHz\|up\|down\|scan\|vol n\|off]` | FM rádio (modul RDA5807M na I2C) |
+| `voice [add id cmd\|del id\|volume\|mute\|wake]` | hlasové príkazy offline (DFRobot DF2301Q) |
 | `dcf [on\|off\|pin n\|invert\|pull\|pon]` | prijímač rádiových hodín DCF77 na GPIO |
 | `display [scan\|text n ..\|clear\|status on\|off\|size\|type\|addr\|hat\|keys]` | I2C displej OLED / LCD, Waveshare SPI OLED HAT |
 | `mqtt [broker\|user\|pub\|interval\|off]` | MQTT klient (IoT) |

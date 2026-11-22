@@ -258,6 +258,11 @@ int  display_cols(void);
 void display_cmd(int argc, char **argv);
 void spi_init(u32 div);              /* spi.c - SPI0 on GPIO8-11 */
 int  spi_write(const void *buf, int n);
+/* voice.c - DFRobot DF2301Q offline voice module (I2C 0x64) */
+void voice_boot(void);
+void voice_poll(void);               /* core 0, con_trygetc: reads the last command id */
+void voice_cmd(int argc, char **argv);
+void voice_at_prompt(int on, void (*redraw)(void));
 /* dcf.c - DCF77 time signal receiver on a GPIO pin */
 void dcf_boot(void);                 /* core 0 at boot: /DCF.TXT */
 void dcf_poll(void);                 /* core 1 (io_poll_all): samples the pin */
