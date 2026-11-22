@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.78**
+Aktuálna verzia: **0.79**
 
 ## Podporované dosky
 
@@ -456,6 +456,7 @@ nový ovládač SPI0 `src/spi.c`.
 neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny aj so zlými minútami medzi nimi.
 0.78: DCF77 so slabým / zarušeným signálom: začiatok minúty sa nájde sám a bity sa sčítavajú cez viac minút
 (hodina a dátum ostávajú, minúta rastie o 1), takže čas príde, aj keď má každá minúta chyby.
+0.79: senzor vlhkosti a teploty AHT20 / AHT10 na 0x38 (napr. doska AHT20 + BMP280) v `sensors`, MQTT, API, BASIC.
 
 ### Dátum a čas (NTP)
 
@@ -638,6 +639,7 @@ Pri štarte RoboOS tieto moduly nájde sám (`sensors scan` hľadá znova):
 |---|---|---|
 | BME280 (BMP280) | 0x76 / 0x77 | teplota, vlhkosť (len BME280), tlak |
 | BMP180 (BMP085) | 0x77 | teplota, tlak (0.73) |
+| AHT20 (AHT10) | 0x38 | vlhkosť, teplota (0.79; doska AHT20 + BMP280 dá vlhkosť + tlak) |
 | ADS1115 | 0x48-0x4B | 4 analógové vstupy A0-A3, 0-4,096 V v mV (neprekročiť 3,3 V!) |
 | DS3231 (DS1307) | 0x68 | hodiny s batériou: čas je známy po štarte aj bez siete |
 
