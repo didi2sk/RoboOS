@@ -2,6 +2,7 @@
  * I2C sensors found by themselves at boot (and on 'sensors scan'):
  *   BME280 / BMP280 at 0x76 / 0x77   temperature, pressure (+ humidity on the BME280)
  *   BMP180 / BMP085 at 0x77          temperature, pressure (0.73: chip id 0x55, older Bosch chip)
+ *   AHT20 / AHT10   at 0x38          humidity + temperature (0.79; often on one board with a BMP280)
  *   ADS1115         at 0x48 - 0x4B   4 analog inputs, +-4.096 V range (0.125 mV steps)
  *   DS3231 / DS1307 at 0x68          battery clock: the time at boot without a network,
  *                                    set again every time NTP answers
@@ -11,7 +12,50 @@
 #include "bme280_math.h"
 #include "bmp180_math.h"
 
-static int bme_addr, bme_hum, bmp180, ads_addr, rtc_addr, probed;
+static int bme_addr, bme_hum, bmp180, ads_addr, rtc_addr, aht, probed;
+static int aht_t, aht_h;                                  /* last AHT20 values (0.01 C, 0.01 %) */
+static u64 aht_at;                                        /* when measured (a measurement takes 80 ms) */
+
+/* ---- AHT20 / AHT10 (0x38): status bit 3 = calibrated (else 0xBE 08 00), measure = 0xAC 33 00, ~80 ms,
+ * then 7 bytes: status (bit 7 busy), 20 bit humidity, 20 bit temperature, CRC-8 (poly 0x31, init 0xFF) */
+static u8 aht_crc(const u8 *d, int n)
+{
+    u8 c = 0xFF;
+    for (int i = 0; i < n; i++) { c ^= d[i]; for (int b = 0; b < 8; b++) c = (u8)(c & 0x80 ? (c << 1) ^ 0x31 : c << 1); }
+    return c;
+}
+
+static int aht_setup(void)
+{
+    u8 st = 0;
+    if (i2c_read(0x38, &st, 1)) return 0;
+    if (!(st & 0x08)) {
+        static const u8 init[3] = { 0xBE, 0x08, 0x00 };   /* AHT20; an AHT10 wants 0xE1 */
+        static const u8 init10[3] = { 0xE1, 0x08, 0x00 };
+        if (i2c_write(0x38, init, 3)) i2c_write(0x38, init10, 3);
+        delay_us(10000);
+    }
+    return 1;
+}
+
+static int aht_measure(void)
+{
+    if (aht_at && timer_us() - aht_at < 2000000) return 0;   /* fresh enough: keep the last values */
+    static const u8 cmd[3] = { 0xAC, 0x33, 0x00 };
+    if (i2c_write(0x38, cmd, 3)) return -1;
+    delay_us(80000);
+    u8 d[7] = { 0x80 };
+    u64 end = timer_us() + 100000;
+    while (!i2c_read(0x38, d, 7) && (d[0] & 0x80) && timer_us() < end) delay_us(5000);
+    if (d[0] & 0x80) return -1;
+    if (aht_crc(d, 6) != d[6]) return -1;
+    u32 rh = (u32)d[1] << 12 | (u32)d[2] << 4 | d[3] >> 4;
+    u32 rt = ((u32)d[3] & 15) << 16 | (u32)d[4] << 8 | d[5];
+    aht_h = (int)(((u64)rh * 10000) >> 20);
+    aht_t = (int)(((u64)rt * 20000) >> 20) - 5000;
+    aht_at = timer_us();
+    return 0;
+}
 static struct bme280_cal cal;
 static struct bmp180_cal cal180;
 #define BMP180_OSS 1                                       /* 2 samples, 7.5 ms per pressure reading */
@@ -76,9 +120,10 @@ static int bme_setup(u8 a)
 void sensors_probe(void)
 {
     probed = 1;
-    bme_addr = ads_addr = rtc_addr = 0; bmp180 = bme_hum = 0;
+    bme_addr = ads_addr = rtc_addr = 0; bmp180 = bme_hum = 0; aht = 0; aht_at = 0;
     i2c_init();
     for (u8 a = 0x76; a <= 0x77 && !bme_addr; a++) if (i2c_probe(a) && bme_setup(a)) bme_addr = a;
+    aht = i2c_probe(0x38) && aht_setup();
     for (u8 a = 0x48; a <= 0x4B && !ads_addr; a++) {
         u8 c[2];
         if (i2c_read_reg(a, 0x01, c, 2) == 0 && (c[0] & 0x7F) == 0x05 && c[1] == 0x83) ads_addr = a;   /* reset value 0x8583 */
@@ -91,7 +136,7 @@ void sensors_probe(void)
     }
 }
 
-int sensors_have(void) { if (!probed) sensors_probe(); return (bme_addr != 0) | (bme_hum ? 2 : 0) | (ads_addr ? 4 : 0) | (rtc_addr ? 8 : 0); }
+int sensors_have(void) { if (!probed) sensors_probe(); return (bme_addr != 0 || aht) | (bme_hum || aht ? 2 : 0) | (ads_addr ? 4 : 0) | (rtc_addr ? 8 : 0); }
 
 int sensors_read(struct sensor_values *v)
 {
@@ -126,6 +171,10 @@ int sensors_read(struct sensor_values *v)
                 v->have |= SV_HUM;
             }
         }
+    }
+    if (aht && aht_measure() == 0 && aht_at) {
+        if (!(v->have & SV_HUM)) { v->hum_c100 = aht_h; v->have |= SV_HUM; }   /* a BME280 keeps its own */
+        if (!(v->have & SV_TEMP)) { v->temp_c100 = aht_t; v->have |= SV_TEMP; }
     }
     if (ads_addr) {
         for (int ch = 0; ch < 4; ch++) {
@@ -210,7 +259,8 @@ void sensors_cmd(int argc, char **argv)
     sensors_read(&v);
     kprintf("sensors (I2C on GPIO2/3; 'i2c scan' lists every device):\n");
     if (v.have & SV_CPU) put_c100("CPU", v.cpu_mc / 10, "C");
-    if (v.have & SV_TEMP) put_c100(bmp180 ? "BMP180 temp" : bme_hum ? "BME280 temp" : "BMP280 temp", v.temp_c100, "C");
+    if ((v.have & SV_TEMP) && bme_addr) put_c100(bmp180 ? "BMP180 temp" : bme_hum ? "BME280 temp" : "BMP280 temp", v.temp_c100, "C");
+    if (aht && aht_at) put_c100("AHT20 temp", aht_t, "C");
     if (v.have & SV_HUM) put_c100("humidity", v.hum_c100, "%");
     if (v.have & SV_PRESS) kprintf("  %-12s %d.%02d hPa\n", "pressure", v.press_pa / 100, v.press_pa % 100);
     if (v.have & SV_AIN)
@@ -221,5 +271,6 @@ void sensors_cmd(int argc, char **argv)
         if (t) { clock_format(b, t, 0); kprintf("  %-12s %s\n", "RTC", b); }
         else kprintf("  %-12s found at 0x68, not set yet (NTP or 'time set' sets it)\n", "RTC");
     }
-    if (!bme_addr && !ads_addr && !rtc_addr) kprintf("  no BME280 / BMP180 / ADS1115 / DS3231 found\n");
+    if (aht && !aht_at) kprintf("  AHT20 at 0x38: no answer to the measurement\n");
+    if (!bme_addr && !ads_addr && !rtc_addr && !aht) kprintf("  no BME280 / BMP180 / AHT20 / ADS1115 / DS3231 found\n");
 }

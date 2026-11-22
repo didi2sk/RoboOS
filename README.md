@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.78**
+Current version: **0.79**
 
 ## Supported boards
 
@@ -460,6 +460,7 @@ new SPI0 driver `src/spi.c`.
 longer break pulses); two good minutes that fit together set the clock even with bad minutes in between.
 0.78: DCF77 with a weak / noisy signal: the minute start is found by itself and the bits are summed over
 several minutes (hour and date stay, the minute goes +1), so the time comes even when every minute has errors.
+0.79: AHT20 / AHT10 humidity + temperature sensor at 0x38 (e.g. the AHT20 + BMP280 board) in `sensors`, MQTT, API, BASIC.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -646,6 +647,7 @@ on pin 6. At boot RoboOS looks for these modules by itself (`sensors scan` looks
 |---|---|---|
 | BME280 (BMP280) | 0x76 / 0x77 | temperature, humidity (BME280 only), pressure |
 | BMP180 (BMP085) | 0x77 | temperature, pressure (0.73) |
+| AHT20 (AHT10) | 0x38 | humidity, temperature (0.79; the AHT20 + BMP280 board gives humidity + pressure) |
 | ADS1115 | 0x48-0x4B | 4 analog inputs A0-A3, 0-4.096 V in mV (do not exceed 3.3 V!) |
 | DS3231 (DS1307) | 0x68 | battery clock: the time is known at boot even without a network |
 

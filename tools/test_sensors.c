@@ -27,7 +27,27 @@ static int clock_format(char *b, u64 t, int iso) { b[0] = 0; return 0; }
 
 static const u16 calw[11] = { 408, (u16)-72, (u16)-14383, 32741, 32757, 23153, 6190, 4, (u16)-32768, (u16)-8711, 2868 };
 static u8 f4, ready_at_set; static u64 ready_at; static int starts_t, starts_p, early_reads;
-static int i2c_probe(u8 a) { return a == 0x77; }
+/* fake AHT20 at 0x38: 50.00 % (raw 0x80000), 25.00 C (raw 0x60000), CRC-8 0x31 */
+static int aht_cmds, aht_busy_until_set; static u64 aht_ready;
+static u8 crc8(const u8 *d, int n) { u8 c = 0xFF; for (int i = 0; i < n; i++) { c ^= d[i]; for (int b = 0; b < 8; b++) c = (u8)(c & 0x80 ? (c << 1) ^ 0x31 : c << 1); } return c; }
+static int i2c_write(u8 a, const void *bv, int n)
+{
+    const u8 *b = bv;
+    if (a != 0x38 || n != 3) return -1;
+    if (b[0] == 0xAC) { aht_cmds++; aht_ready = now_us + 75000; }
+    return 0;
+}
+static int i2c_read(u8 a, void *bv, int n)
+{
+    u8 *d = bv;
+    if (a != 0x38) return -1;
+    u32 rh = 0x80000, rt = 0x60000;
+    u8 r[7] = { (u8)(0x18 | (now_us < aht_ready ? 0x80 : 0)), (u8)(rh >> 12), (u8)(rh >> 4), (u8)((rh & 15) << 4 | rt >> 16), (u8)(rt >> 8), (u8)rt, 0 };
+    r[6] = crc8(r, 6);
+    for (int i = 0; i < n && i < 7; i++) d[i] = r[i];
+    return 0;
+}
+static int i2c_probe(u8 a) { return a == 0x77 || a == 0x38; }
 static int i2c_read_reg(u8 a, u8 r, void *bv, int n)
 {
     u8 *b = bv;
@@ -65,11 +85,15 @@ int main(void)
     if (!(v.have & SV_TEMP) || v.temp_c100 != 1500) { printf("temperature WRONG\n"); errors++; }
     /* oss 1 with UP doubled = same physical pressure as the datasheet example (+- rounding) */
     if (!(v.have & SV_PRESS) || v.press_pa < 69950 || v.press_pa > 69980) { printf("pressure WRONG\n"); errors++; }
-    if (v.have & SV_HUM) { printf("humidity should not be there\n"); errors++; }
     if (starts_t != 1 || starts_p != 1) { printf("starts %d/%d WRONG\n", starts_t, starts_p); errors++; }
     if (early_reads) { printf("read before the conversion ended\n"); errors++; }
+    if (v.hum_c100 != 5000 || !(v.have & SV_HUM)) { printf("AHT20 humidity WRONG (%d)\n", v.hum_c100); errors++; }
+    else printf("AHT20 humidity %d.%02d %%\n", v.hum_c100 / 100, v.hum_c100 % 100);
+    if (aht_t != 2500) { printf("AHT20 temperature WRONG (%d)\n", aht_t); errors++; }
+    sensors_read(&v);
+    if (aht_cmds != 1) { printf("AHT20 measured again within 2 s (%d)\n", aht_cmds); errors++; }
     printf("sensor_value(1) = %d, (3) = %d, (2) = %d\n", sensor_value(1), sensor_value(3), sensor_value(2));
-    if (sensor_value(2) != SENSOR_NONE) errors++;
+    if (sensor_value(2) != 5000) errors++;
     sensors_cmd(1, (char *[]){ "sensors" });
     printf(errors ? "\n%d ERRORS\n" : "\nall OK\n", errors);
     return errors != 0;
