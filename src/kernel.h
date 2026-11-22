@@ -260,6 +260,18 @@ int  camera_jpeg_take(u32 ticket, const u8 **p, u32 *len);   /* 1 got (busy), 0 
 void camera_jpeg_release(const u8 *p);
 int  camera_web_set(const char *key, const char *val);       /* core 1: 0 ok, -1 bad value, -2 unknown, -3 not ready */
 int  camera_web_json(char *b, int max);
+void camera_mqtt_request(void);               /* core 1: MQTT set/camera -> core 0 sends a photo */
+int  camera_take(int save, int send, char *name_out);   /* core 0: 0 ok, < 0 camera_take_error() */
+const char *camera_take_error(int r);
+int  mqtt_send_photo(const u8 *jpg, u32 len);  /* core 0: JPEG -> <base>/camera retained */
+int  mqtt_photo_busy(void);
+void mqtt_rediscover(void);                    /* Home Assistant discovery of camera / doorbell again */
+/* doorbell.c - GPIO button: sound, photo, MQTT event (0.105) */
+void doorbell_boot(void);
+void doorbell_poll(void);                      /* core 0, con_trygetc */
+int  doorbell_enabled(void);
+int  doorbell_radar(void);                     /* the radar GPIO, 0 = none */
+void doorbell_cmd(int argc, char **argv);
 extern const char camera_page[];               /* campage.c: GET /camera */
 
 /* thermal.c - AMG8833 Grid-EYE 8x8 thermal camera at I2C 0x69 */

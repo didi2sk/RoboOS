@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.104**
+Current version: **0.105**
 
 ## Supported boards
 
@@ -488,6 +488,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.102: camera colours: the pixel colour order follows the sensor mirroring (GBRG in the default 1296 mode, like Linux); `cam bayer bggr|gbrg|grbg|rggb` if the colours look wrong.
 0.103: camera photos as JPEG (`cam snap [file]`, s / space in `cam live`; own encoder `src/jpeg.c`) + picture settings saved in /CAM.TXT: exposure, gain, ev, white balance, brightness, contrast, saturation, hue, gamma, flip, JPEG quality (`cam set`).
 0.104: camera web page `/camera`: live preview + sliders for every setting + save photo; API `GET|POST /api/camera`, `GET /api/camera.jpg`; `cam test on` = test picture without a camera.
+0.105: video doorbell (`doorbell`: GPIO button -> photo on the card + to Home Assistant over MQTT, gong / WAV, ring event) and door radar (photo when someone comes); MQTT camera, Take photo button, doorbell event, radar sensor via discovery; `cam send`.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -935,6 +936,46 @@ curl -H "Authorization: Bearer <secret>" http://<board>/api/camera.jpg -o foto.j
 ```
 
 `cam test on` gives a made-up colour-bar picture instead of the camera (to try the page without one).
+
+### Video doorbell + door radar (0.105)
+
+A button on a GPIO pin (default GPIO6 = the button of the THT shield, to GND) rings: the camera takes a photo
+(saved in `/CAM/<date>/`), it goes to Home Assistant over MQTT, a gong (or a WAV) plays, then the ring event
+is sent - after the photo, so a notification shows the new picture. Without network it still rings and the
+photo stays on the card. A presence radar or PIR (RCWL-0516, LD2410 OUT, HC-SR501: output high = someone
+there) on another pin takes a photo when someone comes to the door (30 s apart), optionally.
+
+```
+doorbell on 6               watch the button on GPIO6 (button to GND, internal pull-up)
+doorbell sound gong         or off, or /SOUNDS/DINGDONG.WAV
+doorbell photo on|off       photo on the card
+doorbell mqtt on|off        photo + ring to Home Assistant
+doorbell test               ring now
+doorbell radar 17           radar output on GPIO17 (doorbell radar off = none)
+doorbell radar photo on     radar photo on the card
+doorbell radar mqtt on      radar photo to Home Assistant too (default off)
+doorbell                    status, last ring / visit
+cam send                    one photo to Home Assistant now
+```
+
+Settings in `/DOORBELL.TXT`. With MQTT on (`mqtt broker ...`, discovery on), Home Assistant gets by itself:
+a **camera** (`<base>/camera`, the last photo, retained), a **Take photo** button (`<base>/set/camera`), a
+**Doorbell** event (`<base>/doorbell`, `{"event_type":"ring"}`) and **Someone at the door** (`<base>/radar` ON/OFF).
+A notification with the photo on the phone (Home Assistant app), an automation like:
+
+```yaml
+alias: Doorbell
+triggers:
+  - trigger: state
+    entity_id: event.rpi3_3456_doorbell     # your entity names (Settings - Devices - the RoboOS board)
+actions:
+  - action: notify.mobile_app_your_phone
+    data:
+      title: "Someone is at the door"
+      message: "Doorbell"
+      data:
+        image: /api/camera_proxy/camera.rpi3_3456_camera
+```
 
 ### MQTT
 

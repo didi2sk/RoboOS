@@ -16,6 +16,10 @@
  *   set/gpio/<n>  <- 1 / 0 / on / off / toggle: the pin becomes an output
  *   set/publish   <- send state now
  *   cmd/...       <- kept for programs (mqttReceive, BASIC MQTTRECV), inbox of 8
+ *   camera        a JPEG photo (retained; Home Assistant MQTT camera), 0.105
+ *   set/camera    <- take a photo and send it to camera
+ *   doorbell      {"event_type":"ring"} when the doorbell button is pressed (Home Assistant event)
+ *   radar         ON / OFF from the door radar (retained; Home Assistant binary sensor)
  * Runs on the I/O core (core 1); core 0 calls in with the io lock held.
  */
 #include "kernel.h"
@@ -83,9 +87,42 @@ static void topic(char *out, int max, const char *sub)
     out[n] = 0;
 }
 
+/* 0.105: one big PUBLISH (a JPEG) sent in pieces as the TCP send buffer empties; nothing else goes out meanwhile */
+static const u8 *big_p;
+static u32 big_len, big_off;
+static int big_on, big_hlen, big_hoff;
+static u8 big_h[140];
+static volatile int rediscover;
+
+static void big_pump(void)
+{
+    while (big_on && pcb) {
+        const u8 *src; u32 n;
+        if (big_hoff < big_hlen) { src = big_h + big_hoff; n = (u32)(big_hlen - big_hoff); }
+        else { src = big_p + big_off; n = big_len - big_off; }
+        if (!n) { big_on = 0; sent++; break; }
+        u32 room = tcp_sndbuf(pcb);
+        if (!room || tcp_sndqueuelen(pcb) >= TCP_SND_QUEUELEN - 1) break;
+        if (n > room) n = room;
+        if (n > TCP_MSS) n = TCP_MSS;
+        if (tcp_write(pcb, src, (u16)n, TCP_WRITE_FLAG_COPY) != ERR_OK) break;
+        if (big_hoff < big_hlen) big_hoff += (int)n; else big_off += n;
+        last_tx = timer_us();
+    }
+    if (pcb) tcp_output(pcb);
+}
+
+static err_t m_sent(void *arg, struct tcp_pcb *tp, u16_t len)
+{
+    (void)arg; (void)tp; (void)len;
+    if (big_on) big_pump();
+    return ERR_OK;
+}
+
 static int publish_raw(const char *t, const char *payload, int plen, int retain)
 {
     if (st != M_UP) return -1;
+    if (big_on) return -4;                                /* a photo is going out */
     txn = 5;
     b_str(t);
     b_raw(payload, plen);
@@ -189,9 +226,43 @@ static void ble_publish(const struct ble_th *b)
     }
 }
 
+/* 0.105: the camera, a "take photo" button and the doorbell event for Home Assistant */
+static void ha_dev(const char *node)
+{
+    ja(",\"availability_topic\":\""); ja(base);
+    ja("/status\",\"device\":{\"identifiers\":[\""); ja(node); ja("\"],\"name\":\""); ja(net_name());
+    ja("\",\"model\":\""); ja(board_name()); ja("\",\"manufacturer\":\"RoboOS\",\"sw_version\":\""); ja(os_version()); ja("\"}}");
+}
+static void ha_camera(void)
+{
+    char t[128], node[40];
+    int n = 0;
+    for (const char *s = net_name(); *s && n < 39; s++) node[n++] = (*s == '-' || *s == '.') ? '_' : *s;
+    node[n] = 0;
+    int cam = camera_present() || doorbell_enabled(), bell = doorbell_enabled();
+    static const char *const comp[4] = { "camera", "button", "event", "binary_sensor" };
+    cam |= doorbell_radar() != 0;
+    for (int k = 0; k < 4; k++) {
+        int want = k < 2 ? cam : k == 2 ? bell : doorbell_radar() != 0;
+        jn = 0;
+        ja("homeassistant/"); ja(comp[k]); ja("/"); ja(node); ja(k == 0 ? "/camera" : k == 1 ? "/photo" : k == 2 ? "/doorbell" : "/radar"); ja("/config");
+        memcpy(t, js, (size_t)jn + 1);
+        jn = 0;
+        if (want) {
+            if (k == 0) { ja("{\"name\":\"Camera\",\"topic\":\""); ja(base); ja("/camera\",\"unique_id\":\""); ja(node); ja("_camera\""); }
+            if (k == 1) { ja("{\"name\":\"Take photo\",\"command_topic\":\""); ja(base); ja("/set/camera\",\"icon\":\"mdi:camera\",\"unique_id\":\""); ja(node); ja("_photo\""); }
+            if (k == 3) { ja("{\"name\":\"Someone at the door\",\"state_topic\":\""); ja(base); ja("/radar\",\"device_class\":\"occupancy\",\"unique_id\":\""); ja(node); ja("_radar\""); }
+            if (k == 2) { ja("{\"name\":\"Doorbell\",\"state_topic\":\""); ja(base); ja("/doorbell\",\"event_types\":[\"ring\"],\"device_class\":\"doorbell\",\"unique_id\":\""); ja(node); ja("_doorbell\""); }
+            ha_dev(node);
+        }
+        publish_raw(t, js, jn, 1);                        /* empty = remove it from Home Assistant */
+    }
+}
+
 static void ha_discovery(void)
 {
     int h = sensors_have();
+    ha_camera();
     ha_one("cpu", "CPU temperature", "\\u00b0C", "temperature");
     if (h & 1) ha_one("temp", "Temperature", "\\u00b0C", "temperature");
     if (h & 2) ha_one("hum", "Humidity", "%", "humidity");
@@ -236,6 +307,7 @@ static void incoming(const char *t, int tl, const char *p, int pl)
         return;
     }
     if (!strcmp(sub, "set/publish")) { publish_state(); return; }
+    if (!strcmp(sub, "set/camera")) { camera_mqtt_request(); return; }            /* core 0 takes the photo */
     if (!strcmp(sub, "set/radio")) { radio_net(p, pl); return; }                  /* 104.4 / up / down / off / vol 8 */
     if (!strcmp(sub, "set/display")) { display_net(-1, p, pl); return; }        /* the whole screen, \n = next row */
     if (!strncmp(sub, "set/display/", 12)) {                                     /* one row: set/display/<1..10> */
@@ -268,6 +340,7 @@ static void drop(const char *reason, int abort)
         pcb = 0;
     }
     if (st == M_UP) { con_color(COL_YELLOW); kprintf("\n[MQTT] disconnected: %s\n", reason); con_color(COL_DEFAULT); }
+    big_on = 0;
     why = reason;
     st = broker[0] ? M_WAIT : M_OFF;
     retry_at = timer_us() + 10000000ULL;
@@ -378,6 +451,7 @@ static void connect_to(const ip_addr_t *a)
     if (!pcb) { drop("no memory", 0); return; }
     tcp_arg(pcb, 0);
     tcp_recv(pcb, m_recv);
+    tcp_sent(pcb, m_sent);
     tcp_err(pcb, m_err);
     st = M_CONNECTING;
     last_rx = timer_us();
@@ -415,6 +489,8 @@ void mqtt_poll(int have_ip)
         return;
     case M_UP:
         if (now - last_rx > (KEEPALIVE + KEEPALIVE / 2) * 1000000ULL) { drop("broker silent (keep-alive)", 1); return; }
+        if (big_on) { big_pump(); return; }               /* the photo first */
+        if (rediscover) { rediscover = 0; if (discovery) ha_camera(); }
         if (now - last_tx > (KEEPALIVE / 2) * 1000000ULL) { txn = 5; send_packet(0xC0); }   /* PINGREQ */
         if (interval > 0 && now >= next_state) { publish_state(); next_state = now + (u64)interval * 1000000; }
         { struct ble_th b; if (bt_ble_next(&b)) ble_publish(&b); }   /* Bluetooth thermometers, one per poll */
@@ -488,6 +564,31 @@ static void save(void)
 /* ---------------- for programs, BASIC and the shell (core 0, io lock taken here) ---------------- */
 
 int mqtt_connected(void) { return st == M_UP; }
+
+/* core 0: a JPEG to <base>/camera (retained). The buffer must stay until mqtt_photo_busy() is 0.
+ * 0 = sending, -1 not connected, -2 the last photo is still going out */
+int mqtt_send_photo(const u8 *jpg, u32 len)
+{
+    io_lock();
+    if (st != M_UP || !pcb) { io_unlock(); return -1; }
+    if (big_on) { io_unlock(); return -2; }
+    char t[128];
+    topic(t, sizeof(t), "camera");
+    int tl = (int)strlen(t), k = 0;
+    u32 rem = 2 + (u32)tl + len;
+    big_h[k++] = 0x31;                                    /* PUBLISH, QoS 0, retained */
+    do { u8 d = (u8)(rem % 128); rem /= 128; if (rem) d |= 0x80; big_h[k++] = d; } while (rem);
+    big_h[k++] = (u8)(tl >> 8); big_h[k++] = (u8)tl;
+    memcpy(big_h + k, t, (size_t)tl); k += tl;
+    big_hlen = k; big_hoff = 0;
+    big_p = jpg; big_len = len; big_off = 0;
+    big_on = 1;
+    big_pump();
+    io_unlock();
+    return 0;
+}
+int mqtt_photo_busy(void) { return big_on; }
+void mqtt_rediscover(void) { rediscover = 1; }
 
 /* topic: relative to the base, or absolute when it starts with '/' */
 int mqtt_publish(const char *t, const char *payload, int len, int retain)

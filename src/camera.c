@@ -874,9 +874,79 @@ static void web_defaults_now(void)
     s_wbr = s_wbb = s_sat = 100; s_gamma = 1; s_q = 85; gr_cur = gb_cur = 256;
 }
 
+/* core 0: start the camera for the web / MQTT / doorbell (quiet), let the exposure settle; 0 = ok */
+static int quiet_start(void)
+{
+    if (nocam_until && timer_us() < nocam_until) return -1;
+    int t = trace; trace = 0;
+    test_pattern = 0;
+    int r = cam_start();
+    trace = t;
+    if (r) { nocam_until = timer_us() + 30000000ULL; return -1; }   /* try again in 30 s */
+    nocam_until = 0;
+    ae_begin();
+    web_stream = 1;
+    for (int i = 0; i < 12; i++) {                         /* let the exposure find its level */
+        u16 *f = next_frame(i ? 200 : 1500);
+        if (!f) break;
+        process_frame(f);
+        if (ae_ok >= 1 && i >= 3) break;
+    }
+    web_last = timer_us();
+    static int announced;
+    if ((sensor || fake) && !announced) { announced = 1; mqtt_rediscover(); }   /* Home Assistant: the camera exists now */
+    return 0;
+}
+
+/* 0.105: one photo now - to the card (save) and / or to MQTT <base>/camera (send). 0 ok, -1 no camera,
+ * -3 no frame, -4 the camera is busy (cam live), -5 MQTT not connected, -6 the last photo still going out */
+#define MQTT_JPG 0x14800000UL
+static volatile int mqtt_snap;
+void camera_mqtt_request(void) { mqtt_snap = 1; }
+
+int camera_take(int save, int send, char *name_out)
+{
+    if (in_show || in_poll) return -4;
+    in_poll = 1;
+    if (!cfg_loaded) cfg_load();
+    int r = 0;
+    if (!streaming && quiet_start()) { r = -1; goto out; }
+    u16 *f = next_frame(500);
+    if (!f) { r = -3; goto out; }
+    process_frame(f);
+    web_last = timer_us();
+    if (save) {
+        if (save_jpeg(0, last_photo) <= 0) { const char *x = "(not saved)"; int i = 0; while (x[i]) { last_photo[i] = x[i]; i++; } last_photo[i] = 0; }
+        if (name_out) { int i = 0; while (last_photo[i] && i < 63) { name_out[i] = last_photo[i]; i++; } name_out[i] = 0; }
+    }
+    if (send) {
+        if (!mqtt_connected()) { r = -5; goto out; }
+        if (mqtt_photo_busy()) { r = -6; goto out; }
+        int n = jpeg_encode((const u32 *)RGB_BUF, ow, oh, ow, s_q, (u8 *)MQTT_JPG, JPG_MAX);
+        if (n <= 0) { r = -3; goto out; }
+        int m = mqtt_send_photo((const u8 *)MQTT_JPG, (u32)n);
+        if (m == -1) r = -5; else if (m == -2) r = -6;
+        else kprintf("photo sent to MQTT (%u KB)\n", (u32)(n + 1023) / 1024);
+    }
+out:
+    in_poll = 0;
+    return r;
+}
+
+const char *camera_take_error(int r)
+{
+    return r == -1 ? "no camera" : r == -3 ? "no picture from the camera" : r == -4 ? "the camera is busy (cam live)" :
+           r == -5 ? "MQTT is not connected ('mqtt' shows why)" : r == -6 ? "the last photo is still being sent" : "?";
+}
+
 /* core 0, from con_trygetc */
 void camera_poll(void)
 {
+    if (mqtt_snap && !in_show && !in_poll && !io_held()) {   /* Home Assistant pressed "Take photo" */
+        mqtt_snap = 0;
+        int r = camera_take(0, 1, 0);
+        if (r) kprintf("\n[CAM] photo for MQTT: %s\n", camera_take_error(r));
+    }
     if (in_show || in_poll || io_held()) return;
     in_poll = 1;
     if (!cfg_loaded) cfg_load();
@@ -885,24 +955,7 @@ void camera_poll(void)
     if (web_save_at && timer_us() >= web_save_at) { web_save_at = 0; cfg_save(); }
     int want = __atomic_load_n(&web_req, __ATOMIC_ACQUIRE) != web_done || web_snap;
     if (want) {
-        if (!streaming) {
-            if (nocam_until && timer_us() < nocam_until) { web_snap = 0; web_fail(1); in_poll = 0; return; }
-            int t = trace; trace = 0;
-            test_pattern = 0;
-            int r = cam_start();
-            trace = t;
-            if (r) { nocam_until = timer_us() + 30000000ULL; web_snap = 0; web_fail(1); in_poll = 0; return; }   /* try again in 30 s */
-            nocam_until = 0;
-            ae_begin();
-            web_stream = 1;
-            for (int i = 0; i < 12; i++) {                 /* let the exposure find its level */
-                u16 *f = next_frame(i ? 200 : 1500);
-                if (!f) break;
-                process_frame(f);
-                if (ae_ok >= 1 && i >= 3) break;
-            }
-            web_last = timer_us();
-        }
+        if (!streaming && quiet_start()) { web_snap = 0; web_fail(1); in_poll = 0; return; }
         u16 *f = next_frame(300);
         if (!f) { web_snap = 0; web_fail(3); }
         else {
@@ -1161,6 +1214,11 @@ void camera_cmd(int argc, char **argv)
     }
     if (!strcmp(a, "live")) { test_pattern = 0; show(1, 0, 0); return; }
     if (!strcmp(a, "snap")) { test_pattern = 0; show(0, 1, argc > 2 ? argv[2] : 0); return; }
+    if (!strcmp(a, "send")) {
+        int r = camera_take(argc > 2 && !strcmp(argv[2], "save"), 1, 0);
+        if (r) kprintf("not sent: %s\n", camera_take_error(r));
+        return;
+    }
     if (!strcmp(a, "view")) { test_pattern = 0; show(0, 0, 0); return; }
     if (!strcmp(a, "set") || !strcmp(a, "settings")) {
         cfg_load();
@@ -1229,6 +1287,7 @@ void camera_cmd(int argc, char **argv)
             "       cam live            live picture on HDMI, s / space saves a JPEG, other keys stop\n"
             "       cam snap [file]     one picture saved as JPEG (default /CAM/<date>/<time>.JPG)\n"
             "       cam view            one picture on HDMI only, any key\n"
+            "       cam send [save]     one photo to MQTT <base>/camera (Home Assistant camera), save = also to the card\n"
             "       cam set             picture settings: exposure, gain, ev, wb, brightness, contrast,\n"
             "                           saturation, hue, gamma, flip, quality (saved in /CAM.TXT)\n"
             "       cam <setting> <value>  e.g. cam saturation 130, cam exposure 10, cam wb auto\n"

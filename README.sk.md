@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.104**
+Aktuálna verzia: **0.105**
 
 ## Podporované dosky
 
@@ -484,6 +484,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.102: farby kamery: poradie farebných bodov podľa zrkadlenia senzora (GBRG v predvolenom režime 1296, ako Linux); `cam bayer bggr|gbrg|grbg|rggb`, ak farby nesedia.
 0.103: fotky z kamery ako JPEG (`cam snap [súbor]`, s / medzera v `cam live`; vlastný kodér `src/jpeg.c`) + nastavenia obrazu v /CAM.TXT: expozícia, zisk, ev, vyváženie bielej, jas, kontrast, sýtosť, odtieň, gama, zrkadlenie, kvalita JPEG (`cam set`).
 0.104: webová stránka kamery `/camera`: živý náhľad + posuvníky pre každé nastavenie + uloženie fotky; API `GET|POST /api/camera`, `GET /api/camera.jpg`; `cam test on` = skúšobný obraz bez kamery.
+0.105: videozvonček (`doorbell`: tlačidlo na GPIO -> fotka na kartu + do Home Assistanta cez MQTT, gong / WAV, udalosť zvonenia) a radar pri dverách (fotka, keď niekto príde); MQTT kamera, tlačidlo Take photo, udalosť zvončeka, senzor radaru cez discovery; `cam send`.
 
 ### Dátum a čas (NTP)
 
@@ -926,6 +927,46 @@ curl -H "Authorization: Bearer <heslo>" http://<doska>/api/camera.jpg -o foto.jp
 ```
 
 `cam test on` dá namiesto kamery vymyslený obraz s farebnými pruhmi (na vyskúšanie stránky bez kamery).
+
+### Videozvonček + radar pri dverách (0.105)
+
+Tlačidlo na GPIO (predvolene GPIO6 = tlačidlo THT shieldu, proti GND) zazvoní: kamera odfotí (fotka sa uloží do
+`/CAM/<dátum>/`), fotka ide cez MQTT do Home Assistanta, zahrá gong (alebo WAV) a potom ide udalosť zvonenia - až
+po fotke, aby notifikácia ukázala novú fotku. Bez siete zvonček zazvoní aj tak a fotka ostane na karte. Radar
+prítomnosti alebo PIR (RCWL-0516, LD2410 OUT, HC-SR501: výstup v 1 = niekto je tam) na inom pine voliteľne odfotí,
+keď niekto príde k dverám (najviac raz za 30 s).
+
+```
+doorbell on 6               sleduje tlačidlo na GPIO6 (tlačidlo proti GND, vnútorný pull-up)
+doorbell sound gong         alebo off, alebo /SOUNDS/DINGDONG.WAV
+doorbell photo on|off       fotka na kartu
+doorbell mqtt on|off        fotka + zvonenie do Home Assistanta
+doorbell test               zazvoní hneď
+doorbell radar 17           výstup radaru na GPIO17 (doorbell radar off = bez radaru)
+doorbell radar photo on     fotka z radaru na kartu
+doorbell radar mqtt on      fotka z radaru aj do Home Assistanta (predvolene vypnuté)
+doorbell                    stav, posledné zvonenie / návšteva
+cam send                    jedna fotka do Home Assistanta hneď
+```
+
+Nastavenia v `/DOORBELL.TXT`. So zapnutým MQTT (`mqtt broker ...`, discovery on) dostane Home Assistant sám:
+**kameru** (`<base>/camera`, posledná fotka, retained), tlačidlo **Take photo** (`<base>/set/camera`), udalosť
+**Doorbell** (`<base>/doorbell`, `{"event_type":"ring"}`) a **Someone at the door** (`<base>/radar` ON/OFF).
+Notifikácia s fotkou na telefón (aplikácia Home Assistant), automatizácia napríklad:
+
+```yaml
+alias: Zvonček
+triggers:
+  - trigger: state
+    entity_id: event.rpi3_3456_doorbell     # tvoje mená entít (Nastavenia - Zariadenia - doska RoboOS)
+actions:
+  - action: notify.mobile_app_tvoj_telefon
+    data:
+      title: "Niekto je pri dverách"
+      message: "Zvonček"
+      data:
+        image: /api/camera_proxy/camera.rpi3_3456_camera
+```
 
 ### MQTT
 
