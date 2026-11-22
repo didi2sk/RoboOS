@@ -214,7 +214,7 @@ Keys: `con_getkey()` decodes escape sequences into `K_UP`... (kbd.c sends the sa
   the STOP; starting the next transfer at once spoils it (it times out). v0.81 `bsc_settle()` waits for TA to
   clear (2 ms, else C=0 reset) after ERR/CLKT/timeout and before a start. Owner (3B+, AHT20+BMP280): `i2c probe`
   0x38 / 0x77 ANSWERED but `i2c scan` 0 devices; the first probe after a NACKing address timed out. This likely
-  also caused the earlier odd I2C scan results (phantom / missing devices, v0.68-0.70).
+  also caused the earlier odd I2C scan results (phantom / missing devices, v0.68-0.70). **v0.81 on the 3B+ WORKS** (owner: `i2c scan` now finds 0x38 + 0x77).
 - The font covers ASCII 32-126 only - keep all on-screen strings ASCII.
 - Keep exceptions inside programs recoverable: exception stack is separate so `app_crashed()` can longjmp back.
 
