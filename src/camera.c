@@ -48,7 +48,7 @@ static u32 last_s;
 #define UNI_GATE  (MMIO_BASE + 0x802004)
 #define CM_CAM1CTL (MMIO_BASE + 0x101048)
 #define CM_CAM1DIV (MMIO_BASE + 0x10104C)
-static int W = 1296, H = 972;                          /* 0.93: the 2x2 binned mode by default (the door Pi's firmware uses it) */
+static int W = 1296, H = 976;                          /* 0.94: the firmware's own 1296x976 mode by default */
 #define FRAME_BYTES ((u32)(W * H * 2))
 #define BUF_A 0x13000000UL
 #define BUF_B 0x13400000UL
@@ -201,7 +201,25 @@ static const struct rv binned[] = {                     /* 1296x972, 2x2 binned,
     {0x3212,0xa0},
     {0x380c,0x07},{0x380d,0x68},{0x380e,0x05},{0x380f,0x9b},          /* HTS 1896, VTS 0x59b (mode values) */
 };
-static int vga_mode, gate_val = 0x155;                /* 0.93: gate 0x155 as the firmware writes it (Linux: 0x15) */
+/* 0.94: the register list the Pi firmware writes for 1296x976 (2x2 binned), as logged off the I2C bus
+ * (raspiraw ov5647_modes.h mode 4, BSD licence, Raspberry Pi Foundation / Dave Stevenson). Note 0x4800 = 0x24:
+ * the firmware never turns on line sync packets (0x34), which Linux and our 0.89-0.93 did. */
+static const struct rv fwmode[] = {
+    {0x0100,0x00},{0x0103,0x01},{0x3034,0x1A},{0x3035,0x21},{0x3036,0x62},{0x303C,0x11},{0x3106,0xF5},
+    {0x3827,0xEC},{0x370C,0x03},{0x3612,0x59},{0x3618,0x00},{0x5000,0x06},{0x5002,0x40},{0x5003,0x08},
+    {0x5A00,0x08},{0x3000,0x00},{0x3001,0x00},{0x3002,0x00},{0x3016,0x08},{0x3017,0xE0},{0x3018,0x44},
+    {0x301C,0xF8},{0x301D,0xF0},{0x3A18,0x00},{0x3A19,0xF8},{0x3C01,0x80},{0x3B07,0x0C},{0x3800,0x00},
+    {0x3801,0x00},{0x3802,0x00},{0x3803,0x00},{0x3804,0x0A},{0x3805,0x3F},{0x3806,0x07},{0x3807,0xA3},
+    {0x3808,0x05},{0x3809,0x10},{0x380A,0x03},{0x380B,0xCC},{0x380C,0x07},{0x380D,0x68},{0x3811,0x10},
+    {0x3813,0x06},{0x3814,0x31},{0x3815,0x31},{0x3630,0x2E},{0x3632,0xE2},{0x3633,0x23},{0x3634,0x44},
+    {0x3636,0x06},{0x3620,0x64},{0x3621,0xE0},{0x3600,0x37},{0x3704,0xA0},{0x3703,0x5A},{0x3715,0x78},
+    {0x3717,0x01},{0x3731,0x02},{0x370B,0x60},{0x3705,0x1A},{0x3F05,0x02},{0x3F06,0x10},{0x3F01,0x0A},
+    {0x3A08,0x01},{0x3A09,0x28},{0x3A0A,0x00},{0x3A0B,0xF6},{0x3A0D,0x08},{0x3A0E,0x06},{0x3A0F,0x58},
+    {0x3A10,0x50},{0x3A1B,0x58},{0x3A1E,0x50},{0x3A11,0x60},{0x3A1F,0x28},{0x4001,0x02},{0x4004,0x04},
+    {0x4000,0x09},{0x4837,0x16},{0x4800,0x24},{0x3503,0x03},{0x3820,0x41},{0x3821,0x03},{0x380E,0x05},
+    {0x380F,0x9B},{0x350A,0x00},{0x350B,0x10},{0x3500,0x00},{0x3501,0x1A},{0x3502,0xF0},{0x3212,0xA0},
+};
+static int vga_mode = 2, gate_val = 0x155;           /* vga_mode: 2 = firmware 1296x976, 0 = Linux 1296x972, 1 = 640x480 */                /* 0.93: gate 0x155 as the firmware writes it (Linux: 0x15) */
 static const struct rv vga[] = {
     {0x3036,0x46},{0x3821,0x01},{0x3820,0x41},{0x3612,0x59},{0x3618,0x00},{0x3814,0x35},{0x3815,0x35},
     {0x3708,0x64},{0x3709,0x52},{0x3800,0x00},{0x3801,0x10},{0x3802,0x00},{0x3803,0x00},{0x3804,0x0a},
@@ -222,6 +240,13 @@ static int wr_list(const struct rv *l, int n)
 
 static int sensor_stream(int on)
 {
+    if (on && vga_mode == 2) {                           /* exactly the firmware's list, then only the extras */
+        if (wr_list(fwmode, sizeof(fwmode) / sizeof(fwmode[0]))) return -1;
+        wr16(saddr, 0x503D, test_pattern ? 0x80 : 0x00);
+        wr16(saddr, 0x3503, 0x00);                         /* auto exposure + gain */
+        wr16(saddr, 0x5001, 0x01);                         /* auto white balance */
+        return wr16(saddr, 0x0100, 0x01);
+    }
     if (on) {
         if (wr_list(common, sizeof(common) / sizeof(common[0]))) return -1;
         if (vga_mode ? wr_list(vga, sizeof(vga) / sizeof(vga[0])) : wr_list(binned, sizeof(binned) / sizeof(binned[0]))) return -1;
@@ -510,8 +535,8 @@ void camera_cmd(int argc, char **argv)
     if (!strcmp(a, "trace")) { trace = argc > 2 && !strcmp(argv[2], "off") ? 0 : 1; kprintf("step trace %s\n", trace ? "on" : "off"); return; }
     if (!strcmp(a, "mode") && argc > 2) {
         if (streaming) { kprintf("stop the camera first\n"); return; }
-        vga_mode = !strcmp(argv[2], "640");
-        W = vga_mode ? 640 : 1296; H = vga_mode ? 480 : 972;
+        vga_mode = !strcmp(argv[2], "640") ? 1 : !strcmp(argv[2], "1296") ? 0 : 2;
+        W = vga_mode == 1 ? 640 : 1296; H = vga_mode == 1 ? 480 : vga_mode == 0 ? 972 : 976;
         kprintf("sensor mode %dx%d (until reboot)\n", W, H);
         return;
     }
@@ -556,7 +581,7 @@ void camera_cmd(int argc, char **argv)
             "       cam snap            one picture, any key\n"
             "       cam bars            the sensor's test colour bars (checks the link without the lens)\n"
             "       cam dump            receiver registers while streaming (compare with Linux: tools/camdump.py)\n"
-            "       cam mode 1296|640   sensor mode (default 1296x972 binned, like the Pi firmware)\n"
+            "       cam mode fw|1296|640 sensor mode (default fw = the Pi firmware's 1296x976 list)\n"
             "       cam gate 0x155|0x15 lane clock gate (default 0x155 like the Pi firmware)\n"
             "       cam clock cont|ncont  MIPI clock mode (test; default ncont)\n"
             "       cam reg <a> [v]     read / write a sensor register (16-bit address)\n"
