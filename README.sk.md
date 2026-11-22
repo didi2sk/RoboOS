@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.82**
+Aktuálna verzia: **0.83**
 
 ## Podporované dosky
 
@@ -462,6 +462,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 `i2c scan` a hľadanie senzorov pri štarte nevideli zariadenia, ktoré `i2c probe` videl.
 0.82: senzory na displeji (`display sensors`, aj pod KEY1 na HATe), záznam do CSV (`sensors log 5` ->
 /LOG/YYYYMMDD.CSV) a `GET /api/sensors` (JSON).
+0.83: MPU-6050 / GY-521 (`motion`): náklon (vodováha), zrýchlenie, otáčanie, otrasy; displej, MQTT, API, BASIC.
 
 ### Dátum a čas (NTP)
 
@@ -815,6 +816,25 @@ takže zistíš číslo každej vety. Akcie sa ukladajú do `/VOICE.TXT` (`<čí
 len pri výzve shellu (nie keď beží program alebo BASIC; príkaz počutý vtedy čaká až 10 s). **Na hardvéri
 zatiaľ neotestované** (PC test `tools/test_voice.c` so simulovaným modulom).
 
+### Náklon a otrasy (MPU-6050 / GY-521, 0.83)
+
+Doska GY-521 (MPU-6050: akcelerometer + gyroskop + teplomer) sa zapája na I2C ako ostatné senzory (VCC 3,3 V
+pin 1, GND pin 6, SCL pin 5, SDA pin 3; XDA / XCL / INT nezapájať). AD0 voľný = adresa 0x68, AD0 na 3,3 V =
+0x69 (vtedy, keď je na zbernici aj hodinový modul DS3231, ktorý je tiež na 0x68).
+
+```
+motion                  náklon pitch / roll (stupne), zrýchlenie (mg), otáčanie (st./s), teplota čipu, otrasy
+motion watch            náklon naživo - vodováha (ktorákoľvek klávesa skončí)
+motion zero             táto poloha = vodorovne (a gyroskop v pokoji = 0); uloží sa do /MOTION.TXT
+motion threshold 400    otras = |zrýchlenie| odchýlené od 1 g o viac ako 400 mg (alebo otáčanie > 150 st./s)
+motion alarm on|off     vypíše každý otras; MQTT <base>/motion dostane počet vždy
+display motion          pitch / roll / |a| / otrasy na displeji (aj pod KEY1 na HATe)
+```
+
+BASIC `SENSOR(8)` pitch, `SENSOR(9)` roll (0,1 stupňa), `SENSOR(10)` otrasy, `SENSOR(11..13)` zrýchlenie x/y/z (mg);
+stav v MQTT aj `GET /api/sensors` obsahujú pitch, roll a otrasy. **Na hardvéri zatiaľ neotestované** (PC test
+`tools/test_motion.c`: celočíselný atan2 do 0,1 stupňa od libm, náklon pri známych uhloch, gyroskop / teplota, otrasy).
+
 ### MQTT
 
 MQTT je bežný spôsob, ako IoT zariadenia hovoria so serverom (Home Assistant, Node-RED,
@@ -999,6 +1019,7 @@ Systém komunikuje po anglicky.
 | `sensors [scan]`, `i2c scan\|read\|write` | senzory na I2C (BME280, ADS1115, DS3231) |
 | `ai <otázka>\|@príkaz ..\|key\|model` | otázka pre Claude (vlastný API kľúč Anthropic) |
 | `radio [MHz\|up\|down\|scan\|vol n\|off]` | FM rádio (modul RDA5807M na I2C) |
+| `motion [watch\|zero\|threshold mg\|alarm on\|off]` | náklon, zrýchlenie, otrasy (MPU-6050 / GY-521) |
 | `voice [add id cmd\|del id\|volume\|mute\|wake]` | hlasové príkazy offline (DFRobot DF2301Q) |
 | `dcf [on\|off\|pin n\|invert\|pull\|pon]` | prijímač rádiových hodín DCF77 na GPIO |
 | `display [scan\|text n ..\|clear\|status on\|off\|size\|type\|addr\|hat\|keys]` | I2C displej OLED / LCD, Waveshare SPI OLED HAT |

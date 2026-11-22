@@ -121,6 +121,9 @@ static void publish_state(void)
     if (v.have & SV_PRESS) { ja("\"press\":"); jfix(v.press_pa); ja(","); }          /* hPa with 2 decimals */
     if (v.have & SV_AIN)
         for (int i = 0; i < 4; i++) { char k[8] = "\"a0\":"; k[2] = (char)('0' + i); ja(k); jnum(v.ain_mv[i]); ja(","); }
+    { struct motion_values m;
+      if (motion_get(&m) == 0) { ja("\"pitch\":"); jfix(m.pitch_d10 * 10); ja(",\"roll\":"); jfix(m.roll_d10 * 10);
+                                 ja(",\"shakes\":"); jnum((long)m.shakes); ja(","); } }
     ja("\"uptime\":"); jnum((long)(timer_us() / 1000000));
     ja(",\"ip\":\""); ja(ip_address_str()); ja("\"");
     u64 now = clock_now();

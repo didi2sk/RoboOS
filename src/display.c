@@ -32,8 +32,8 @@ static const char *const tname[] = { "none", "ssd1306", "sh1106", "lcd" };
 
 #define MAXR 10
 #define MAXC 32
-enum { M_TEXT, M_STATUS, M_CONSOLE, M_CLOCK, M_RADIO, M_SENSORS };
-static const char *const mname[] = { "text", "status", "console", "clock", "radio", "sensors" };
+enum { M_TEXT, M_STATUS, M_CONSOLE, M_CLOCK, M_RADIO, M_SENSORS, M_MOTION };
+static const char *const mname[] = { "text", "status", "console", "clock", "radio", "sensors", "motion" };
 static const char *const fname[] = { "small", "normal", "big", "tiny", "micro" };
 #define NFONTS 5
 static int dtype, daddr, dw, dh, rows, cols;    /* dw x dh: pixels (OLED) or characters (LCD) */
@@ -445,7 +445,7 @@ static void load_cfg(void)
             if (w && h) { cfg_w = (int)w; cfg_h = (int)h; }
         } else if (kl == 6 && !memcmp_n(k, "status", 6)) mode = !strcmp(vv, "on") ? M_STATUS : M_TEXT;   /* (0.55 files) */
         else if (kl == 3 && !memcmp_n(k, "bus", 3)) cfg_spi = !strcmp(vv, "spi");
-        else if (kl == 4 && !memcmp_n(k, "mode", 4)) { for (int i = 0; i < 6; i++) if (!strcmp(vv, mname[i])) mode = i; }
+        else if (kl == 4 && !memcmp_n(k, "mode", 4)) { for (int i = 0; i < 7; i++) if (!strcmp(vv, mname[i])) mode = i; }
         else if (kl == 4 && !memcmp_n(k, "font", 4)) { for (int i = 0; i < NFONTS; i++) if (!strcmp(vv, fname[i])) font = i; }
         else if (kl == 8 && !memcmp_n(k, "contrast", 8) && parse_num(vv, &x) && x < 256) contrast = (int)x;
     }
@@ -583,6 +583,32 @@ static void sensors_draw(void)
     }
 }
 
+/* the tilt screen (0.83, MPU-6050): pitch / roll / |a| / shakes */
+static int d10(char *b, int n, int v)
+{
+    if (v < 0) { b[n++] = '-'; v = -v; }
+    n = apn(b, n, (u32)(v / 10)); b[n++] = '.'; b[n++] = (char)('0' + v % 10); b[n] = 0;
+    return n;
+}
+static void motion_draw(void)
+{
+    struct motion_values m;
+    for (int r = 0; r < rows; r++) set_row(r, "");
+    if (motion_get(&m)) { set_row(0, "no MPU-6050"); return; }
+    char l[4][40]; int k;
+    k = ap(l[0], 0, "Pitch "); k = d10(l[0], k, m.pitch_d10); ap(l[0], k, " deg");
+    k = ap(l[1], 0, "Roll  "); k = d10(l[1], k, m.roll_d10); ap(l[1], k, " deg");
+    k = ap(l[2], 0, "|a| "); k = apn(l[2], k, (u32)m.g_mg); ap(l[2], k, " mg");
+    k = ap(l[3], 0, "Shakes "); apn(l[3], k, m.shakes);
+    if (rows <= 2) {
+        char t[40]; k = ap(t, 0, "P "); k = d10(t, k, m.pitch_d10); k = ap(t, k, " R "); d10(t, k, m.roll_d10);
+        set_row(0, t);
+        if (rows > 1) set_row(1, l[3]);
+        return;
+    }
+    for (int i = 0; i < 4 && i < rows; i++) set_row(i, l[i]);
+}
+
 /* ---- the HAT's keys (0.72): KEY1 21, KEY2 20, KEY3 16, joystick up 6, down 19, left 5, right 26, press 13
  * (active low, pull-ups). KEY1 = next screen (info, time, radio, console); on the radio screen KEY2/KEY3 seek
  * down/up, left/right = -/+ 0.1 MHz, up/down = volume, press = radio on/off. ---- */
@@ -610,10 +636,11 @@ static void radio_do(const char *a, const char *b)
 
 static void key_pressed(int k)
 {
-    static const int order[5] = { M_STATUS, M_CLOCK, M_SENSORS, M_RADIO, M_CONSOLE };
+    static const int order[6] = { M_STATUS, M_CLOCK, M_SENSORS, M_MOTION, M_RADIO, M_CONSOLE };
     if (k == 0) {                                 /* next screen */
-        int i = 0; while (i < 5 && order[i] != mode) i++;
-        mode = order[(i + 1) % 5];
+        int i = 0; while (i < 6 && order[i] != mode) i++;
+        mode = order[(i + 1) % 6];
+        if (mode == M_MOTION && !motion_present()) mode = order[(i + 2) % 6];   /* no MPU-6050: skip its screen */
         for (int r = 0; r < rows; r++) set_row(r, "");
         cur_r = cur_c = 0; next_status = 0; flush();
         return;
@@ -742,12 +769,13 @@ void display_poll(void)
         busy = 0;
         return;
     }
-    if ((mode != M_STATUS && mode != M_CLOCK && mode != M_RADIO && mode != M_SENSORS) || timer_us() < next_status) return;
+    if ((mode != M_STATUS && mode != M_CLOCK && mode != M_RADIO && mode != M_SENSORS && mode != M_MOTION) || timer_us() < next_status) return;
     busy = 1;
-    next_status = timer_us() + (mode == M_SENSORS ? 2000000 : 1000000);
+    next_status = timer_us() + (mode == M_SENSORS ? 2000000 : mode == M_MOTION ? 250000 : 1000000);
     if (mode == M_CLOCK) clock_draw();
     else if (mode == M_RADIO) { radio_draw(); flush(); }
     else if (mode == M_SENSORS) { sensors_draw(); flush(); }
+    else if (mode == M_MOTION) { motion_draw(); flush(); }
     else { status_draw(); flush(); }
     busy = 0;
 }
@@ -788,8 +816,8 @@ void display_cmd(int argc, char **argv)
         if (e) kprintf("no display (try 'display scan')\n");
         return;
     }
-    else if (!strcmp(a, "time") || !strcmp(a, "clock") || !strcmp(a, "info") || !strcmp(a, "radio") || !strcmp(a, "sensors")) {
-        mode = a[0] == 'i' ? M_STATUS : a[0] == 'r' ? M_RADIO : a[0] == 's' ? M_SENSORS : M_CLOCK;
+    else if (!strcmp(a, "time") || !strcmp(a, "clock") || !strcmp(a, "info") || !strcmp(a, "radio") || !strcmp(a, "sensors") || !strcmp(a, "motion")) {
+        mode = a[0] == 'i' ? M_STATUS : a[0] == 'r' ? M_RADIO : a[0] == 's' ? M_SENSORS : a[0] == 'm' ? M_MOTION : M_CLOCK;
         next_status = 0;
         if (ok) { busy = 1; for (int r = 0; r < rows; r++) set_row(r, ""); flush(); busy = 0; }
         save_cfg();
@@ -869,7 +897,7 @@ void display_cmd(int argc, char **argv)
         else if (ok) { u8 c = on ? 0xAF : 0xAE; oled_cmds(&c, 1); }
     }
     else if (a[0]) {
-        kprintf("usage: display [scan | clear | text <row> <words> | info | time | sensors | radio | console on|off\n"
+        kprintf("usage: display [scan | clear | text <row> <words> | info | time | sensors | motion | radio | console on|off\n"
                 "               | hat | keys | font micro|tiny|small|normal|big | on | off | type auto|lcd|ssd1306|sh1106|none\n"
                 "               | addr <0x..> | size <WxH> | contrast <0-255> | light on|off]\n");
         return;

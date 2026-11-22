@@ -202,6 +202,14 @@ int sensor_value(int n)
 {
     static const int need[8] = { SV_CPU, SV_TEMP, SV_HUM, SV_PRESS, SV_AIN, SV_AIN, SV_AIN, SV_AIN };
     struct sensor_values v;
+#ifndef SENSORS_NO_LOG
+    if (n >= 8 && n <= 13) {                              /* 0.83: MPU-6050 */
+        struct motion_values m;
+        if (motion_get(&m)) return SENSOR_NONE;
+        switch (n) { case 8: return m.pitch_d10; case 9: return m.roll_d10; case 10: return (int)m.shakes;
+                     case 11: return m.ax_mg; case 12: return m.ay_mg; default: return m.az_mg; }
+    }
+#endif
     if (n < 0 || n > 7) return SENSOR_NONE;
     sensors_read(&v);
     if (!(v.have & need[n])) return SENSOR_NONE;
