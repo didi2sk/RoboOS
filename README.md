@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.94**
+Current version: **0.95**
 
 ## Supported boards
 
@@ -478,6 +478,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.92: `cam dump` prints every camera receiver register while streaming; `tools/camdump.py` prints the same on a Linux Pi where the camera works, to compare.
 0.93: the camera now runs like the Pi firmware does: sensor mode 1296x972 (2x2 binned) and lane clock gate 0x155; `cam mode 640` / `cam gate 0x15` switch back for tests.
 0.94: the sensor gets exactly the register list the Pi firmware writes (1296x976, logged by raspiraw) - no line sync packets; `cam mode fw|1296|640`.
+0.95: the sensor is set up and streaming BEFORE the camera receiver starts (like rsta2/libcamera); `cam order rx` = the old order.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)

@@ -342,6 +342,7 @@ static void print_sta(u32 s)
     for (int i = 0; i < 25; i++) if (s & (1u << i)) kprintf(" %s", sta_names[i]);
 }
 
+static int sensor_first = 1;                            /* 0.95: start order, `cam order sensor|rx` */
 static int trace = 1;                                    /* 0.90: print each step (a freeze shows where) */
 #define STEP(...) do { if (trace) { kprintf(__VA_ARGS__); delay_us(30000); } } while (0)
 
@@ -365,10 +366,18 @@ static int cam_start(void)
     STEP("cam 4: sensor lanes in LP-11, reading the receiver...\n");
     STEP("cam 5: receiver CTRL 0x%x STA 0x%x ANA 0x%x\n", ur(0x000), ur(0x004), ur(0x008));
     delay_us(2000);
-    unicam_start();
-    STEP("cam 6: receiver on: CTRL 0x%x STA 0x%x CLK 0x%x DAT0 0x%x\n", ur(0x000), ur(0x004), ur(0x010), ur(0x018));
-    if (sensor_stream(1)) { kprintf("sensor setup failed\n"); unicam_stop(); return -1; }
-    STEP("cam 7: sensor streaming, waiting for frames: STA 0x%x ISTA 0x%x\n", ur(0x004), ur(0x104));
+    if (sensor_first) {                                  /* 0.95: like rsta2/libcamera - sensor set up and streaming, then the receiver */
+        if (sensor_stream(1)) { kprintf("sensor setup failed\n"); return -1; }
+        STEP("cam 6: sensor streaming (set up first)\n");
+        delay_us(20000);
+        unicam_start();
+        STEP("cam 7: receiver on: CTRL 0x%x STA 0x%x CLK 0x%x DAT0 0x%x, waiting for frames\n", ur(0x000), ur(0x004), ur(0x010), ur(0x018));
+    } else {                                             /* Linux order: receiver first, then the sensor */
+        unicam_start();
+        STEP("cam 6: receiver on: CTRL 0x%x STA 0x%x CLK 0x%x DAT0 0x%x\n", ur(0x000), ur(0x004), ur(0x010), ur(0x018));
+        if (sensor_stream(1)) { kprintf("sensor setup failed\n"); unicam_stop(); return -1; }
+        STEP("cam 7: sensor streaming, waiting for frames: STA 0x%x ISTA 0x%x\n", ur(0x004), ur(0x104));
+    }
     n_fs = n_fe = sta_or = 0;
     streaming = 1;
     return 0;
@@ -545,6 +554,11 @@ void camera_cmd(int argc, char **argv)
         gate_val = (int)v; kprintf("lane clock gate 0x%x (until reboot)\n", gate_val);
         return;
     }
+    if (!strcmp(a, "order") && argc > 2) {
+        sensor_first = strcmp(argv[2], "rx") != 0;
+        kprintf("start order: %s (until reboot)\n", sensor_first ? "sensor first, then the receiver" : "receiver first, then the sensor");
+        return;
+    }
     if (!strcmp(a, "clock") && argc > 2) {
         cont_clk = !strcmp(argv[2], "cont");
         kprintf("MIPI clock: %s (test setting until reboot)\n", cont_clk ? "continuous" : "non-continuous (default)");
@@ -583,6 +597,7 @@ void camera_cmd(int argc, char **argv)
             "       cam dump            receiver registers while streaming (compare with Linux: tools/camdump.py)\n"
             "       cam mode fw|1296|640 sensor mode (default fw = the Pi firmware's 1296x976 list)\n"
             "       cam gate 0x155|0x15 lane clock gate (default 0x155 like the Pi firmware)\n"
+            "       cam order sensor|rx start order (default sensor first, like rsta2/libcamera)\n"
             "       cam clock cont|ncont  MIPI clock mode (test; default ncont)\n"
             "       cam reg <a> [v]     read / write a sensor register (16-bit address)\n"
             "       cam off             camera power off\n");
