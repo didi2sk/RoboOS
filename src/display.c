@@ -32,8 +32,8 @@ static const char *const tname[] = { "none", "ssd1306", "sh1106", "lcd" };
 
 #define MAXR 10
 #define MAXC 32
-enum { M_TEXT, M_STATUS, M_CONSOLE, M_CLOCK, M_RADIO };
-static const char *const mname[] = { "text", "status", "console", "clock", "radio" };
+enum { M_TEXT, M_STATUS, M_CONSOLE, M_CLOCK, M_RADIO, M_SENSORS };
+static const char *const mname[] = { "text", "status", "console", "clock", "radio", "sensors" };
 static const char *const fname[] = { "small", "normal", "big", "tiny", "micro" };
 #define NFONTS 5
 static int dtype, daddr, dw, dh, rows, cols;    /* dw x dh: pixels (OLED) or characters (LCD) */
@@ -445,7 +445,7 @@ static void load_cfg(void)
             if (w && h) { cfg_w = (int)w; cfg_h = (int)h; }
         } else if (kl == 6 && !memcmp_n(k, "status", 6)) mode = !strcmp(vv, "on") ? M_STATUS : M_TEXT;   /* (0.55 files) */
         else if (kl == 3 && !memcmp_n(k, "bus", 3)) cfg_spi = !strcmp(vv, "spi");
-        else if (kl == 4 && !memcmp_n(k, "mode", 4)) { for (int i = 0; i < 5; i++) if (!strcmp(vv, mname[i])) mode = i; }
+        else if (kl == 4 && !memcmp_n(k, "mode", 4)) { for (int i = 0; i < 6; i++) if (!strcmp(vv, mname[i])) mode = i; }
         else if (kl == 4 && !memcmp_n(k, "font", 4)) { for (int i = 0; i < NFONTS; i++) if (!strcmp(vv, fname[i])) font = i; }
         else if (kl == 8 && !memcmp_n(k, "contrast", 8) && parse_num(vv, &x) && x < 256) contrast = (int)x;
     }
@@ -545,6 +545,44 @@ static void radio_draw(void)
     }
 }
 
+/* the sensor screen (0.82): temperature, humidity, pressure (+ the time on 4+ rows) */
+static int c100(char *b, int n, int v, int dec)          /* v in 0.01 units, dec 1 or 2 decimals */
+{
+    if (v < 0) { b[n++] = '-'; v = -v; }
+    n = apn(b, n, (u32)(v / 100));
+    b[n++] = '.';
+    b[n++] = (char)('0' + v / 10 % 10);
+    if (dec > 1) b[n++] = (char)('0' + v % 10);
+    b[n] = 0;
+    return n;
+}
+static void sensors_draw(void)
+{
+    struct sensor_values v;
+    sensors_read(&v);
+    char l[4][40]; for (int i = 0; i < 4; i++) l[i][0] = 0;
+    int k;
+    for (int r = 0; r < rows; r++) set_row(r, "");
+    if (!(v.have & (SV_TEMP | SV_HUM | SV_PRESS))) { set_row(0, "no sensors"); if (rows > 1) set_row(1, "(i2c scan)"); return; }
+    if (rows <= 2) {                                 /* "21.4C 45%" + "1001.3 hPa" */
+        k = 0;
+        if (v.have & SV_TEMP) { k = c100(l[0], k, v.temp_c100, 1); k = ap(l[0], k, "C "); }
+        if (v.have & SV_HUM) { k = c100(l[0], k, v.hum_c100, 1); k = ap(l[0], k, "%"); }
+        if (v.have & SV_PRESS) { k = c100(l[1], 0, v.press_pa, 1); ap(l[1], k, " hPa"); }
+        set_row(0, l[0]); if (rows > 1) set_row(1, l[1]);
+        return;
+    }
+    int r = 0;
+    if (v.have & SV_TEMP) { k = ap(l[r], 0, cols >= 14 ? "Temp " : "T "); k = c100(l[r], k, v.temp_c100, 2); ap(l[r], k, " C"); r++; }
+    if (v.have & SV_HUM) { k = ap(l[r], 0, cols >= 14 ? "Hum  " : "H "); k = c100(l[r], k, v.hum_c100, 1); ap(l[r], k, " %"); r++; }
+    if (v.have & SV_PRESS) { k = ap(l[r], 0, cols >= 14 ? "Pres " : "P "); k = c100(l[r], k, v.press_pa, 1); ap(l[r], k, cols >= 14 ? " hPa" : "hPa"); r++; }
+    for (int i = 0; i < r && i < rows; i++) set_row(i, l[i]);
+    if (rows > r) {                                  /* the time on a free row */
+        char t[32]; u64 now = clock_now();
+        if (now) { clock_format(t, now, 0); set_row(rows - 1, t + 11); }
+    }
+}
+
 /* ---- the HAT's keys (0.72): KEY1 21, KEY2 20, KEY3 16, joystick up 6, down 19, left 5, right 26, press 13
  * (active low, pull-ups). KEY1 = next screen (info, time, radio, console); on the radio screen KEY2/KEY3 seek
  * down/up, left/right = -/+ 0.1 MHz, up/down = volume, press = radio on/off. ---- */
@@ -572,10 +610,10 @@ static void radio_do(const char *a, const char *b)
 
 static void key_pressed(int k)
 {
-    static const int order[4] = { M_STATUS, M_CLOCK, M_RADIO, M_CONSOLE };
+    static const int order[5] = { M_STATUS, M_CLOCK, M_SENSORS, M_RADIO, M_CONSOLE };
     if (k == 0) {                                 /* next screen */
-        int i = 0; while (i < 4 && order[i] != mode) i++;
-        mode = order[(i + 1) % 4];
+        int i = 0; while (i < 5 && order[i] != mode) i++;
+        mode = order[(i + 1) % 5];
         for (int r = 0; r < rows; r++) set_row(r, "");
         cur_r = cur_c = 0; next_status = 0; flush();
         return;
@@ -704,11 +742,12 @@ void display_poll(void)
         busy = 0;
         return;
     }
-    if ((mode != M_STATUS && mode != M_CLOCK && mode != M_RADIO) || timer_us() < next_status) return;
+    if ((mode != M_STATUS && mode != M_CLOCK && mode != M_RADIO && mode != M_SENSORS) || timer_us() < next_status) return;
     busy = 1;
-    next_status = timer_us() + 1000000;
+    next_status = timer_us() + (mode == M_SENSORS ? 2000000 : 1000000);
     if (mode == M_CLOCK) clock_draw();
     else if (mode == M_RADIO) { radio_draw(); flush(); }
+    else if (mode == M_SENSORS) { sensors_draw(); flush(); }
     else { status_draw(); flush(); }
     busy = 0;
 }
@@ -749,8 +788,8 @@ void display_cmd(int argc, char **argv)
         if (e) kprintf("no display (try 'display scan')\n");
         return;
     }
-    else if (!strcmp(a, "time") || !strcmp(a, "clock") || !strcmp(a, "info") || !strcmp(a, "radio")) {
-        mode = a[0] == 'i' ? M_STATUS : a[0] == 'r' ? M_RADIO : M_CLOCK;
+    else if (!strcmp(a, "time") || !strcmp(a, "clock") || !strcmp(a, "info") || !strcmp(a, "radio") || !strcmp(a, "sensors")) {
+        mode = a[0] == 'i' ? M_STATUS : a[0] == 'r' ? M_RADIO : a[0] == 's' ? M_SENSORS : M_CLOCK;
         next_status = 0;
         if (ok) { busy = 1; for (int r = 0; r < rows; r++) set_row(r, ""); flush(); busy = 0; }
         save_cfg();
@@ -830,7 +869,7 @@ void display_cmd(int argc, char **argv)
         else if (ok) { u8 c = on ? 0xAF : 0xAE; oled_cmds(&c, 1); }
     }
     else if (a[0]) {
-        kprintf("usage: display [scan | clear | text <row> <words> | info | time | radio | console on|off\n"
+        kprintf("usage: display [scan | clear | text <row> <words> | info | time | sensors | radio | console on|off\n"
                 "               | hat | keys | font micro|tiny|small|normal|big | on | off | type auto|lcd|ssd1306|sh1106|none\n"
                 "               | addr <0x..> | size <WxH> | contrast <0-255> | light on|off]\n");
         return;

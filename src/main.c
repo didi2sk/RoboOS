@@ -2,7 +2,7 @@
 #include "usb.h"
 #include "sd.h"
 
-#define VERSION "0.81"
+#define VERSION "0.82"
 
 const char *os_version(void) { return VERSION; }
 /* found by 'update' / POST /api/update in a kernel8.img: only a RoboOS kernel may replace the running one */
@@ -109,6 +109,7 @@ void kernel_main(void)
     net_name();                          /* /NAME.TXT and /IP.TXT are read here, on core 0 */
     clock_prepare();                     /* /TIME.TXT */
     sensors_probe();                     /* I2C: BME280, ADS1115, DS3231 */
+    sensors_log_boot();                  /* /SENSLOG.TXT: the sensor log */
     display_boot();                      /* I2C: OLED / LCD display (/DISPLAY.TXT) */
     radio_boot();                        /* I2C: RDA5807M FM radio (/RADIO.TXT) */
     { u64 rt = rtc_read(); if (rt) clock_set_time(rt, 3); }   /* the time before NTP answers */

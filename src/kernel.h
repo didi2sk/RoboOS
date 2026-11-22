@@ -243,6 +243,9 @@ struct sensor_values {
 void sensors_probe(void);
 int  sensors_have(void);
 int  sensors_read(struct sensor_values *v);
+void sensors_log_boot(void);         /* /SENSLOG.TXT: log every N minutes to /LOG/YYYYMMDD.CSV */
+void sensors_log_poll(void);         /* core 0, con_trygetc */
+int  sensors_log_every(void);        /* minutes, 0 = off */
 void sensors_cmd(int argc, char **argv);
 int  rtc_present(void);
 u64  rtc_read(void);                     /* Unix time from the DS3231, 0 = none */

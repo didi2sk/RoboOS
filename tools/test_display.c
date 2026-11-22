@@ -38,6 +38,14 @@ static int clock_format(char *b, u64 t, int iso) { (void)t; (void)iso; strcpy(b,
 static const char *os_version(void) { return "0.56"; }
 static const char *board_name(void) { return "Raspberry Pi 3 Model B+"; }
 static int sound_is_exclusive(void) { return 0; }
+#define SV_CPU 1
+#define SV_TEMP 2
+#define SV_HUM 4
+#define SV_PRESS 8
+#define SV_AIN 16
+struct sensor_values { int have, cpu_mc, temp_c100, hum_c100, press_pa, ain_mv[4]; };
+static int fake_have = SV_TEMP | SV_HUM | SV_PRESS;
+static int sensors_read(struct sensor_values *v) { memset(v, 0, sizeof(*v)); v->have = fake_have; v->temp_c100 = 2143; v->hum_c100 = 4520; v->press_pa = 100132; return v->have; }
 static int radio_on(void) { return 1; }
 static unsigned radio_freq(void) { return 10440; }
 static int radio_rssi(void) { return 40; }
@@ -405,6 +413,17 @@ int main(void)
     reset(SSD, 0x3C, 0x43, "type none\n");
     display_boot();
     check("not used", !display_found());
+
+    printf("sensor screen:\n");
+    reset(SSD, 0x3C, 0x43, "mode sensors\n");
+    display_boot(); now_us += 2100000; display_poll();
+    { const char *w[] = { "Temp 21.43 C", "Hum  45.2 %", "Pres 1001.3 hPa", "11:01:27" }; expect_rows("sensors 4 rows", 0, 0, 4, w); }
+    reset(SSD, 0x3C, 0x43, "mode sensors\nsize 128x32\n");
+    display_boot(); now_us += 2100000; display_poll();
+    { const char *w[] = { "21.4C 45.2%", "1001.3 hPa" }; expect_rows("sensors 2 rows", 0, 0, 2, w); }
+    reset(LCD, 0x27, 0xFF, "mode sensors\n");
+    display_boot(); now_us += 2100000; display_poll();
+    { const char *w[] = { "21.4C 45.2%", "1001.3 hPa" }; expect_rows("sensors lcd", 16, 0, 2, w); }
 
     printf("Waveshare 1.3\" OLED HAT (SH1106 on SPI + keys):\n");
     reset(SH, 0, 0xFF, "bus spi\ntype sh1106\nmode text\n");

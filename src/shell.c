@@ -715,7 +715,7 @@ static const struct cmd cmds[] = {
     { "voice",  "[add id cmd|del id|volume|mute|wake]", "offline voice commands (DF2301Q)", voice_cmd },
     { "dcf",    "[on|off|pin n|invert|pull|pon]", "DCF77 radio clock receiver", dcf_cmd    },
     { "display", "[scan|text|status|..]", "I2C OLED / LCD display",        display_cmd },
-    { "sensors", "[scan]",              "temperature, humidity, ADC, RTC", sensors_cmd },
+    { "sensors", "[scan|log min|off|now]", "temperature, humidity, ADC, RTC; CSV log", sensors_cmd },
     { "time",   "[sync|zone|server]",   "date and time (NTP), time zone",  time_cmd   },
     { "ls",     "[path]",               "list a directory on the SD card", cmd_ls     },
     { "cd",     "[dir]",                "change directory (.. = up, / = top)", cmd_cd },

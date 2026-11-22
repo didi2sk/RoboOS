@@ -583,6 +583,27 @@ logged_in:;
         put("}\n");
         return olen;
     }
+    if (!strcmp(path, "/api/sensors")) {                  /* 0.82: the I2C sensors (read here, on core 1 - like MQTT) */
+        if (!get) return fail(405, "use GET");
+        struct sensor_values v;
+        sensors_read(&v);
+        head(200);
+        put("{\"ok\":true");
+        char b[24];
+        #define C100(name, val) do { int x_ = (val); int k_ = 0; if (x_ < 0) { b[k_++] = '-'; x_ = -x_; } \
+            char t_[12]; int n_ = 0; u32 w_ = (u32)(x_ / 100); do t_[n_++] = (char)('0' + w_ % 10); while ((w_ /= 10)); \
+            while (n_) b[k_++] = t_[--n_]; b[k_++] = '.'; b[k_++] = (char)('0' + x_ / 10 % 10); b[k_++] = (char)('0' + x_ % 10); b[k_] = 0; \
+            put(",\"" name "\":"); put(b); } while (0)
+        if (v.have & SV_CPU) C100("cpu_c", v.cpu_mc / 10);
+        if (v.have & SV_TEMP) C100("temp_c", v.temp_c100);
+        if (v.have & SV_HUM) C100("hum_pct", v.hum_c100);
+        if (v.have & SV_PRESS) C100("press_hpa", v.press_pa);
+        #undef C100
+        if (v.have & SV_AIN) { put(",\"ain_mv\":["); for (int i = 0; i < 4; i++) { if (i) put(","); put_i(v.ain_mv[i]); } put("]"); }
+        put(",\"log_min\":"); put_i(sensors_log_every());
+        put("}\n");
+        return olen;
+    }
     if (!strcmp(path, "/api/reboot")) {
         if (!post) return fail(405, "use POST");
         kprintf("\n[API] reboot asked by %s\n", from);
@@ -591,5 +612,5 @@ logged_in:;
         put("{\"ok\":true,\"rebooting\":true}\n");
         return olen;
     }
-    return fail(404, "unknown: GET /api/status, GET|POST /api/gpio, GET /api/gpio/<pin>, GET|POST /api/sound, GET|POST /api/display, GET|POST /api/radio, POST /api/reboot");
+    return fail(404, "unknown: GET /api/status, GET|POST /api/gpio, GET /api/gpio/<pin>, GET|POST /api/sound, GET|POST /api/display, GET|POST /api/radio, GET /api/sensors, POST /api/reboot");
 }

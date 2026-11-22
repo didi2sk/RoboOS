@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.81**
+Current version: **0.82**
 
 ## Supported boards
 
@@ -464,6 +464,8 @@ several minutes (hour and date stay, the minute goes +1), so the time comes even
 0.80: offline voice commands with the DFRobot DF2301Q module (`voice`): a heard phrase runs a shell command.
 0.81: I2C fix - after an address that did not answer, the next transfer failed (the controller was still
 sending the STOP); `i2c scan` and the sensor search at boot missed devices that `i2c probe` saw.
+0.82: sensors on the display (`display sensors`, also under KEY1 on the HAT), a CSV log (`sensors log 5` ->
+/LOG/YYYYMMDD.CSV) and `GET /api/sensors` (JSON).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -651,6 +653,20 @@ on pin 6. At boot RoboOS looks for these modules by itself (`sensors scan` looks
 | BME280 (BMP280) | 0x76 / 0x77 | temperature, humidity (BME280 only), pressure |
 | BMP180 (BMP085) | 0x77 | temperature, pressure (0.73) |
 | AHT20 (AHT10) | 0x38 | humidity, temperature (0.79; the AHT20 + BMP280 board gives humidity + pressure) |
+
+Using the values (0.82):
+
+```
+sensors                 all values now
+display sensors         temperature / humidity / pressure on the display (2 rows: "21.4C 45.2%" + "1001.3 hPa")
+sensors log 5           a line every 5 minutes to /LOG/YYYYMMDD.CSV (one file per day; saved in /SENSLOG.TXT)
+sensors log now | off
+```
+
+The CSV (`time,temp_c,hum_pct,press_hpa,cpu_c`, local time) opens in Excel / LibreOffice for a graph; the log
+needs the time (NTP, DCF77, battery clock or `time set`). `GET /api/sensors` (with the API token) answers e.g.
+`{"ok":true,"cpu_c":48.31,"temp_c":21.43,"hum_pct":45.20,"press_hpa":1001.32,"log_min":5}`. BASIC `SENSOR(n)`,
+C `sensorRead(n)` and MQTT (state JSON) have the same values.
 | ADS1115 | 0x48-0x4B | 4 analog inputs A0-A3, 0-4.096 V in mV (do not exceed 3.3 V!) |
 | DS3231 (DS1307) | 0x68 | battery clock: the time is known at boot even without a network |
 
