@@ -80,9 +80,22 @@ static int xfer(u8 addr, u8 *buf, int n, int rd)
     last_us = (u32)(timer_us() - t0);
     return r;
 }
+/* 0.81: after a NACK the BSC still finishes the transfer (STOP) with TA set; starting the next one at
+ * once spoiled it (owner, 3B+: 'i2c probe' saw 0x38 + 0x77 answer, but 'i2c scan' - one address after
+ * another - found nothing; the first transfer after a NACK always timed out). So wait for the end. */
+static void bsc_settle(void)
+{
+    u64 end = timer_us() + 2000;
+    while ((mmio_read(BSC_S) & S_TA) && timer_us() < end) ;
+    if (mmio_read(BSC_S) & S_TA) { mmio_write(BSC_C, 0); delay_us(10); }   /* still busy: reset the controller */
+    mmio_write(BSC_S, S_DONE | S_ERR | S_CLKT);
+    mmio_write(BSC_C, C_I2CEN | C_CLEAR);
+}
+
 static int xfer2(u8 addr, u8 *buf, int n, int rd)
 {
     int i = 0;
+    if (mmio_read(BSC_S) & S_TA) bsc_settle();            /* a previous transfer still running */
     mmio_write(BSC_C, C_I2CEN | C_CLEAR);
     mmio_write(BSC_S, S_DONE | S_ERR | S_CLKT);
     mmio_write(BSC_A, addr);
@@ -96,23 +109,18 @@ static int xfer2(u8 addr, u8 *buf, int n, int rd)
         else while ((s & S_TXD) && i < n) { mmio_write(BSC_FIFO, buf[i++]); s = mmio_read(BSC_S); }
         if (s & (S_ERR | S_CLKT)) {
             last_s = s;
-            mmio_write(BSC_S, S_DONE | S_ERR | S_CLKT);
-            mmio_write(BSC_C, C_I2CEN | C_CLEAR);
+            bsc_settle();                                 /* let the STOP go out before anything else */
             return (s & S_ERR) ? -1 : -2;
         }
         if (s & S_DONE) {
             delay_us(30);                                 /* 0.68: a late ERR (no ACK) must not pass as done */
             last_s = s | mmio_read(BSC_S);
-            if (last_s & (S_ERR | S_CLKT)) {
-                mmio_write(BSC_S, S_DONE | S_ERR | S_CLKT);
-                mmio_write(BSC_C, C_I2CEN | C_CLEAR);
-                return -1;
-            }
+            if (last_s & (S_ERR | S_CLKT)) { bsc_settle(); return -1; }
             if (rd) while ((mmio_read(BSC_S) & S_RXD) && i < n) buf[i++] = (u8)mmio_read(BSC_FIFO);
             mmio_write(BSC_S, S_DONE);
             return i == n ? 0 : -2;
         }
-        if (timer_us() > end) { mmio_write(BSC_C, C_I2CEN | C_CLEAR); return -2; }
+        if (timer_us() > end) { last_s = s; mmio_write(BSC_C, 0); delay_us(10); bsc_settle(); return -2; }
     }
 }
 

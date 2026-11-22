@@ -210,6 +210,11 @@ Keys: `con_getkey()` decodes escape sequences into `K_UP`... (kbd.c sends the sa
 - **Floating UART RX**: GPIO15 had no pull - with no USB-TTL cable the noise became random characters at boot
   ("kk" before the first command). v0.32: pull-up on RX, DR error bits (FE/PE/BE/OE) dropped, a fresh keyboard's
   reports ignored for 300 ms, and input that arrived during boot is flushed before autostart / the shell.
+- **BSC (I2C) after a NACK**: the controller sets ERR while TA is still set (status 0x151) and still sends
+  the STOP; starting the next transfer at once spoils it (it times out). v0.81 `bsc_settle()` waits for TA to
+  clear (2 ms, else C=0 reset) after ERR/CLKT/timeout and before a start. Owner (3B+, AHT20+BMP280): `i2c probe`
+  0x38 / 0x77 ANSWERED but `i2c scan` 0 devices; the first probe after a NACKing address timed out. This likely
+  also caused the earlier odd I2C scan results (phantom / missing devices, v0.68-0.70).
 - The font covers ASCII 32-126 only - keep all on-screen strings ASCII.
 - Keep exceptions inside programs recoverable: exception stack is separate so `app_crashed()` can longjmp back.
 

@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.80**
+Aktuálna verzia: **0.81**
 
 ## Podporované dosky
 
@@ -458,6 +458,8 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 (hodina a dátum ostávajú, minúta rastie o 1), takže čas príde, aj keď má každá minúta chyby.
 0.79: senzor vlhkosti a teploty AHT20 / AHT10 na 0x38 (napr. doska AHT20 + BMP280) v `sensors`, MQTT, API, BASIC.
 0.80: hlasové príkazy offline s modulom DFRobot DF2301Q (`voice`): počutá veta spustí príkaz shellu.
+0.81: oprava I2C - po adrese, ktorá neodpovedala, zlyhal ďalší prenos (radič ešte posielal STOP);
+`i2c scan` a hľadanie senzorov pri štarte nevideli zariadenia, ktoré `i2c probe` videl.
 
 ### Dátum a čas (NTP)
 
