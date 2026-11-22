@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.101**
+Current version: **0.102**
 
 ## Supported boards
 
@@ -484,7 +484,8 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.98: `cam sregs` prints every camera sensor register RoboOS sets while it streams; `tools/ov5647regs.sh` prints the same list under Linux, to compare.
 0.99: camera fix: while waiting for frames RoboOS kept writing the receiver status back (also its "synchronised" bits) thousands of times per second; now only error bits are cleared. Defaults like Linux on the same board: 1296x972 mode, gate 0x15, receiver first.
 0.100: in the 1296 mode the sensor gets exactly the values Linux leaves in it (manual exposure 0x57e, gain 0x40, frame length 0x602, mirror 0x3821 = 3, no AWB).
-0.101: camera BUG FOUND: RoboOS powered the wrong camera receiver (firmware power domain 13 = UNICAM0; the camera connector uses UNICAM1 = 14), so the receiver never saw data. Fixed.
+0.101: camera BUG FOUND: RoboOS powered the wrong camera receiver (firmware power domain 13 = UNICAM0; the camera connector uses UNICAM1 = 14), so the receiver never saw data. Fixed - **the camera works on the Pi 3B+** (owner).
+0.102: camera colours: the pixel colour order follows the sensor mirroring (GBRG in the default 1296 mode, like Linux); `cam bayer bggr|gbrg|grbg|rggb` if the colours look wrong.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -892,8 +893,7 @@ its own I2C bus (I2C0 on GPIO44/45 - not the pins on the header) and prints the 
 `cam bars` the sensor's own colour bars (tests the cable link without the lens). The sensor runs its
 640x480 mode (60 fps) with its own auto exposure and white balance; the picture is 320x240 colour
 pixels drawn 2x or 3x. After stopping it prints the frame counts and the receiver status - photograph
-those lines if there is no picture. The sensor was found on a Pi 3B (0.88); **the picture is not yet
-tested on hardware.**
+those lines if there is no picture. The sensor was found on a Pi 3B (0.88); **the picture works on the Pi 3B+ since 0.101** (0.89-0.100 powered the wrong receiver).
 
 ### MQTT
 
