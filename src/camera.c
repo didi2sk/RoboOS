@@ -245,7 +245,11 @@ static int sensor_stream(int on)
         wr16(saddr, 0x503D, test_pattern ? 0x80 : 0x00);
         wr16(saddr, 0x3503, 0x00);                         /* auto exposure + gain */
         wr16(saddr, 0x5001, 0x01);                         /* auto white balance */
-        return wr16(saddr, 0x0100, 0x01);
+        wr16(saddr, 0x0100, 0x01);
+        /* 0.96: undo our stream_off - 0x4202 (frames off = 0x0f) and 0x300d survive the 0x0103 reset
+         * (Linux writes them after its mode list too); without this the sensor sent only the clock */
+        wr16(saddr, 0x4202, 0x00);
+        return wr16(saddr, 0x300D, 0x00);
     }
     if (on) {
         if (wr_list(common, sizeof(common) / sizeof(common[0]))) return -1;
@@ -504,6 +508,7 @@ static void show(int live)
     u8 s0100 = 0xEE, s4800 = 0xEE, s300d = 0xEE, s3036 = 0xEE, s4814 = 0xEE;
     rd16(saddr, 0x0100, &s0100); rd16(saddr, 0x4800, &s4800); rd16(saddr, 0x300D, &s300d);
     rd16(saddr, 0x3036, &s3036); rd16(saddr, 0x4814, &s4814);
+    u8 s4202 = 0xEE; rd16(saddr, 0x4202, &s4202);
     if (!live && got && fb) { while (con_trygetc() < 0) delay_us(20000); }
     cam_stop();
     if (fb) { fb_hold(0); fb_redraw(); }
@@ -511,8 +516,8 @@ static void show(int live)
     kprintf("receiver status:"); print_sta(sta_or); if (!sta_or) kprintf(" (nothing)");
     kprintf("\nwrite pointer 0x%x (buffers 0x%x / 0x%x), lanes CLK %x DAT0 %x DAT1 %x\n",
             ibwp, (u32)BUF_A | 0xC0000000u, (u32)BUF_B | 0xC0000000u, lclk, ld0, ld1);
-    kprintf("at the end: STA 0x%x ISTA 0x%x; sensor 0100=%02x 4800=%02x 300d=%02x 3036=%02x 4814=%02x\n",
-            sta_now, ista, s0100, s4800, s300d, s3036, s4814);
+    kprintf("at the end: STA 0x%x ISTA 0x%x; sensor 0100=%02x 4800=%02x 300d=%02x 4202=%02x 3036=%02x 4814=%02x\n",
+            sta_now, ista, s0100, s4800, s300d, s4202, s3036, s4814);
     if (!got) kprintf("NO PICTURE: no complete frame came in (send a photo of these lines)\n");
 }
 
