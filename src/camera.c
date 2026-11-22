@@ -341,6 +341,7 @@ static void unicam_stop(void)
     uwf(0x000, 16, 1);                                   /* SOE: stop the output engine */
     uw(0x018, 0); uw(0x01C, 0);
     uw(0x010, 0);
+    uwf(0x000, 4, 1); delay_us(60); uwf(0x000, 4, 0);  /* peripheral reset pulse (Linux unicam_disable) */
     uwf(0x000, 1, 0);
     uw(0x200, 0);
     mmio_write(UNI_GATE, 0x5a000000);
@@ -361,12 +362,16 @@ static int cam_start(void)
     if (streaming) return 0;
     if (!sensor && !detect(0)) { kprintf("no camera sensor found ('cam' shows why)\n"); return -1; }
     if (sensor != 1) { kprintf("only the OV5647 can give a picture so far\n"); return -1; }
-    u32 g[2] = { 13, 0 };
+    /* 0.101: the FIRMWARE domain number of UNICAM1 is 14 (Linux raspberrypi-power: DT index 13 + 1; Circle
+     * DOMAIN_ID_UNICAM1 14). 0.89-0.100 powered 13 = UNICAM0 (the other receiver): CSI1's registers worked but
+     * its analogue lane front end stayed unpowered = clock seen at most, never data sync / packets. */
+    { u32 off[2] = { 13, 0 }; mbox_prop(0x00038030, off, 2); }   /* undo the stray UNICAM0 power-on of older versions */
+    u32 g[2] = { 14, 0 };
     int ok = mbox_prop(0x00030030, g, 2);
     STEP("cam 1: power domain UNICAM1 was %s (%u)\n", ok ? (g[1] & 1 ? "on" : "off") : "?? (no answer)", g[1]);
-    u32 pd[2] = { 13, 1 };
+    u32 pd[2] = { 14, 1 };
     ok = mbox_prop(0x00038030, pd, 2);
-    g[0] = 13; g[1] = 0;
+    g[0] = 14; g[1] = 0;
     int ok2 = mbox_prop(0x00030030, g, 2);
     STEP("cam 2: switched on: answer %s, now %s (%u)\n", ok ? "ok" : "NONE", ok2 ? (g[1] & 1 ? "on" : "OFF") : "?", g[1]);
     cam1_clock(1);
@@ -399,6 +404,7 @@ static void cam_stop(void)
     sensor_stream(0);
     unicam_stop();
     cam1_clock(0);
+    { u32 pd[2] = { 14, 0 }; mbox_prop(0x00038030, pd, 2); }    /* UNICAM1 power off */
     streaming = 0;
 }
 

@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.100**
+Aktuálna verzia: **0.101**
 
 ## Podporované dosky
 
@@ -480,6 +480,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.98: `cam sregs` vypíše všetky registre senzora kamery, ktoré RoboOS nastavuje, počas vysielania; `tools/ov5647regs.sh` vypíše ten istý zoznam na Linuxe - na porovnanie.
 0.99: oprava kamery: počas čakania na snímky RoboOS tisíckrát za sekundu zapisoval stav prijímača späť (aj bity "zosynchronizované"); teraz maže len chybové bity. Predvolené ako Linux na tej istej doske: režim 1296x972, hradlo 0x15, najprv prijímač.
 0.100: v režime 1296 dostane senzor presne hodnoty, ktoré v ňom necháva Linux (ručná expozícia 0x57e, zosilnenie 0x40, dĺžka snímky 0x602, zrkadlenie 0x3821 = 3, bez AWB).
+0.101: NÁJDENÁ CHYBA kamery: RoboOS zapínal napájanie nesprávneho prijímača (doména firmvéru 13 = UNICAM0; konektor kamery používa UNICAM1 = 14), takže prijímač nikdy nevidel dáta. Opravené.
 
 ### Dátum a čas (NTP)
 
