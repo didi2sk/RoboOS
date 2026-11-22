@@ -55,12 +55,27 @@ static u32 isqrt(u64 v)
 /* ---- chip ---- */
 static int wr(u8 reg, u8 v) { return i2c_write_reg((u8)addr, reg, &v, 1); }
 
+static u8 pwr;                                          /* PWR_MGMT_1 read back (0x40 = asleep) */
+static u64 next_wake;
+
+/* 0.84: wake it up and check (owner's GY-521: all data 0 = still in sleep after the old reset + one write) */
+static int wake(void)
+{
+    for (int t = 0; t < 3; t++) {
+        wr(0x6B, 0x00);                                 /* sleep bit off, internal clock */
+        delay_us(50000);
+        wr(0x6B, 0x01);                                 /* gyro PLL clock */
+        delay_us(10000);
+        if (i2c_read_reg((u8)addr, 0x6B, &pwr, 1) == 0 && !(pwr & 0x40)) return 1;
+    }
+    return 0;
+}
+
 static int setup(void)
 {
-    if (wr(0x6B, 0x80)) return 0;                       /* reset */
-    delay_us(100000);
-    wr(0x6B, 0x01);                                     /* awake, gyro PLL clock */
-    delay_us(10000);
+    u8 v;
+    if (i2c_read_reg((u8)addr, 0x6B, &v, 1)) return 0;
+    wake();                                             /* no device reset: some clones stay asleep after it */
     wr(0x19, 7);                                        /* sample rate 1 kHz / 8 */
     wr(0x1A, 3);                                        /* low-pass ~44 Hz */
     wr(0x1B, 0);                                        /* +-250 deg/s */
@@ -75,6 +90,11 @@ static int read_raw(void)
     ax = (short)(d[0] << 8 | d[1]); ay = (short)(d[2] << 8 | d[3]); az = (short)(d[4] << 8 | d[5]);
     traw = (short)(d[6] << 8 | d[7]);
     gx = (short)(d[8] << 8 | d[9]); gy = (short)(d[10] << 8 | d[11]); gz = (short)(d[12] << 8 | d[13]);
+    int zero = 1; for (int i = 0; i < 14; i++) if (d[i]) zero = 0;
+    if (zero) {                                         /* asleep (or not measuring): wake it, no values */
+        if (timer_us() >= next_wake) { next_wake = timer_us() + 1000000; wake(); }
+        return -2;
+    }
     last_read = timer_us();
     return 0;
 }
@@ -85,7 +105,7 @@ int motion_present(void) { return addr != 0; }
 int motion_get(struct motion_values *m)
 {
     if (!addr) return -1;
-    if (!last_read || timer_us() - last_read > 40000) if (read_raw()) return -1;
+    if (!last_read || timer_us() - last_read > 40000) { int e = read_raw(); if (e) return e; }
     m->ax_mg = ax * 1000 / 16384; m->ay_mg = ay * 1000 / 16384; m->az_mg = az * 1000 / 16384;
     m->gx_d10 = (gx - gx0) * 10 / 131; m->gy_d10 = (gy - gy0) * 10 / 131; m->gz_d10 = (gz - gz0) * 10 / 131;
     m->temp_c100 = kind == 0x68 ? traw * 100 / 340 + 3653 : traw * 100 / 334 + 2100;
@@ -228,8 +248,10 @@ void motion_cmd(int argc, char **argv)
         return;
     }
 #endif
-    if (motion_get(&m)) { kprintf("motion sensor not answering\n"); return; }
-    kprintf("MPU-%s at 0x%02x:\n", kind == 0x68 ? "6050" : kind == 0x70 ? "6500" : "9250", (u32)addr);
+    { int e = motion_get(&m);
+      if (e == -2) { kprintf("MPU at 0x%02x gives no data (all 0) - asleep? PWR_MGMT_1 = 0x%02x (0x40 = sleep); trying to wake it\n", (u32)addr, (u32)pwr); return; }
+      if (e) { kprintf("motion sensor not answering\n"); return; } }
+    kprintf("MPU-%s at 0x%02x (WHO_AM_I 0x%02x, PWR_MGMT_1 0x%02x):\n", kind == 0x68 ? "6050" : kind == 0x70 ? "6500" : "9250", (u32)addr, (u32)kind, (u32)pwr);
     put_d10("pitch", m.pitch_d10, "deg");
     put_d10("roll", m.roll_d10, "deg");
     kprintf("  %-10s x %d  y %d  z %d mg  (|a| %d mg)\n", "accel", m.ax_mg, m.ay_mg, m.az_mg, m.g_mg);

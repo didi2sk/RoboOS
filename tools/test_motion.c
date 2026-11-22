@@ -20,6 +20,8 @@ static int i2c_read_reg(u8 a, u8 r, void *bv, int n)
     u8 *b = bv;
     if (a != 0x68) return -1;
     if (r == 0x75) { b[0] = 0x68; return 0; }
+    if (r == 0x6B) { b[0] = woke ? 0x01 : 0x40; return 0; }
+    if (r == 0x3B && n == 14 && !woke) { memset(b, 0, 14); return 0; }   /* asleep: all 0 */
     if (r == 0x3B && n == 14) {
         short v[7] = { reg_a[0], reg_a[1], reg_a[2], reg_t, reg_g[0], reg_g[1], reg_g[2] };
         for (int i = 0; i < 7; i++) { b[2 * i] = (u8)((uint16_t)v[i] >> 8); b[2 * i + 1] = (u8)v[i]; }
@@ -27,7 +29,8 @@ static int i2c_read_reg(u8 a, u8 r, void *bv, int n)
     }
     return -1;
 }
-static int i2c_write_reg(u8 a, u8 r, const void *b, int n) { if (a != 0x68) return -1; if (r == 0x6B && *(const u8 *)b == 1) woke = 1; return 0; }
+static int sleepy;                                         /* the chip ignores the first wake-up writes */
+static int i2c_write_reg(u8 a, u8 r, const void *b, int n) { if (a != 0x68) return -1; if (r == 0x6B && *(const u8 *)b == 1) { if (sleepy) sleepy--; else woke = 1; } return 0; }
 #include "../src/motion.c"
 static int errors; static void check(const char *w, int ok) { printf("  %-50s %s\n", w, ok ? "ok" : "WRONG"); if (!ok) errors++; }
 static void tilt(double pitch, double roll)               /* gravity for this pitch / roll, 16384 = 1 g */
@@ -47,8 +50,9 @@ int main(void)
     }
     printf("atan2 worst error %d.%d deg\n", worst / 10, worst % 10);
     check("integer atan2 within 0.2 deg", worst <= 2);
+    sleepy = 1;                                            /* needs the retry in wake() */
     motion_boot();
-    check("found at 0x68, woken", addr == 0x68 && woke);
+    check("found at 0x68, woken (after a retry)", addr == 0x68 && woke);
     struct motion_values m;
     double cases[][2] = { { 0, 0 }, { 30, 0 }, { -45, 0 }, { 0, 20 }, { 0, -60 }, { 15, 25 }, { 80, 0 } };
     for (int i = 0; i < 7; i++) {
@@ -69,6 +73,11 @@ int main(void)
     check("held 1 s: still one", shakes == 1);
     now_us += 1000000; last_read = 0; motion_poll();
     check("after 1 s: two", shakes == 2);
+    woke = 0; sleepy = 1000; u32 before = shakes; last_read = 0;
+    for (int i = 0; i < 40; i++) { now_us += 50000; last_read = 0; motion_poll(); }
+    check("asleep (all 0): no data, no shakes counted", motion_get(&m) == -2 && shakes == before);
+    sleepy = 0; now_us += 1100000; last_read = 0; motion_get(&m); last_read = 0;
+    check("woken again by the next read", woke && motion_get(&m) == 0);
     printf(errors ? "\n%d ERRORS\n" : "\nall OK\n", errors);
     return errors != 0;
 }

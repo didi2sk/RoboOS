@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.83**
+Current version: **0.84**
 
 ## Supported boards
 
@@ -467,6 +467,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.82: sensors on the display (`display sensors`, also under KEY1 on the HAT), a CSV log (`sensors log 5` ->
 /LOG/YYYYMMDD.CSV) and `GET /api/sensors` (JSON).
 0.83: MPU-6050 / GY-521 (`motion`): tilt (spirit level), acceleration, rotation, shake detection; display, MQTT, API, BASIC.
+0.84: MPU-6050 wake-up fixed (a GY-521 stayed asleep and gave all 0, which also counted fake shakes).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
