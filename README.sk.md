@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.85**
+Aktuálna verzia: **0.86**
 
 ## Podporované dosky
 
@@ -465,6 +465,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.83: MPU-6050 / GY-521 (`motion`): náklon (vodováha), zrýchlenie, otáčanie, otrasy; displej, MQTT, API, BASIC.
 0.84: oprava zobudenia MPU-6050 (GY-521 ostal spať a dával samé 0, čo navyše počítalo falošné otrasy).
 0.85: `motion` beží naživo na celej obrazovke do stlačenia klávesy (vodováha pre pitch / roll); `motion once` vypíše raz.
+0.86: MPU-6050 na vnútornom oscilátore (GY-521 sa zobudil, ale s hodinami z gyroskopu nemeral nič).
 
 ### Dátum a čas (NTP)
 
