@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.80**
+Current version: **0.81**
 
 ## Supported boards
 
@@ -462,6 +462,8 @@ longer break pulses); two good minutes that fit together set the clock even with
 several minutes (hour and date stay, the minute goes +1), so the time comes even when every minute has errors.
 0.79: AHT20 / AHT10 humidity + temperature sensor at 0x38 (e.g. the AHT20 + BMP280 board) in `sensors`, MQTT, API, BASIC.
 0.80: offline voice commands with the DFRobot DF2301Q module (`voice`): a heard phrase runs a shell command.
+0.81: I2C fix - after an address that did not answer, the next transfer failed (the controller was still
+sending the STOP); `i2c scan` and the sensor search at boot missed devices that `i2c probe` saw.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
