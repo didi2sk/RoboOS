@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.88**
+Current version: **0.89**
 
 ## Supported boards
 
@@ -472,6 +472,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.86: MPU-6050 on its internal oscillator (a GY-521 woke up but measured nothing with the gyro clock).
 0.87: AMG8833 Grid-EYE thermal camera (`thermal`): live heat map on HDMI, person detection (MQTT), display, API, BASIC.
 0.88: camera on the CSI ribbon, step 1 (`cam`): powers the camera and finds the sensor (OV5647 / IMX219).
+0.89: camera step 2: `cam live` / `cam snap` / `cam bars` - the first picture from an OV5647 on HDMI (640x480).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -875,8 +876,12 @@ without the GPU firmware (the Linux `bcm2835-unicam` way). Step 1: `cam` switche
 (CAM_GPIO0: firmware expander pin 5 on the Pi 3, GPIO40 on the Zero 2 W), talks to the sensor on
 its own I2C bus (I2C0 on GPIO44/45 - not the pins on the header) and prints the chip id
 (OV5647 = `5647`). `cam reg <addr> [value]` reads / writes a sensor register, `cam off` switches it off.
-A picture comes in the next steps (sensor setup, the Unicam CSI-2 receiver, colours, HDMI / web).
-**Not yet tested on hardware.**
+0.89 (OV5647 only): `cam live` shows the picture on HDMI until a key, `cam snap` one picture,
+`cam bars` the sensor's own colour bars (tests the cable link without the lens). The sensor runs its
+640x480 mode (60 fps) with its own auto exposure and white balance; the picture is 320x240 colour
+pixels drawn 2x or 3x. After stopping it prints the frame counts and the receiver status - photograph
+those lines if there is no picture. The sensor was found on a Pi 3B (0.88); **the picture is not yet
+tested on hardware.**
 
 ### MQTT
 
@@ -1064,7 +1069,7 @@ If you connect after boot, press Enter.
 | `ai <question>\|@cmd ..\|key\|model` | ask Claude (own Anthropic API key) |
 | `radio [MHz\|up\|down\|scan\|vol n\|off]` | FM radio (RDA5807M module on I2C) |
 | `motion [watch\|zero\|threshold mg\|alarm on\|off]` | tilt, acceleration, shakes (MPU-6050 / GY-521) |
-| `cam [reg a [v]\|off]` | camera on the CSI ribbon: find the sensor (step 1) |
+| `cam [live\|snap\|bars\|reg a [v]\|off]` | camera on the CSI ribbon: find the sensor, live picture on HDMI |
 | `thermal [once\|range lo hi\|person C]` | 8x8 thermal camera (AMG8833), live heat map |
 | `voice [add id cmd\|del id\|volume\|mute\|wake]` | offline voice commands (DFRobot DF2301Q) |
 | `dcf [on\|off\|pin n\|invert\|pull\|pon]` | DCF77 radio clock receiver on a GPIO |
