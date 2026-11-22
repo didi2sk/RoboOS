@@ -200,7 +200,7 @@ static const struct rv vga[] = {
     {0x3a09,0x2e},{0x3a0a,0x00},{0x3a0b,0xfb},{0x3a0d,0x02},{0x3a0e,0x01},{0x4004,0x02},{0x4800,0x34},
     {0x380c,0x07},{0x380d,0x3c},{0x380e,0x01},{0x380f,0xf8},          /* HTS 1852, VTS 0x1f8 (mode values) */
 };
-static int test_pattern;
+static int test_pattern, cont_clk;                    /* 0.91: cont_clk = continuous MIPI clock (test) */
 
 static int wr_list(const struct rv *l, int n)
 {
@@ -222,7 +222,7 @@ static int sensor_stream(int on)
         wr16(saddr, 0x5001, 0x01);                         /* auto white balance */
         wr16(saddr, 0x503D, test_pattern ? 0x80 : 0x00);   /* colour bars */
         wr16(saddr, 0x0100, 0x01);
-        wr16(saddr, 0x4800, 0x34);                         /* bus idle + clock gate + line sync (non-continuous) */
+        wr16(saddr, 0x4800, cont_clk ? 0x04 : 0x34);       /* bus idle (+ clock gate + line sync when non-continuous) */
         wr16(saddr, 0x4202, 0x00);
         return wr16(saddr, 0x300D, 0x00);
     }
@@ -277,9 +277,10 @@ static void unicam_start(void)
     uwf(0x028, 0xFF, 2); uwf(0x028, 0xFF00, 6); uwf(0x028, 0xFF0000, 0);   /* DLT */
     uwf(0x000, 16, 0);                                   /* SOE = 0 */
     uw(0x02C, (1u << 31) | (1u << 9) | (1u << 8) | 1);   /* CMP0: PCE GI CPH, VC 0, DT 1 (frame end) */
-    uw(0x010, 1 | 4);                                    /* CLK: CLE + CLLPE (non-continuous) */
-    uw(0x018, 1 | 4);                                    /* DAT0: DLE + DLLPE */
-    uw(0x01C, 1 | 4);                                    /* DAT1 */
+    u32 lane = cont_clk ? (1 | 4 | 8 | 16) : (1 | 4);    /* enable + LP enable (+ HS + termination when continuous) */
+    uw(0x010, lane);                                     /* CLK */
+    uw(0x018, lane);                                     /* DAT0 */
+    uw(0x01C, lane);                                     /* DAT1 */
     uw(0x118, W * 2);                                    /* IBLS: bytes per line */
     cur_buf = 0;
     set_buf(BUF_A);
@@ -409,7 +410,17 @@ static void show(int live)
     int scale = fb && fb_width() >= 1280 && fb_height() >= 1000 ? 3 : 2;
     if (fb && fb_height() < 24 + 240 * (u32)scale + 24) fb = 0;   /* no room for picture + text */
     STEP("cam 8: first frame...\n");
-    { u16 *f0 = next_frame(3000); STEP("cam 9: %s (FS %u FE %u, STA 0x%x, write pointer 0x%x)\n", f0 ? "frame OK" : "NO frame", n_fs, n_fe, sta_or, ur(0x11C)); if (trace) delay_us(1500000); }
+    u16 *f0 = 0;
+    for (int i = 0; i < 6 && !f0; i++) {                 /* 0.91: 6 x 0.5 s, what the lanes and the sensor do meanwhile */
+        f0 = next_frame(500);
+        if (!f0 && trace) {
+            u8 e1 = 0xEE, e2 = 0xEE, g = 0xEE;
+            rd16(saddr, 0x3501, &e1); rd16(saddr, 0x3502, &e2); rd16(saddr, 0x350B, &g);
+            kprintf("  %u ms: STA 0x%x CLK %x DAT0 %x DAT1 %x wp 0x%x | exposure %02x%02x gain %02x\n",
+                    (i + 1) * 500, sta_or, ur(0x010), ur(0x018), ur(0x01C), ur(0x11C), e1, e2, g);
+        }
+    }
+    { STEP("cam 9: %s (FS %u FE %u, STA 0x%x, write pointer 0x%x)\n", f0 ? "frame OK" : "NO frame", n_fs, n_fe, sta_or, ur(0x11C)); if (trace) delay_us(1500000); }
     if (fb) { fb_hold(1); for (u32 y = 0; y < fb_height(); y++) { u32 *r = fb_row((int)y); for (u32 x = 0; x < fb_width(); x++) r[x] = 0; } }
     int x0 = fb ? ((int)fb_width() - 320 * scale) / 2 : 0, y0 = 24;
     if (fb) fb_text_px(8, 4, live ? "camera live - any key stops" : "camera picture - any key", 0xFFFFFF, 0);
@@ -476,6 +487,11 @@ void camera_cmd(int argc, char **argv)
     }
     if (!strcmp(a, "off")) { cam_stop(); power(0); sensor = 0; kprintf("camera power off\n"); return; }
     if (!strcmp(a, "trace")) { trace = argc > 2 && !strcmp(argv[2], "off") ? 0 : 1; kprintf("step trace %s\n", trace ? "on" : "off"); return; }
+    if (!strcmp(a, "clock") && argc > 2) {
+        cont_clk = !strcmp(argv[2], "cont");
+        kprintf("MIPI clock: %s (test setting until reboot)\n", cont_clk ? "continuous" : "non-continuous (default)");
+        return;
+    }
     if (!strcmp(a, "live")) { test_pattern = 0; show(1); return; }
     if (!strcmp(a, "snap")) { test_pattern = 0; show(0); return; }
     if (!strcmp(a, "bars")) { test_pattern = 1; show(1); test_pattern = 0; return; }
@@ -499,6 +515,7 @@ void camera_cmd(int argc, char **argv)
             "       cam live            live picture on HDMI (640x480 sensor mode), any key stops\n"
             "       cam snap            one picture, any key\n"
             "       cam bars            the sensor's test colour bars (checks the link without the lens)\n"
+            "       cam clock cont|ncont  MIPI clock mode (test; default ncont)\n"
             "       cam reg <a> [v]     read / write a sensor register (16-bit address)\n"
             "       cam off             camera power off\n");
 }
