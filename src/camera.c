@@ -256,8 +256,14 @@ static int sensor_stream(int on)
         if (vga_mode ? wr_list(vga, sizeof(vga) / sizeof(vga[0])) : wr_list(binned, sizeof(binned) / sizeof(binned[0]))) return -1;
         u8 v = 0;
         if (!rd16(saddr, 0x4814, &v)) wr16(saddr, 0x4814, v & 0x3F);   /* virtual channel 0 */
-        wr16(saddr, 0x3503, 0x00);                         /* auto exposure + auto gain */
-        wr16(saddr, 0x5001, 0x01);                         /* auto white balance */
+        if (vga_mode == 0) {                               /* 0.100: exactly what Linux leaves in the sensor (owner's dump, same board) */
+            static const struct rv lx[] = { {0x3503,0x03},{0x5001,0x00},{0x3500,0x00},{0x3501,0x57},{0x3502,0xe0},
+                                            {0x350a,0x00},{0x350b,0x40},{0x380e,0x06},{0x380f,0x02},{0x3821,0x03} };
+            wr_list(lx, sizeof(lx) / sizeof(lx[0]));
+        } else {
+            wr16(saddr, 0x3503, 0x00);                     /* auto exposure + auto gain */
+            wr16(saddr, 0x5001, 0x01);                     /* auto white balance */
+        }
         wr16(saddr, 0x503D, test_pattern ? 0x80 : 0x00);   /* colour bars */
         wr16(saddr, 0x0100, 0x01);
         wr16(saddr, 0x4800, cont_clk ? 0x04 : 0x34);       /* bus idle (+ clock gate + line sync when non-continuous) */
