@@ -271,7 +271,7 @@ static void unicam_start(void)
     uw(0x00C, v);
     uwf(0x008, 8, 0);                                    /* ANA DDL = 0 */
     uw(0x100, 1 | 2 | 4 | (128u << 16));                 /* ICTL: FSIE FEIE IBOB, LCIE 128 */
-    uw(0x004, 0xFFFFFFFF);                               /* clear STA */
+    uw(0x004, 0x1B6FCu);                                 /* clear STA (the Linux UNICAM_STA_MASK_ALL bits only) */
     uw(0x104, 7);                                        /* clear ISTA */
     uwf(0x014, 0xFF, 2); uwf(0x014, 0xFF00, 6);          /* CLT: tclk_term_en, tclk_settle */
     uwf(0x028, 0xFF, 2); uwf(0x028, 0xFF00, 6); uwf(0x028, 0xFF0000, 0);   /* DLT */
@@ -403,6 +403,17 @@ static void draw_frame(const u16 *f, int x0, int y0, int scale)
     }
 }
 
+/* 0.92: all receiver registers + the clock regs, to compare with Linux (tools/camdump.py prints the same) */
+static void dump_regs(void)
+{
+    static const u16 offs[] = { 0x000,0x004,0x008,0x00C,0x010,0x014,0x018,0x01C,0x028,0x02C,0x030,0x034,0x038,
+                                0x100,0x104,0x108,0x10C,0x110,0x114,0x118,0x11C,0x120,0x124,0x128,0x12C,0x130,0x134,
+                                0x200,0x300,0x400 };
+    for (unsigned i = 0; i < sizeof(offs) / sizeof(offs[0]); i++)
+        kprintf("%03x=%08x%s", offs[i], ur(offs[i]), (i % 6) == 5 ? "\n" : "  ");
+    kprintf("\nCM_CAM1CTL=%08x CM_CAM1DIV=%08x gate=%08x\n", mmio_read(CM_CAM1CTL), mmio_read(CM_CAM1DIV), mmio_read(UNI_GATE));
+}
+
 static void show(int live)
 {
     if (cam_start()) return;
@@ -494,6 +505,13 @@ void camera_cmd(int argc, char **argv)
     }
     if (!strcmp(a, "live")) { test_pattern = 0; show(1); return; }
     if (!strcmp(a, "snap")) { test_pattern = 0; show(0); return; }
+    if (!strcmp(a, "dump")) {                         /* start, wait 1 s, print every register, stop */
+        test_pattern = 1;
+        int t = trace; trace = 0;
+        if (!cam_start()) { delay_us(1000000); next_frame(500); dump_regs(); kprintf("FS %u FE %u STA seen 0x%x\n", n_fs, n_fe, sta_or); cam_stop(); }
+        trace = t; test_pattern = 0;
+        return;
+    }
     if (!strcmp(a, "bars")) { test_pattern = 1; show(1); test_pattern = 0; return; }
     if (!strcmp(a, "reg") && argc > 2) {
         u64 reg, v;
@@ -515,6 +533,7 @@ void camera_cmd(int argc, char **argv)
             "       cam live            live picture on HDMI (640x480 sensor mode), any key stops\n"
             "       cam snap            one picture, any key\n"
             "       cam bars            the sensor's test colour bars (checks the link without the lens)\n"
+            "       cam dump            receiver registers while streaming (compare with Linux: tools/camdump.py)\n"
             "       cam clock cont|ncont  MIPI clock mode (test; default ncont)\n"
             "       cam reg <a> [v]     read / write a sensor register (16-bit address)\n"
             "       cam off             camera power off\n");
