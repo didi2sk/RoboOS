@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.84**
+Aktuálna verzia: **0.85**
 
 ## Podporované dosky
 
@@ -464,6 +464,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 /LOG/YYYYMMDD.CSV) a `GET /api/sensors` (JSON).
 0.83: MPU-6050 / GY-521 (`motion`): náklon (vodováha), zrýchlenie, otáčanie, otrasy; displej, MQTT, API, BASIC.
 0.84: oprava zobudenia MPU-6050 (GY-521 ostal spať a dával samé 0, čo navyše počítalo falošné otrasy).
+0.85: `motion` beží naživo na celej obrazovke do stlačenia klávesy (vodováha pre pitch / roll); `motion once` vypíše raz.
 
 ### Dátum a čas (NTP)
 
@@ -824,8 +825,9 @@ pin 1, GND pin 6, SCL pin 5, SDA pin 3; XDA / XCL / INT nezapájať). AD0 voľn�
 0x69 (vtedy, keď je na zbernici aj hodinový modul DS3231, ktorý je tiež na 0x68).
 
 ```
-motion                  náklon pitch / roll (stupne), zrýchlenie (mg), otáčanie (st./s), teplota čipu, otrasy
-motion watch            náklon naživo - vodováha (ktorákoľvek klávesa skončí)
+motion                  NAŽIVO do stlačenia klávesy: pitch / roll (stupne) s vodováhou, zrýchlenie (mg),
+                        otáčanie (st./s), teplota čipu, otrasy
+motion once             tie isté hodnoty vypísané raz
 motion zero             táto poloha = vodorovne (a gyroskop v pokoji = 0); uloží sa do /MOTION.TXT
 motion threshold 400    otras = |zrýchlenie| odchýlené od 1 g o viac ako 400 mg (alebo otáčanie > 150 st./s)
 motion alarm on|off     vypíše každý otras; MQTT <base>/motion dostane počet vždy
