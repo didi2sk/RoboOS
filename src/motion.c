@@ -101,6 +101,7 @@ static int read_raw(void)
 }
 
 int motion_present(void) { return addr != 0; }
+int motion_addr(void) { return addr; }
 
 /* values for the shell, display, API, MQTT, BASIC */
 int motion_get(struct motion_values *m)

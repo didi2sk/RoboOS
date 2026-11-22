@@ -32,8 +32,8 @@ static const char *const tname[] = { "none", "ssd1306", "sh1106", "lcd" };
 
 #define MAXR 10
 #define MAXC 32
-enum { M_TEXT, M_STATUS, M_CONSOLE, M_CLOCK, M_RADIO, M_SENSORS, M_MOTION };
-static const char *const mname[] = { "text", "status", "console", "clock", "radio", "sensors", "motion" };
+enum { M_TEXT, M_STATUS, M_CONSOLE, M_CLOCK, M_RADIO, M_SENSORS, M_MOTION, M_THERMAL };
+static const char *const mname[] = { "text", "status", "console", "clock", "radio", "sensors", "motion", "thermal" };
 static const char *const fname[] = { "small", "normal", "big", "tiny", "micro" };
 #define NFONTS 5
 static int dtype, daddr, dw, dh, rows, cols;    /* dw x dh: pixels (OLED) or characters (LCD) */
@@ -445,7 +445,7 @@ static void load_cfg(void)
             if (w && h) { cfg_w = (int)w; cfg_h = (int)h; }
         } else if (kl == 6 && !memcmp_n(k, "status", 6)) mode = !strcmp(vv, "on") ? M_STATUS : M_TEXT;   /* (0.55 files) */
         else if (kl == 3 && !memcmp_n(k, "bus", 3)) cfg_spi = !strcmp(vv, "spi");
-        else if (kl == 4 && !memcmp_n(k, "mode", 4)) { for (int i = 0; i < 7; i++) if (!strcmp(vv, mname[i])) mode = i; }
+        else if (kl == 4 && !memcmp_n(k, "mode", 4)) { for (int i = 0; i < 8; i++) if (!strcmp(vv, mname[i])) mode = i; }
         else if (kl == 4 && !memcmp_n(k, "font", 4)) { for (int i = 0; i < NFONTS; i++) if (!strcmp(vv, fname[i])) font = i; }
         else if (kl == 8 && !memcmp_n(k, "contrast", 8) && parse_num(vv, &x) && x < 256) contrast = (int)x;
     }
@@ -609,6 +609,25 @@ static void motion_draw(void)
     for (int i = 0; i < 4 && i < rows; i++) set_row(i, l[i]);
 }
 
+/* the thermal camera screen (0.87, AMG8833): hottest / coldest / person */
+static void thermal_draw(void)
+{
+    struct thermal_values t;
+    for (int r = 0; r < rows; r++) set_row(r, "");
+    if (thermal_get(&t)) { set_row(0, "no AMG8833"); return; }
+    char l[4][40]; int k;
+    k = ap(l[0], 0, "IR max "); k = c100(l[0], k, t.max_c100, 1); ap(l[0], k, " C");
+    k = ap(l[1], 0, "IR min "); k = c100(l[1], k, t.min_c100, 1); ap(l[1], k, " C");
+    k = ap(l[2], 0, "Avg    "); k = c100(l[2], k, t.avg_c100, 1); ap(l[2], k, " C");
+    ap(l[3], 0, t.warm >= 2 ? "Person: YES" : "Person: no");
+    if (rows <= 2) {
+        char a[40]; k = ap(a, 0, "max "); k = c100(a, k, t.max_c100, 1); ap(a, k, " C");
+        set_row(0, a); if (rows > 1) set_row(1, l[3]);
+        return;
+    }
+    for (int i = 0; i < 4 && i < rows; i++) set_row(i, l[i]);
+}
+
 /* ---- the HAT's keys (0.72): KEY1 21, KEY2 20, KEY3 16, joystick up 6, down 19, left 5, right 26, press 13
  * (active low, pull-ups). KEY1 = next screen (info, time, radio, console); on the radio screen KEY2/KEY3 seek
  * down/up, left/right = -/+ 0.1 MHz, up/down = volume, press = radio on/off. ---- */
@@ -636,11 +655,13 @@ static void radio_do(const char *a, const char *b)
 
 static void key_pressed(int k)
 {
-    static const int order[6] = { M_STATUS, M_CLOCK, M_SENSORS, M_MOTION, M_RADIO, M_CONSOLE };
+    static const int order[7] = { M_STATUS, M_CLOCK, M_SENSORS, M_MOTION, M_THERMAL, M_RADIO, M_CONSOLE };
     if (k == 0) {                                 /* next screen */
-        int i = 0; while (i < 6 && order[i] != mode) i++;
-        mode = order[(i + 1) % 6];
-        if (mode == M_MOTION && !motion_present()) mode = order[(i + 2) % 6];   /* no MPU-6050: skip its screen */
+        int i = 0; while (i < 7 && order[i] != mode) i++;
+        for (int s = 1; s < 7; s++) {                 /* skip the screens of chips that are not there */
+            mode = order[(i + s) % 7];
+            if ((mode != M_MOTION || motion_present()) && (mode != M_THERMAL || thermal_present())) break;
+        }
         for (int r = 0; r < rows; r++) set_row(r, "");
         cur_r = cur_c = 0; next_status = 0; flush();
         return;
@@ -769,13 +790,14 @@ void display_poll(void)
         busy = 0;
         return;
     }
-    if ((mode != M_STATUS && mode != M_CLOCK && mode != M_RADIO && mode != M_SENSORS && mode != M_MOTION) || timer_us() < next_status) return;
+    if ((mode != M_STATUS && mode != M_CLOCK && mode != M_RADIO && mode != M_SENSORS && mode != M_MOTION && mode != M_THERMAL) || timer_us() < next_status) return;
     busy = 1;
-    next_status = timer_us() + (mode == M_SENSORS ? 2000000 : mode == M_MOTION ? 250000 : 1000000);
+    next_status = timer_us() + (mode == M_SENSORS ? 2000000 : mode == M_MOTION ? 250000 : mode == M_THERMAL ? 500000 : 1000000);
     if (mode == M_CLOCK) clock_draw();
     else if (mode == M_RADIO) { radio_draw(); flush(); }
     else if (mode == M_SENSORS) { sensors_draw(); flush(); }
     else if (mode == M_MOTION) { motion_draw(); flush(); }
+    else if (mode == M_THERMAL) { thermal_draw(); flush(); }
     else { status_draw(); flush(); }
     busy = 0;
 }
@@ -816,8 +838,8 @@ void display_cmd(int argc, char **argv)
         if (e) kprintf("no display (try 'display scan')\n");
         return;
     }
-    else if (!strcmp(a, "time") || !strcmp(a, "clock") || !strcmp(a, "info") || !strcmp(a, "radio") || !strcmp(a, "sensors") || !strcmp(a, "motion")) {
-        mode = a[0] == 'i' ? M_STATUS : a[0] == 'r' ? M_RADIO : a[0] == 's' ? M_SENSORS : a[0] == 'm' ? M_MOTION : M_CLOCK;
+    else if (!strcmp(a, "time") || !strcmp(a, "clock") || !strcmp(a, "info") || !strcmp(a, "radio") || !strcmp(a, "sensors") || !strcmp(a, "motion") || !strcmp(a, "thermal")) {
+        mode = a[0] == 'i' ? M_STATUS : a[0] == 'r' ? M_RADIO : a[0] == 's' ? M_SENSORS : a[0] == 'm' ? M_MOTION : !strcmp(a, "thermal") ? M_THERMAL : M_CLOCK;
         next_status = 0;
         if (ok) { busy = 1; for (int r = 0; r < rows; r++) set_row(r, ""); flush(); busy = 0; }
         save_cfg();
@@ -897,7 +919,7 @@ void display_cmd(int argc, char **argv)
         else if (ok) { u8 c = on ? 0xAF : 0xAE; oled_cmds(&c, 1); }
     }
     else if (a[0]) {
-        kprintf("usage: display [scan | clear | text <row> <words> | info | time | sensors | motion | radio | console on|off\n"
+        kprintf("usage: display [scan | clear | text <row> <words> | info | time | sensors | motion | thermal | radio | console on|off\n"
                 "               | hat | keys | font micro|tiny|small|normal|big | on | off | type auto|lcd|ssd1306|sh1106|none\n"
                 "               | addr <0x..> | size <WxH> | contrast <0-255> | light on|off]\n");
         return;

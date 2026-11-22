@@ -131,6 +131,7 @@ static int raw_trygetc(void)
     display_poll();                             /* I2C display: the status screen */
     radio_poll();                               /* FM radio: RDS, network commands */
     motion_poll();                              /* MPU-6050: shake detection */
+    thermal_poll();                             /* AMG8833: presence */
     sensors_log_poll();                         /* sensor values -> /LOG/YYYYMMDD.CSV every N minutes */
     voice_poll();                               /* offline voice module: run the command for a heard id */
     return kbd_getc();

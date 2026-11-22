@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.86**
+Current version: **0.87**
 
 ## Supported boards
 
@@ -470,6 +470,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.84: MPU-6050 wake-up fixed (a GY-521 stayed asleep and gave all 0, which also counted fake shakes).
 0.85: `motion` runs live on the whole screen until a key (spirit-level bars for pitch / roll); `motion once` prints once.
 0.86: MPU-6050 on its internal oscillator (a GY-521 woke up but measured nothing with the gyro clock).
+0.87: AMG8833 Grid-EYE thermal camera (`thermal`): live heat map on HDMI, person detection (MQTT), display, API, BASIC.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -847,6 +848,25 @@ BASIC `SENSOR(8)` pitch, `SENSOR(9)` roll (0.1 deg), `SENSOR(10)` shakes, `SENSO
 the MQTT state and `GET /api/sensors` carry pitch, roll and shakes too. **Not yet tested on hardware** (PC test
 `tools/test_motion.c`: integer atan2 within 0.1 deg of libm, tilt at known angles, gyro / temperature, shakes).
 
+### Thermal camera (AMG8833 Grid-EYE, 0.87)
+
+The AMG8833 (Panasonic Grid-EYE, e.g. the Adafruit board) measures 8x8 temperatures (0-80 C, about +-2.5 C,
+up to ~7 m). Wire it to I2C (VIN 3.3 V pin 1, GND pin 6, SDA pin 3, SCL pin 5; 3Vo and INT open); address 0x69.
+
+```
+thermal                  a live heat map on the HDMI screen (smoothly scaled, colour scale, max / min / avg,
+                         person yes/no), any key stops
+thermal once             the 64 temperatures as numbers
+thermal range 20 35      fixed colours (C); 'thermal range auto' = from the coldest to the hottest pixel
+thermal person 2         a person / warm object = pixels 2 C above the background (default)
+display thermal          max / min / avg / person on the I2C display (also under KEY1 on the HAT)
+```
+
+A person (two or more warm pixels) is sent to MQTT `<base>/presence` (1 / 0, retained) when it changes;
+BASIC `SENSOR(14)` = the hottest pixel (0.01 C), `SENSOR(15)` = person; the MQTT state and `GET /api/sensors`
+(with all 64 pixels) carry it too. **Not yet tested on hardware** (PC test `tools/test_thermal.c`: decoding,
+presence, the heat map picture).
+
 ### MQTT
 
 MQTT is the usual way IoT devices talk to a server (Home Assistant, Node-RED, Mosquitto...).
@@ -1033,6 +1053,7 @@ If you connect after boot, press Enter.
 | `ai <question>\|@cmd ..\|key\|model` | ask Claude (own Anthropic API key) |
 | `radio [MHz\|up\|down\|scan\|vol n\|off]` | FM radio (RDA5807M module on I2C) |
 | `motion [watch\|zero\|threshold mg\|alarm on\|off]` | tilt, acceleration, shakes (MPU-6050 / GY-521) |
+| `thermal [once\|range lo hi\|person C]` | 8x8 thermal camera (AMG8833), live heat map |
 | `voice [add id cmd\|del id\|volume\|mute\|wake]` | offline voice commands (DFRobot DF2301Q) |
 | `dcf [on\|off\|pin n\|invert\|pull\|pon]` | DCF77 radio clock receiver on a GPIO |
 | `display [scan\|text n ..\|clear\|status on\|off\|size\|type\|addr\|hat\|keys]` | I2C OLED / LCD display, Waveshare SPI OLED HAT |
