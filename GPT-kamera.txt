@@ -1,0 +1,44 @@
+RoboOS – diagnostika CSI kamery OV5647
+Dátum: 2026-11-22
+Analyzovaný stav: RoboOS 0.101, oprava napájania v commite b10baaf0ffd253326576fe6302052028473db7ee
+
+Overenie opravy v RoboOS 0.101
+- Potvrdená chyba v kóde 0.89–0.100: RoboOS číta a zapisuje registre prijímača CSI1 (UNICAM1, 0x3F801000), ale pri požiadavkách firmvéru GET_DOMAIN_STATE (0x00030030) a SET_DOMAIN_STATE (0x00038030) používal ID 13. Tým pracoval s napájaním bloku UNICAM0. Predchádzajúce hlásenie „UNICAM1 … on“ teda v skutočnosti ukazovalo stav UNICAM0.
+- Overené nezávisle v dvoch zdrojoch. Linux Device Tree má index 12 pre UNICAM0 a 13 pre UNICAM1. Ovládač raspberrypi-power.c pre tieto domény prekladá index Device Tree na ID firmvéru ako index + 1. Circle pre rozhranie firmvéru priamo definuje UNICAM0 = 13 a UNICAM1 = 14.
+- Ide o internú napájaciu doménu prijímača v SoC. Napájanie snímača UC-261 a komunikácia I2C sú samostatná cesta. Odpoveď senzora 0x5647 a čitateľné registre prijímača preto nepotvrdzujú zapnutie správnej domény. Chybné ID je konzistentné s príznakom CS bez snímok. Presný stav analógovej časti prijímača počas starého testu nebol priamo zmeraný.
+- PR #102 je zlúčený do main. Verzia 0.101 prepína GET/SET na ID 14, pri štarte vypne doménu 13 a pri zastavení vypne doménu 14. Pri vypnutí prijímača pribudol reset CPR. Commit obsahuje aj sd/kernel8.img.
+- Výsledok na doske zatiaľ v repozitári nie je. Prvý test je studený štart 0.101 na pôvodnom Pi 3B+ s UC-261. Skontroluj verziu pri štarte, spusti cam a potom cam snap. V riadku cam 2 očakávaj potvrdené zapnutie domény 14. Úspešný test znamená zachytené FS a FE, pohyb IBWP a viditeľnú snímku. Potom skús zopakovať cam snap po ukončení prvého snímania, aby sa overil ďalší cyklus zapnutia a vypnutia.
+- Ak cam 2 ukáže OFF alebo chýbajúcu odpoveď, začni stavom mailboxu. Aktuálny cam_start() pri neúspešnom SET/GET stále pokračuje k hodinám a MMIO. Ak je doména 14 potvrdene zapnutá, ale FS/FE ďalej zostanú na nule, pokračuj meraním a testami nižšie. Pri prvej skúške 0.101 ich nemiešaj s opravou napájania.
+
+Zdroje k napájaniu
+- Oprava: https://github.com/didi2sk/RoboOS/pull/102
+- Linux, indexy Device Tree: https://github.com/raspberrypi/linux/blob/rpi-6.12.y/include/dt-bindings/power/raspberrypi-power.h#L24-L25
+- Linux, preklad indexu na ID firmvéru: https://github.com/raspberrypi/linux/blob/rpi-6.12.y/drivers/pmdomain/bcm/raspberrypi-power.c#L109-L123
+- Circle, ID domén firmvéru: https://github.com/rsta2/circle/blob/master/include/circle/bcmpropertytags.h#L170-L171
+
+Staršie zistenia z RoboOS 0.100 a doplnkové testy
+
+Pozorovania z testov na doske
+- Pi 3B+ s kamerou UC-261 odpovie cez I2C na 0x36 a vráti ID 0x5647. Na rovnakej doske s tou istou kamerou Raspberry Pi OS Lite 64-bit (Trixie) vytvoril snímku cez rpicam-still.
+- RoboOS 0.100 pri režime 1296 × 972 hlási iba CS, FS=0 a FE=0. Ukazovateľ zápisu Unicamu (IBWP) sa nehýbe. Problém sa prejavuje pred vykreslením obrazu. Samotný stav CS nepotvrdzuje príjem platného paketu CSI-2.
+- Už sa skúšal iný firmware/config.txt, gate 0x15 aj 0x155, kontinuálne aj nekontinuálne MIPI hodiny, obe poradia v cam order a nastavenia senzora podľa výpisu z Linuxu. Verzia 0.99 obmedzila opakované zápisy do STA na masku 0x1B6FC. Vo verzii 0.100 stále neprišla snímka.
+
+Doplnkový test: oddeliť konfiguráciu senzora od povolenia MIPI prenosu
+- V RoboOS cam order rx spúšťa Unicam pred konfiguráciou a softvérovým resetom senzora. Cam order sensor vykoná celé sensor_stream(1) vrátane povolenia prenosu ešte pred spustením Unicamu.
+- Circle pri OV5647 najprv nastaví režim senzora, virtuálny kanál, SW standby a ovládacie hodnoty. Potom zapne prijímač (EnableRX). Až potom zapisuje do 0x4800, 0x4202 a 0x300D, čím pustí MIPI prenos. Toto trojkrokové poradie súčasné prepínače RoboOS nepokrývajú.
+- Pre samostatný A/B test nechaj režim 1296 × 972, gate 0x15, nekontinuálne hodiny, tie isté hodnoty registrov a vypnuté farebné pruhy. Po reštarte porovnaj najprv pôvodné poradie a potom poradie konfigurácia senzora → unicam_start() → záverečné zápisy 0x4800=0x34, 0x4202=0x00, 0x300D=0x00. Kontroluj návratové hodnoty I2C zápisov.
+- Pred prvým mazaním stavových bitov po spustení prenosu zachyť STA (0x004), ISTA (0x104), IBWP (0x11C) a CLK/DAT0/DAT1 (0x010/0x018/0x01C). Potom sleduj FS, FE a zmenu IBWP. Posun IBWP potvrdí zápis obrazových dát. FS bez posunu IBWP zúži problém na ďalšiu časť prijímacej cesty. Existujúci cam dump zapína farebné pruhy a pred výpisom volá next_frame(), ktorý maže stavové bity.
+
+Doplnkový test: zmerať skutočnú frekvenciu VPU
+- Linux pri štarte kamery žiada minimálne 250 MHz pre VPU a samostatne nastavuje 100 MHz pre CSI (CAM1). RoboOS nastavuje CAM1, ale v štarte kamery samostatne nežiada minimum pre VPU. Zhodné CM_CAM1CTL/DIV nevypovedajú o skutočnej frekvencii VPU.
+- Pod Linuxom počas streamu použi vcgencmd measure_clock core. V RoboOS sa dá pridať meranie cez mailbox Get clock rate measured (0x00030047, clock ID 4). Linux spája nízku frekvenciu VPU s pretečením vstupných FIFO. Je to rozdiel na overenie, príčina stavu FS=0 zatiaľ potvrdená nie je.
+
+Trojkrokové poradie a meranie VPU vychádzajú z porovnania zdrojov. Výsledky týchto doplnkových testov na doske zatiaľ nie sú zaznamenané.
+
+Zdroje
+- RoboOS, poznámky z testov: https://github.com/didi2sk/RoboOS/blob/9c597074279d8886acb85813fbb2c8fe70929996/CLAUDE.md#L156
+- RoboOS, konfigurácia senzora: https://github.com/didi2sk/RoboOS/blob/9c597074279d8886acb85813fbb2c8fe70929996/src/camera.c#L241-L275
+- RoboOS, štart a polling: https://github.com/didi2sk/RoboOS/blob/9c597074279d8886acb85813fbb2c8fe70929996/src/camera.c#L359-L429
+- Circle, štart OV5647: https://github.com/rsta2/libcamera/blob/main/lib/cameramodule1.cpp#L226-L299
+- Raspberry Pi Linux, nastavenie VPU a CSI: https://github.com/raspberrypi/linux/blob/rpi-6.12.y/drivers/media/platform/bcm2835/bcm2835-unicam.c#L2608-L2631
+- Raspberry Pi mailbox: https://github.com/raspberrypi/firmware/wiki/Mailbox-property-interface#get-clock-rate-measured
