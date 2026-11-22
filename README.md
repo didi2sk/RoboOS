@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.89**
+Current version: **0.90**
 
 ## Supported boards
 
@@ -473,6 +473,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.87: AMG8833 Grid-EYE thermal camera (`thermal`): live heat map on HDMI, person detection (MQTT), display, API, BASIC.
 0.88: camera on the CSI ribbon, step 1 (`cam`): powers the camera and finds the sensor (OV5647 / IMX219).
 0.89: camera step 2: `cam live` / `cam snap` / `cam bars` - the first picture from an OV5647 on HDMI (640x480).
+0.90: `cam live` / `bars` print every start-up step (`cam 1` ... `cam 9`) - the board froze on 0.89, the last line shows where (`cam trace off` hides them).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)

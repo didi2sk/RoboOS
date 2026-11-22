@@ -307,19 +307,33 @@ static void print_sta(u32 s)
     for (int i = 0; i < 25; i++) if (s & (1u << i)) kprintf(" %s", sta_names[i]);
 }
 
+static int trace = 1;                                    /* 0.90: print each step (a freeze shows where) */
+#define STEP(...) do { if (trace) { kprintf(__VA_ARGS__); delay_us(30000); } } while (0)
+
 static int cam_start(void)
 {
     if (streaming) return 0;
     if (!sensor && !detect(0)) { kprintf("no camera sensor found ('cam' shows why)\n"); return -1; }
     if (sensor != 1) { kprintf("only the OV5647 can give a picture so far\n"); return -1; }
+    u32 g[2] = { 13, 0 };
+    int ok = mbox_prop(0x00030030, g, 2);
+    STEP("cam 1: power domain UNICAM1 was %s (%u)\n", ok ? (g[1] & 1 ? "on" : "off") : "?? (no answer)", g[1]);
     u32 pd[2] = { 13, 1 };
-    mbox_prop(0x00038030, pd, 2);                        /* power domain UNICAM1 */
+    ok = mbox_prop(0x00038030, pd, 2);
+    g[0] = 13; g[1] = 0;
+    int ok2 = mbox_prop(0x00030030, g, 2);
+    STEP("cam 2: switched on: answer %s, now %s (%u)\n", ok ? "ok" : "NONE", ok2 ? (g[1] & 1 ? "on" : "OFF") : "?", g[1]);
     cam1_clock(1);
+    STEP("cam 3: CAM1 clock ctl 0x%x div 0x%x\n", mmio_read(CM_CAM1CTL), mmio_read(CM_CAM1DIV));
     dcache_clean_inval((void *)BUF_A, 0x200000);
     if (wr_list(oe_on, 3) || sensor_stream(0)) { kprintf("sensor does not answer\n"); return -1; }
+    STEP("cam 4: sensor lanes in LP-11, reading the receiver...\n");
+    STEP("cam 5: receiver CTRL 0x%x STA 0x%x ANA 0x%x\n", ur(0x000), ur(0x004), ur(0x008));
     delay_us(2000);
     unicam_start();
+    STEP("cam 6: receiver on: CTRL 0x%x STA 0x%x CLK 0x%x DAT0 0x%x\n", ur(0x000), ur(0x004), ur(0x010), ur(0x018));
     if (sensor_stream(1)) { kprintf("sensor setup failed\n"); unicam_stop(); return -1; }
+    STEP("cam 7: sensor streaming, waiting for frames: STA 0x%x ISTA 0x%x\n", ur(0x004), ur(0x104));
     n_fs = n_fe = sta_or = 0;
     streaming = 1;
     return 0;
@@ -393,6 +407,9 @@ static void show(int live)
     if (cam_start()) return;
     int fb = fb_ready() && fb_width() >= 640 && fb_height() >= 480;
     int scale = fb && fb_width() >= 1280 && fb_height() >= 1000 ? 3 : 2;
+    if (fb && fb_height() < 24 + 240 * (u32)scale + 24) fb = 0;   /* no room for picture + text */
+    STEP("cam 8: first frame...\n");
+    { u16 *f0 = next_frame(3000); STEP("cam 9: %s (FS %u FE %u, STA 0x%x, write pointer 0x%x)\n", f0 ? "frame OK" : "NO frame", n_fs, n_fe, sta_or, ur(0x11C)); if (trace) delay_us(1500000); }
     if (fb) { fb_hold(1); for (u32 y = 0; y < fb_height(); y++) { u32 *r = fb_row((int)y); for (u32 x = 0; x < fb_width(); x++) r[x] = 0; } }
     int x0 = fb ? ((int)fb_width() - 320 * scale) / 2 : 0, y0 = 24;
     if (fb) fb_text_px(8, 4, live ? "camera live - any key stops" : "camera picture - any key", 0xFFFFFF, 0);
@@ -400,7 +417,7 @@ static void show(int live)
     u32 shown = 0, fe0 = 0;
     int got = 0;
     for (;;) {
-        u16 *f = next_frame(live ? 500 : 2000);
+        u16 *f = next_frame(got ? 500 : 3000);
         if (f) {
             got = 1; shown++;
             if (fb) draw_frame(f, x0, y0, scale);
@@ -417,14 +434,19 @@ static void show(int live)
         }
         if (con_trygetc() >= 0) break;
     }
-    u32 ibwp = ur(0x11C);
+    u32 ibwp = ur(0x11C), lclk = ur(0x010), ld0 = ur(0x018), ld1 = ur(0x01C), sta_now = ur(0x004), ista = ur(0x104);
+    u8 s0100 = 0xEE, s4800 = 0xEE, s300d = 0xEE, s3036 = 0xEE, s4814 = 0xEE;
+    rd16(saddr, 0x0100, &s0100); rd16(saddr, 0x4800, &s4800); rd16(saddr, 0x300D, &s300d);
+    rd16(saddr, 0x3036, &s3036); rd16(saddr, 0x4814, &s4814);
     if (!live && got && fb) { while (con_trygetc() < 0) delay_us(20000); }
     cam_stop();
     if (fb) { fb_hold(0); fb_redraw(); }
     kprintf("frames: start %u, end %u, shown %u in %u ms\n", n_fs, n_fe, shown, (u32)((timer_us() - t0) / 1000));
     kprintf("receiver status:"); print_sta(sta_or); if (!sta_or) kprintf(" (nothing)");
     kprintf("\nwrite pointer 0x%x (buffers 0x%x / 0x%x), lanes CLK %x DAT0 %x DAT1 %x\n",
-            ibwp, (u32)BUF_A | 0xC0000000u, (u32)BUF_B | 0xC0000000u, ur(0x010), ur(0x018), ur(0x01C));
+            ibwp, (u32)BUF_A | 0xC0000000u, (u32)BUF_B | 0xC0000000u, lclk, ld0, ld1);
+    kprintf("at the end: STA 0x%x ISTA 0x%x; sensor 0100=%02x 4800=%02x 300d=%02x 3036=%02x 4814=%02x\n",
+            sta_now, ista, s0100, s4800, s300d, s3036, s4814);
     if (!got) kprintf("NO PICTURE: no complete frame came in (send a photo of these lines)\n");
 }
 
@@ -453,6 +475,7 @@ void camera_cmd(int argc, char **argv)
         return;
     }
     if (!strcmp(a, "off")) { cam_stop(); power(0); sensor = 0; kprintf("camera power off\n"); return; }
+    if (!strcmp(a, "trace")) { trace = argc > 2 && !strcmp(argv[2], "off") ? 0 : 1; kprintf("step trace %s\n", trace ? "on" : "off"); return; }
     if (!strcmp(a, "live")) { test_pattern = 0; show(1); return; }
     if (!strcmp(a, "snap")) { test_pattern = 0; show(0); return; }
     if (!strcmp(a, "bars")) { test_pattern = 1; show(1); test_pattern = 0; return; }
