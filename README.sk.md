@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.98**
+Aktuálna verzia: **0.99**
 
 ## Podporované dosky
 
@@ -478,6 +478,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.96: oprava: v režime z firmvéru senzor ostal v stave "bez snímok" (0x4202) zo štartu a posielal len takt.
 0.97: Bluetooth volá spárovanú klávesnicu znova, kým sa neozve (každých 8 s, potom 20 s, po ~3 minútach každých 60 s), aj keď sa odpojí.
 0.98: `cam sregs` vypíše všetky registre senzora kamery, ktoré RoboOS nastavuje, počas vysielania; `tools/ov5647regs.sh` vypíše ten istý zoznam na Linuxe - na porovnanie.
+0.99: oprava kamery: počas čakania na snímky RoboOS tisíckrát za sekundu zapisoval stav prijímača späť (aj bity "zosynchronizované"); teraz maže len chybové bity. Predvolené ako Linux na tej istej doske: režim 1296x972, hradlo 0x15, najprv prijímač.
 
 ### Dátum a čas (NTP)
 
