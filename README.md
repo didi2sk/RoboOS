@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.97**
+Current version: **0.98**
 
 ## Supported boards
 
@@ -481,6 +481,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.95: the sensor is set up and streaming BEFORE the camera receiver starts (like rsta2/libcamera); `cam order rx` = the old order.
 0.96: fix: in the firmware mode the sensor stayed in "no frames" (0x4202) from the start-up and sent only its clock.
 0.97: Bluetooth keeps calling the paired keyboard until it answers (every 8 s, then 20 s, after ~3 minutes every 60 s), also after it disconnects.
+0.98: `cam sregs` prints every camera sensor register RoboOS sets while it streams; `tools/ov5647regs.sh` prints the same list under Linux, to compare.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
