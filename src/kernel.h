@@ -254,6 +254,13 @@ int  motion_addr(void);
 /* camera.c - CSI camera (step 1: power + sensor id) */
 void camera_cmd(int argc, char **argv);
 int  camera_present(void);
+void camera_poll(void);                       /* core 0, con_trygetc: pictures + settings for the web page */
+u32  camera_jpeg_want(void);                   /* core 1: ticket for the next web picture */
+int  camera_jpeg_take(u32 ticket, const u8 **p, u32 *len);   /* 1 got (busy), 0 wait, < 0 failed */
+void camera_jpeg_release(const u8 *p);
+int  camera_web_set(const char *key, const char *val);       /* core 1: 0 ok, -1 bad value, -2 unknown, -3 not ready */
+int  camera_web_json(char *b, int max);
+extern const char camera_page[];               /* campage.c: GET /camera */
 
 /* thermal.c - AMG8833 Grid-EYE 8x8 thermal camera at I2C 0x69 */
 struct thermal_values { int pix[64], min_c100, max_c100, avg_c100, median_c100, therm_c100, warm, present; };

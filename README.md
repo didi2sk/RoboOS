@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.103**
+Current version: **0.104**
 
 ## Supported boards
 
@@ -487,6 +487,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.101: camera BUG FOUND: RoboOS powered the wrong camera receiver (firmware power domain 13 = UNICAM0; the camera connector uses UNICAM1 = 14), so the receiver never saw data. Fixed - **the camera works on the Pi 3B+** (owner).
 0.102: camera colours: the pixel colour order follows the sensor mirroring (GBRG in the default 1296 mode, like Linux); `cam bayer bggr|gbrg|grbg|rggb` if the colours look wrong.
 0.103: camera photos as JPEG (`cam snap [file]`, s / space in `cam live`; own encoder `src/jpeg.c`) + picture settings saved in /CAM.TXT: exposure, gain, ev, white balance, brightness, contrast, saturation, hue, gamma, flip, JPEG quality (`cam set`).
+0.104: camera web page `/camera`: live preview + sliders for every setting + save photo; API `GET|POST /api/camera`, `GET /api/camera.jpg`; `cam test on` = test picture without a camera.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -920,6 +921,20 @@ cam defaults            all back to the defaults
 
 The settings are saved in `/CAM.TXT`. A 648x486 photo is about 50-100 KB; the live view shows fps,
 exposure and gain under the picture.
+
+**Web page (0.104):** `http on` + `http token <secret>`, then open `http://<board address>/camera` (or https).
+It shows a live preview (a few pictures per second) and sliders for all the settings above; a change applies
+to the next picture and is saved in `/CAM.TXT` (2 s after the last change). "Save photo" writes a JPEG to
+`/CAM` on the card, "download this picture" saves the preview to the PC. The page asks for the token once
+(kept in the browser); with logins (`users`) the browser login is used. The camera switches off 10 s after
+the page stops asking. API: `GET /api/camera` (settings + current exposure / gain), `POST /api/camera`
+`{"saturation":"130","wb":"auto","snap":"1"}`, `GET /api/camera.jpg` (one picture):
+
+```
+curl -H "Authorization: Bearer <secret>" http://<board>/api/camera.jpg -o foto.jpg
+```
+
+`cam test on` gives a made-up colour-bar picture instead of the camera (to try the page without one).
 
 ### MQTT
 
