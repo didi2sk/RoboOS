@@ -461,6 +461,19 @@ static void dump_regs(void)
     kprintf("\nCM_CAM1CTL=%08x CM_CAM1DIV=%08x gate=%08x\n", mmio_read(CM_CAM1CTL), mmio_read(CM_CAM1DIV), mmio_read(UNI_GATE));
 }
 
+/* 0.98: the sensor registers we set, read back while streaming - same list + format as tools/ov5647regs.sh */
+static const u16 sreg_list[] = { 0x0100,0x3000,0x3001,0x3002,0x300d,0x300e,0x3016,0x3017,0x3018,0x301c,0x301d,0x3034,0x3035,0x3036,0x303c,0x3106,0x3212,0x3500,0x3501,0x3502,0x3503,0x350a,0x350b,0x3600,0x3612,0x3618,0x3620,0x3621,0x3630,0x3632,0x3633,0x3634,0x3636,0x3703,0x3704,0x3705,0x3708,0x3709,0x370b,0x370c,0x3715,0x3717,0x3731,0x3800,0x3801,0x3802,0x3803,0x3804,0x3805,0x3806,0x3807,0x3808,0x3809,0x380a,0x380b,0x380c,0x380d,0x380e,0x380f,0x3811,0x3813,0x3814,0x3815,0x3820,0x3821,0x3827,0x3a08,0x3a09,0x3a0a,0x3a0b,0x3a0d,0x3a0e,0x3a0f,0x3a10,0x3a11,0x3a18,0x3a19,0x3a1b,0x3a1e,0x3a1f,0x3b07,0x3c01,0x3f01,0x3f05,0x3f06,0x4000,0x4001,0x4004,0x4202,0x4800,0x4801,0x4802,0x4805,0x4810,0x4814,0x4818,0x4819,0x481f,0x4823,0x4826,0x4827,0x4836,0x4837,0x5000,0x5001,0x5002,0x5003,0x503d,0x5a00 };
+static void dump_sensor(void)
+{
+    int n = 0;
+    for (unsigned i = 0; i < sizeof(sreg_list) / sizeof(sreg_list[0]); i++) {
+        u8 v = 0; int r = rd16(saddr, sreg_list[i], &v);
+        if (r) kprintf("%04x=?? ", sreg_list[i]); else kprintf("%04x=%02x ", sreg_list[i], v);
+        if (++n == 8) { kprintf("\n"); n = 0; }
+    }
+    if (n) kprintf("\n");
+}
+
 static void show(int live)
 {
     if (cam_start()) return;
@@ -578,6 +591,12 @@ void camera_cmd(int argc, char **argv)
         trace = t; test_pattern = 0;
         return;
     }
+    if (!strcmp(a, "sregs")) {                        /* start (no bars), 1 s, every sensor register we set, stop */
+        int t = trace; trace = 0; test_pattern = 0;
+        if (!cam_start()) { delay_us(1000000); dump_sensor(); cam_stop(); }
+        trace = t;
+        return;
+    }
     if (!strcmp(a, "bars")) { test_pattern = 1; show(1); test_pattern = 0; return; }
     if (!strcmp(a, "reg") && argc > 2) {
         u64 reg, v;
@@ -603,6 +622,7 @@ void camera_cmd(int argc, char **argv)
             "       cam mode fw|1296|640 sensor mode (default fw = the Pi firmware's 1296x976 list)\n"
             "       cam gate 0x155|0x15 lane clock gate (default 0x155 like the Pi firmware)\n"
             "       cam order sensor|rx start order (default sensor first, like rsta2/libcamera)\n"
+            "       cam sregs           sensor registers while streaming (compare with Linux: tools/ov5647regs.sh)\n"
             "       cam clock cont|ncont  MIPI clock mode (test; default ncont)\n"
             "       cam reg <a> [v]     read / write a sensor register (16-bit address)\n"
             "       cam off             camera power off\n");
