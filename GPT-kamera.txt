@@ -50,6 +50,13 @@ Videozvonček pre Home Assistant
 2. Tlačidlo pri dverách. Stlačenie GPIO tlačidla prehrá `DINGDONG.WAV`, uloží snímku na kartu a zverejní MQTT udalosť. Home Assistant z udalosti vytvorí upozornenie s fotkou. Pri výpadku siete zvonček zazvoní lokálne a snímka zostane na SD karte.
 3. Diagnostika kamery. Príkaz `diag camera` zobrazí identifikáciu senzora, stav napájacej domény Unicam, počty začiatkov a koncov snímok a poslednú chybu. Rovnaký výpis použiť pri overovaní kamery na Zero 2 W a pri pridávaní obrazu zo senzora IMX219.
 
+Režim bezpečnostnej kamery s otáčaním (pan/tilt)
+- Použiť tú istú OV5647 ako pri videozvončeku. Prvá verzia umožní manuálne otáčanie, uložené polohy (dvere, brána, dvor) a snímku na vyžiadanie cez existujúce API. Home Assistant môže pri udalosti zo zvončeka alebo pohybového senzora vybrať polohu. Snímku vyhotoviť po ustálení. Živý náhľad v prehliadači pridať v ďalšej etape.
+- Prvý prototyp: dve polohové servá na ľahkom držiaku, jedno pre vodorovné otáčanie a druhé pre náklon. PWM generuje PCA9685 na I2C. Logika modulu (VCC) je na 3,3 V a servá (V+) majú samostatný zdroj podľa ich špecifikácie, zvyčajne 5 V, so spoločnou zemou s Pi. Zdroj dimenzovať na prúd oboch serv pri špičke.
+- Pred pohybom nastaviť bezpečné medze oboch osí podľa mechaniky a rezervy CSI kábla. Ponechať káblu vôľu a uchytiť ho tak, aby sa pri pohybe neťahal za konektor. Presety držať v rámci kalibrovaných medzí a pri pohybe ich dosahovať plynulo.
+- Krokové motory zvážiť pri ťažšom držiaku alebo ak skúšky ukážu nedostatočnú opakovateľnosť polôh so servami. Použiť vhodný motorový ovládač na každú os, referenčný snímač na určenie nulovej polohy po štarte a softvérové medze. Krokové motory pridávajú kalibráciu a riadenie rozbehu. Rozsah otočenia aj v tomto variante obmedzuje CSI kábel.
+- Zapojenie PCA9685: https://learn.adafruit.com/adafruit-16-channel-servo-driver-with-raspberry-pi/hooking-it-up
+
 Spoľahlivejšie vzdialené aktualizácie
 - Pridať automatický návrat na predošlý kernel, ak nová verzia nepotvrdí úspešný štart. Návrh nadväzuje na existujúcu aktualizáciu cez sieť a zálohu `KERNEL8.BAK`. Mechanizmus návratu musí fungovať aj vtedy, keď nový kernel vôbec nenabehne. Míľnik je obnoviť boot bez vyberania SD karty.
 
