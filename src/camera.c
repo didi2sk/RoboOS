@@ -19,6 +19,8 @@
  *   Colours: one RGB pixel per 2x2 Bayer square (320x240), grey-world white balance, drawn 2x on HDMI.
  */
 #include "kernel.h"
+#include "sd.h"
+#include "jpeg.h"
 
 #define B0        (MMIO_BASE + 0x205000)
 #define B_C       (B0 + 0x00)
@@ -355,7 +357,7 @@ static void print_sta(u32 s)
 }
 
 static int sensor_first = 0;   /* 0.99: Linux order (receiver first) by default - Linux works on the same board */                            /* 0.95: start order, `cam order sensor|rx` */
-static int trace = 1;                                    /* 0.90: print each step (a freeze shows where) */
+static int trace = 0;                                    /* 0.90: print each step (a freeze shows where) */
 #define STEP(...) do { if (trace) { kprintf(__VA_ARGS__); delay_us(30000); } } while (0)
 
 static int cam_start(void)
@@ -435,12 +437,102 @@ static u16 *next_frame(u32 ms)
     return 0;
 }
 
-/* 2x2 Bayer (BGGR) -> 320x240 RGB, grey-world white balance + auto brightness, drawn 2x at (x0, y0) */
-static void draw_frame(const u16 *f, int x0, int y0, int scale)
+/* ---- 0.103: picture processing + settings (/CAM.TXT) + JPEG snapshots ----
+ * Raw RAW10 Bayer -> one RGB pixel per 2x2 square (W/2 x H/2) at RGB_BUF: white balance (grey world /
+ * locked / manual), gamma 2 (isqrt LUT), then brightness / contrast / saturation / hue in YCbCr, flip.
+ * Exposure + gain: our own auto exposure on the mean level (the sensor's AEC is off, 0x3503 = 3), or fixed. */
+#ifndef RGB_BUF
+#define RGB_BUF 0x13800000UL
+#endif
+                             /* up to 648 x 488 x 4 = 1.3 MB */
+#define JPG_BUF 0x13C00000UL
+#define JPG_MAX (4 << 20)
+#define LINE_US10 232                                     /* one sensor line = 23.2 us (Linux mode 2: HTS 1896 / 81.67 MHz) */
+static int s_exp10, s_gain10, s_ev, s_wb, s_wbr = 100, s_wbb = 100;   /* exposure ms x10 / gain x10 (0 = auto); wb 0 auto 1 lock 2 manual */
+static int s_bri, s_con, s_sat = 100, s_hue, s_gamma = 1, s_flip, s_q = 85;
+static int cfg_loaded;
+static u32 gr_cur = 256, gb_cur = 256;                    /* white balance gains x256 */
+static int ae_exp = 1406, ae_gain = 64, ae_maxl = 1534, ae_skip, ae_ok;   /* lines, gain x16 */
+static int ow, oh;                                        /* processed picture size */
+static u8 glut[1024];
+static int m_cf, m_bo, m_11, m_12, m_21, m_22, plain;     /* colour matrix x256 */
+
+static u32 usqrt(u32 v) { u32 r = 0, b = 1u << 30; while (b > v) b >>= 2; while (b) { if (v >= r + b) { v -= r + b; r = (r >> 1) + b; } else r >>= 1; b >>= 2; } return r; }
+
+/* sin / cos x256 of whole degrees by repeated 1-degree rotations (x2^30) */
+static void sincos256(int deg, int *c, int *s)
 {
-    u32 orv = 0; u64 sr = 0, sg = 0, sb = 0;
+    long long x = 1LL << 30, y = 0; int n = deg < 0 ? -deg : deg;
+    for (int i = 0; i < n; i++) { long long nx = (x * 1073578288LL - y * 18739379LL) >> 30, ny = (x * 18739379LL + y * 1073578288LL) >> 30; x = nx; y = ny; }
+    *c = (int)(x >> 22); *s = (int)((deg < 0 ? -y : y) >> 22);
+}
+
+static void prep(void)
+{
+    for (int i = 0; i < 1024; i++) glut[i] = (u8)(s_gamma ? usqrt((u32)i * 65025u / 1023u) : (u32)i >> 2);
+    int hc, hs; sincos256(s_hue, &hc, &hs);
+    int sat = s_sat * 256 / 100;
+    m_11 = hc * sat >> 8; m_12 = -hs * sat >> 8; m_21 = hs * sat >> 8; m_22 = hc * sat >> 8;
+    m_cf = (100 + s_con) * 256 / 100; m_bo = s_bri * 128 / 100;
+    plain = !s_bri && !s_con && s_sat == 100 && !s_hue;
+}
+
+static void sensor_exposure(void)
+{
+    u32 v = (u32)ae_exp << 4;
+    wr16(saddr, 0x3500, (u8)((v >> 16) & 0x0F)); wr16(saddr, 0x3501, (u8)(v >> 8)); wr16(saddr, 0x3502, (u8)(v & 0xF0));
+    wr16(saddr, 0x350A, (u8)((ae_gain >> 8) & 3)); wr16(saddr, 0x350B, (u8)ae_gain);
+}
+
+/* after the sensor started: our exposure control */
+static void ae_begin(void)
+{
+    u8 a = 0, b = 0;
+    if (!rd16(saddr, 0x380E, &a) && !rd16(saddr, 0x380F, &b) && ((a << 8) | b) > 100) ae_maxl = ((a << 8) | b) - 4;
+    wr16(saddr, 0x3503, 0x03);                            /* sensor AEC + AGC off */
+    if (s_exp10) ae_exp = s_exp10 * 1000 / LINE_US10;
+    if (s_gain10) ae_gain = s_gain10 * 16 / 10;
+    if (ae_exp > ae_maxl) ae_exp = ae_maxl;
+    if (ae_exp < 2) ae_exp = 2;
+    sensor_exposure();
+    ae_skip = 2; ae_ok = 0;
+}
+
+/* mean level (10 bit) of the last frame -> new exposure / gain; ae_ok counts calm frames */
+static void ae_step(u32 mean)
+{
+    if (s_exp10 && s_gain10) { ae_ok = 9; return; }
+    if (ae_skip) { ae_skip--; return; }
+    u32 target = s_gamma ? 184 : 400;
+    for (int i = 0; i < s_ev; i++) target *= 2;
+    for (int i = 0; i > s_ev; i--) target /= 2;
+    if (target > 900) target = 900;
+    if (!mean) mean = 1;
+    u32 f = target * 256 / mean;
+    if (f > 236 && f < 278) { ae_ok++; return; }
+    ae_ok = 0;
+    if (f > 768) f = 768;
+    if (f < 96) f = 96;
+    u64 tot = (u64)ae_exp * (u64)ae_gain * f >> 8;
+    int e = ae_exp, g = ae_gain;
+    if (s_exp10) g = (int)(tot / (u64)e);
+    else if (s_gain10) e = (int)(tot / (u64)g);
+    else { e = (int)(tot / 16); if (e > ae_maxl) e = ae_maxl; if (e < 2) e = 2; g = (int)(tot / (u64)e); }
+    if (e > ae_maxl) e = ae_maxl;
+    if (e < 2) e = 2;
+    if (g < 16) g = 16;
+    if (g > 255) g = 255;
+    if (e == ae_exp && g == ae_gain) { ae_ok++; return; }   /* at a limit */
+    ae_exp = e; ae_gain = g;
+    sensor_exposure();
+    ae_skip = 2;
+}
+
+/* raw frame -> RGB_BUF (ow x oh), white balance + exposure updated from it */
+static void process_frame(const u16 *f)
+{
+    u32 orv = 0; u64 sr = 0, sg = 0, sb = 0; u32 cnt = 0;
     int ord = bayer >= 0 ? bayer : (vga_mode == 0 ? 1 : 0);
-    /* offsets of B, G, G, R inside one 2x2 square: 0 top-left, 1 top-right, W bottom-left, W+1 bottom-right */
     int ob, og1, og2, orr;
     switch (ord) {
     case 1:  ob = 1;     og1 = 0; og2 = W + 1; orr = W;     break;   /* GBRG */
@@ -451,28 +543,219 @@ static void draw_frame(const u16 *f, int x0, int y0, int scale)
     for (int y = 0; y < H; y += 8) for (int x = 0; x < W; x += 8) {
         const u16 *p = f + y * W + x;
         orv |= p[0] | p[1] | p[W] | p[W + 1];
-        sb += p[ob]; sg += p[og1] + p[og2]; sr += p[orr];
+        sb += p[ob]; sg += p[og1] + p[og2]; sr += p[orr]; cnt++;
     }
-    int sh = 0; while (sh < 8 && (orv >> (sh + 8))) sh++;         /* top bit -> 8 bit */
-    sg /= 2; if (!sr) sr = 1; if (!sb) sb = 1;
-    u32 gr = (u32)(sg * 256 / sr), gb = (u32)(sg * 256 / sb);       /* x256 */
-    if (gr > 1024) gr = 1024; if (gb > 1024) gb = 1024;
-    for (int y = 0; y < H / 2; y++) {
+    int sh = 0; while (sh < 8 && (orv >> (sh + 10))) sh++;          /* top bit -> 10 bit */
+    sg /= 2; if (!sr) sr = 1; if (!sb) sb = 1; if (!cnt) cnt = 1;
+    if (s_wb == 0) {
+        u32 gr = (u32)(sg * 256 / sr), gb = (u32)(sg * 256 / sb);
+        if (gr > 1024) gr = 1024; if (gb > 1024) gb = 1024;
+        gr_cur = (gr_cur * 3 + gr) / 4; gb_cur = (gb_cur * 3 + gb) / 4;
+    } else if (s_wb == 2) { gr_cur = (u32)s_wbr * 256 / 100; gb_cur = (u32)s_wbb * 256 / 100; }
+    u32 mean = (u32)(((sr * gr_cur >> 8) + 2 * sg + (sb * gb_cur >> 8)) / 4 / cnt) >> sh;
+    ae_step(mean);
+    ow = W / 2; oh = H / 2;
+    u32 *out = (u32 *)RGB_BUF;
+    u32 grc = gr_cur, gbc = gb_cur;
+    for (int y = 0; y < oh; y++) {
         const u16 *a = f + (2 * y) * W;
+        int dy = (s_flip & 2) ? oh - 1 - y : y;
+        u32 *row = out + dy * ow;
+        for (int x = 0; x < ow; x++) {
+            const u16 *q = a + 2 * x;
+            u32 B = (u32)q[ob] >> sh, G = ((u32)q[og1] + q[og2]) >> (sh + 1), R = (u32)q[orr] >> sh;
+            R = R * grc >> 8; B = B * gbc >> 8;
+            if (R > 1023) R = 1023; if (G > 1023) G = 1023; if (B > 1023) B = 1023;
+            int r = glut[R], g = glut[G], b = glut[B];
+            if (!plain) {
+                int Y = (77 * r + 150 * g + 29 * b) >> 8, cb = (-43 * r - 85 * g + 128 * b) >> 8, cr = (128 * r - 107 * g - 21 * b) >> 8;
+                Y = (((Y - 128) * m_cf) >> 8) + 128 + m_bo;
+                int cb2 = (cb * m_11 + cr * m_12) >> 8, cr2 = (cb * m_21 + cr * m_22) >> 8;
+                r = Y + ((359 * cr2) >> 8); g = Y - ((88 * cb2 + 183 * cr2) >> 8); b = Y + ((454 * cb2) >> 8);
+                if (r < 0) r = 0; if (r > 255) r = 255; if (g < 0) g = 0; if (g > 255) g = 255; if (b < 0) b = 0; if (b > 255) b = 255;
+            }
+            row[(s_flip & 1) ? ow - 1 - x : x] = ((u32)r << 16) | ((u32)g << 8) | (u32)b;
+        }
+    }
+}
+
+static void blit(int x0, int y0, int scale)
+{
+    const u32 *in = (const u32 *)RGB_BUF;
+    for (int y = 0; y < oh; y++)
         for (int s = 0; s < scale; s++) {
             int yy = y0 + y * scale + s;
-            if (yy >= (int)fb_height()) break;
+            if (yy >= (int)fb_height()) return;
             u32 *row = fb_row(yy) + x0;
-            for (int x = 0; x < W / 2; x++) {
-                const u16 *q = a + 2 * x;
-                u32 B = q[ob] >> sh, G = ((u32)q[og1] + q[og2]) >> (sh + 1), R = q[orr] >> sh;
-                R = R * gr >> 8; B = B * gb >> 8;
-                if (R > 255) R = 255; if (G > 255) G = 255; if (B > 255) B = 255;
-                u32 px = (R << 16) | (G << 8) | B;
-                for (int k = 0; k < scale; k++) row[x * scale + k] = px;
+            const u32 *src = in + y * ow;
+            if (scale == 1) { for (int x = 0; x < ow; x++) row[x] = src[x]; continue; }
+            for (int x = 0; x < ow; x++) for (int k = 0; k < scale; k++) row[x * scale + k] = src[x];
+        }
+}
+
+/* ---- settings file ---- */
+static void put_d10(char *b, int *n, int v)                /* 12 -> "1.2" */
+{
+    char t[12]; int k = 0, w = v / 10;
+    do t[k++] = (char)('0' + w % 10); while ((w /= 10));
+    while (k) b[(*n)++] = t[--k];
+    if (v % 10) { b[(*n)++] = '.'; b[(*n)++] = (char)('0' + v % 10); }
+}
+static void put_int(char *b, int *n, int v)
+{
+    char t[12]; int k = 0;
+    if (v < 0) { b[(*n)++] = '-'; v = -v; }
+    do t[k++] = (char)('0' + v % 10); while ((v /= 10));
+    while (k) b[(*n)++] = t[--k];
+}
+static void put_s(char *b, int *n, const char *s) { while (*s) b[(*n)++] = *s++; }
+
+static int cfg_text(char *b)
+{
+    int n = 0;
+    put_s(b, &n, "exposure "); if (s_exp10) put_d10(b, &n, s_exp10); else put_s(b, &n, "auto");
+    put_s(b, &n, "\ngain "); if (s_gain10) put_d10(b, &n, s_gain10); else put_s(b, &n, "auto");
+    put_s(b, &n, "\nev "); put_int(b, &n, s_ev);
+    put_s(b, &n, "\nwb ");
+    if (s_wb == 0) put_s(b, &n, "auto");
+    else { put_int(b, &n, s_wb == 1 ? (int)(gr_cur * 100 / 256) : s_wbr); put_s(b, &n, " "); put_int(b, &n, s_wb == 1 ? (int)(gb_cur * 100 / 256) : s_wbb); }
+    put_s(b, &n, "\nbrightness "); put_int(b, &n, s_bri);
+    put_s(b, &n, "\ncontrast "); put_int(b, &n, s_con);
+    put_s(b, &n, "\nsaturation "); put_int(b, &n, s_sat);
+    put_s(b, &n, "\nhue "); put_int(b, &n, s_hue);
+    put_s(b, &n, "\ngamma "); put_s(b, &n, s_gamma ? "on" : "off");
+    put_s(b, &n, "\nflip "); put_s(b, &n, s_flip == 0 ? "off" : s_flip == 1 ? "h" : s_flip == 2 ? "v" : "hv");
+    put_s(b, &n, "\nquality "); put_int(b, &n, s_q);
+    put_s(b, &n, "\n"); b[n] = 0;
+    return n;
+}
+
+static void cfg_save(void)
+{
+    char b[300]; int n = cfg_text(b);
+    if (!fat_mounted() || fat_write_file("/CAM.TXT", b, (u32)n)) kprintf("(not saved: no SD card or write error)\n");
+}
+
+/* "12" / "-3" / "2.5" -> x10 in *v (dec = 1) or whole (dec = 0); 0 = ok */
+static int num_arg(const char *s, int dec, int *v)
+{
+    int neg = 0, w = 0, f = 0, dig = 0;
+    if (*s == '-') { neg = 1; s++; } else if (*s == '+') s++;
+    while (*s >= '0' && *s <= '9') { w = w * 10 + (*s++ - '0'); dig = 1; if (w > 100000) return -1; }
+    if (*s == '.' && dec) { s++; if (*s >= '0' && *s <= '9') { f = *s++ - '0'; dig = 1; } while (*s >= '0' && *s <= '9') s++; }
+    if (*s || !dig) return -1;
+    w = dec ? w * 10 + f : w;
+    *v = neg ? -w : w;
+    return 0;
+}
+
+/* one setting "name value [value2]"; 0 ok, -1 bad value, -2 unknown name */
+static int set_one(const char *k, const char *v, const char *v2)
+{
+    int x, y;
+    if (!strcmp(k, "exposure")) { if (!strcmp(v, "auto")) { s_exp10 = 0; return 0; } if (num_arg(v, 1, &x) || x < 1 || x > 356) return -1; s_exp10 = x; return 0; }
+    if (!strcmp(k, "gain")) { if (!strcmp(v, "auto")) { s_gain10 = 0; return 0; } if (num_arg(v, 1, &x) || x < 10 || x > 159) return -1; s_gain10 = x; return 0; }
+    if (!strcmp(k, "ev")) { if (num_arg(v, 0, &x) || x < -3 || x > 3) return -1; s_ev = x; return 0; }
+    if (!strcmp(k, "wb")) {
+        if (!strcmp(v, "auto")) { s_wb = 0; return 0; }
+        if (!strcmp(v, "lock")) { s_wb = 1; return 0; }
+        if (!v2 || num_arg(v, 0, &x) || num_arg(v2, 0, &y) || x < 10 || x > 400 || y < 10 || y > 400) return -1;
+        s_wb = 2; s_wbr = x; s_wbb = y; return 0;
+    }
+    if (!strcmp(k, "brightness")) { if (num_arg(v, 0, &x) || x < -100 || x > 100) return -1; s_bri = x; return 0; }
+    if (!strcmp(k, "contrast")) { if (num_arg(v, 0, &x) || x < -100 || x > 100) return -1; s_con = x; return 0; }
+    if (!strcmp(k, "saturation")) { if (num_arg(v, 0, &x) || x < 0 || x > 300) return -1; s_sat = x; return 0; }
+    if (!strcmp(k, "hue")) { if (num_arg(v, 0, &x) || x < -180 || x > 180) return -1; s_hue = x; return 0; }
+    if (!strcmp(k, "gamma")) { if (strcmp(v, "on") && strcmp(v, "off")) return -1; s_gamma = !strcmp(v, "on"); return 0; }
+    if (!strcmp(k, "flip")) {
+        if (!strcmp(v, "off")) s_flip = 0; else if (!strcmp(v, "h")) s_flip = 1; else if (!strcmp(v, "v")) s_flip = 2;
+        else if (!strcmp(v, "hv") || !strcmp(v, "vh")) s_flip = 3; else return -1;
+        return 0;
+    }
+    if (!strcmp(k, "quality")) { if (num_arg(v, 0, &x) || x < 10 || x > 100) return -1; s_q = x; return 0; }
+    return -2;
+}
+
+static void cfg_load(void)
+{
+    if (cfg_loaded) return;
+    cfg_loaded = 1;
+    struct fat_file fl; char b[400];
+    if (fat_mounted() && !fat_open("/CAM.TXT", &fl) && !fl.is_dir) {
+        int n = fat_read(&fl, b, sizeof(b) - 1);
+        if (n > 0) {
+            b[n] = 0;
+            for (char *l = b; *l; ) {
+                char *e = l; while (*e && *e != '\n' && *e != '\r') e++;
+                char sv = *e; *e = 0;
+                char *w[3] = { 0, 0, 0 }; int nw = 0;
+                for (char *p = l; *p && nw < 3; ) {
+                    while (*p == ' ' || *p == '\t' || *p == '=') *p++ = 0;
+                    if (!*p) break;
+                    w[nw++] = p;
+                    while (*p && *p != ' ' && *p != '\t' && *p != '=') p++;
+                }
+                if (nw >= 2) {
+                    set_one(w[0], w[1], w[2]);
+                    if (!strcmp(w[0], "wb") && s_wb == 2) { gr_cur = (u32)s_wbr * 256 / 100; gb_cur = (u32)s_wbb * 256 / 100; }
+                }
+                *e = sv; l = *e ? e + 1 : e; while (*l == '\n' || *l == '\r') l++;
             }
         }
     }
+    prep();
+}
+
+/* ---- JPEG to the card ---- */
+static int exists(const char *p) { struct fat_file f; return !fat_open(p, &f); }
+
+/* auto name: /CAM/YYYYMMDD/HHMMSS.JPG with the clock, else /CAM/IMG00001.JPG */
+static int auto_name(char *p)
+{
+    fat_mkdir("/CAM");
+    u64 t = clock_now();
+    if (t) {
+        char d[32]; clock_format(d, t, 0);              /* "YYYY-MM-DD HH:MM:SS" */
+        char dir[20] = "/CAM/"; int n = 5;
+        for (int i = 0; i < 10; i++) if (d[i] != '-') dir[n++] = d[i];
+        dir[n] = 0;
+        fat_mkdir(dir);
+        for (int k = 0; k < 10; k++) {
+            int m = 0; for (const char *s = dir; *s; ) p[m++] = *s++;
+            p[m++] = '/';
+            for (int i = 11; i < 19; i++) if (d[i] != ':') p[m++] = d[i];
+            if (k) { p[m++] = '_'; p[m++] = (char)('0' + k); }
+            const char *x = ".JPG"; while (*x) p[m++] = *x++;
+            p[m] = 0;
+            if (!exists(p)) return 0;
+        }
+        return -1;
+    }
+    for (int k = 1; k < 100000; k++) {
+        const char *b = "/CAM/IMG"; int m = 0; while (*b) p[m++] = *b++;
+        int v = k; for (int i = 4; i >= 0; i--) { p[m + i] = (char)('0' + v % 10); v /= 10; }
+        m += 5; const char *x = ".JPG"; while (*x) p[m++] = *x++;
+        p[m] = 0;
+        if (!exists(p)) return 0;
+    }
+    return -1;
+}
+
+/* the processed picture as JPEG to `path` (0 = auto name); prints the result, returns the size or < 0 */
+static int save_jpeg(const char *path, char *name_out)
+{
+    char p[96];
+    if (!fat_mounted()) { kprintf("no SD card\n"); return -1; }
+    if (path) { if (path_abs(path, p, sizeof(p))) { kprintf("bad file name\n"); return -1; } }
+    else if (auto_name(p)) { kprintf("no free file name in /CAM\n"); return -1; }
+    u64 t0 = timer_us();
+    int n = jpeg_encode((const u32 *)RGB_BUF, ow, oh, ow, s_q, (u8 *)JPG_BUF, JPG_MAX);
+    if (n <= 0) { kprintf("JPEG encoding failed (%d)\n", n); return -1; }
+    u32 enc_ms = (u32)((timer_us() - t0) / 1000);
+    if (fat_write_file(p, (const void *)JPG_BUF, (u32)n)) { kprintf("could not write %s (8.3 names only, folder must exist)\n", p); return -1; }
+    kprintf("saved %s: %dx%d, %u KB (JPEG %u ms, total %u ms)\n", p, ow, oh, (u32)(n + 1023) / 1024, enc_ms, (u32)((timer_us() - t0) / 1000));
+    if (name_out) { int i = 0; while (p[i] && i < 63) { name_out[i] = p[i]; i++; } name_out[i] = 0; }
+    return n;
 }
 
 /* 0.92: all receiver registers + the clock regs, to compare with Linux (tools/camdump.py prints the same) */
@@ -499,9 +782,13 @@ static void dump_sensor(void)
     if (n) kprintf("\n");
 }
 
-static void show(int live)
+/* live: picture until a key (s / space = save a JPEG); else one picture (after the exposure settled),
+ * saved as JPEG when save (file 0 = auto name), shown until a key */
+static void show(int live, int save, const char *file)
 {
+    cfg_load();
     if (cam_start()) return;
+    ae_begin();
     int fb = fb_ready();
     int scale = 1;                                       /* one RGB pixel per 2x2 Bayer square: W/2 x H/2 */
     while (fb && (u32)(W / 2) * (scale + 1) <= fb_width() && 24 + (u32)(H / 2) * (scale + 1) + 24 <= fb_height() && scale < 3) scale++;
@@ -517,46 +804,69 @@ static void show(int live)
                     (i + 1) * 500, sta_or, ur(0x010), ur(0x018), ur(0x01C), ur(0x11C), e1, e2, g);
         }
     }
-    { STEP("cam 9: %s (FS %u FE %u, STA 0x%x, write pointer 0x%x)\n", f0 ? "frame OK" : "NO frame", n_fs, n_fe, sta_or, ur(0x11C)); if (trace) delay_us(1500000); }
-    if (fb) { fb_hold(1); for (u32 y = 0; y < fb_height(); y++) { u32 *r = fb_row((int)y); for (u32 x = 0; x < fb_width(); x++) r[x] = 0; } }
-    int x0 = fb ? ((int)fb_width() - (W / 2) * scale) / 2 : 0, y0 = 24;
-    if (fb) fb_text_px(8, 4, live ? "camera live - any key stops" : "camera picture - any key", 0xFFFFFF, 0);
+    STEP("cam 9: %s (FS %u FE %u, STA 0x%x, write pointer 0x%x)\n", f0 ? "frame OK" : "NO frame", n_fs, n_fe, sta_or, ur(0x11C));
     u64 t0 = timer_us(), last = t0;
     u32 shown = 0, fe0 = 0;
-    int got = 0;
+    int got = f0 != 0;
+    if (got && !live) {                                  /* let exposure + white balance settle (max ~2 s) */
+        for (int i = 0; i < 60; i++) {
+            u16 *f = next_frame(500);
+            if (!f) break;
+            process_frame(f);
+            if (ae_ok >= 2 && i >= 4) break;
+            if (con_trygetc() >= 0) break;
+        }
+    }
+    if (fb) { fb_hold(1); for (u32 y = 0; y < fb_height(); y++) { u32 *r = fb_row((int)y); for (u32 x = 0; x < fb_width(); x++) r[x] = 0; } }
+    int x0 = fb ? ((int)fb_width() - (W / 2) * scale) / 2 : 0, y0 = 24;
+    if (fb) fb_text_px(8, 4, live ? "camera live - s or space saves a JPEG, other keys stop" : "camera picture - any key", 0xFFFFFF, 0);
+    int saved = 0;
+    char nm[64]; nm[0] = 0;
     for (;;) {
-        u16 *f = next_frame(got ? 500 : 3000);
+        u16 *f = got ? next_frame(got ? 500 : 3000) : 0;
         if (f) {
-            got = 1; shown++;
-            if (fb) draw_frame(f, x0, y0, scale);
-            if (!live) break;
-        } else if (!got || !live) break;
+            shown++;
+            process_frame(f);
+            if (fb) blit(x0, y0, scale);
+            if (!live) {
+                if (save) { int r = save_jpeg(file, nm); saved = r > 0; if (fb) fb_text_px(x0, y0 + (H / 2) * scale + 8, r > 0 ? nm : "NOT saved", 0xFFFFFF, 0); }
+                break;
+            }
+        } else break;
         u64 now = timer_us();
         if (now - last >= 1000000) {
-            char l[80]; int n = 0;
+            char l[96]; int n = 0;
             u32 fps = (n_fe - fe0) * 1000000 / (u32)(now - last); fe0 = n_fe; last = now;
-            const char *t = "fps "; while (*t) l[n++] = *t++;
-            if (fps >= 10) l[n++] = (char)('0' + fps / 10);
-            l[n++] = (char)('0' + fps % 10); l[n++] = ' '; l[n++] = ' '; l[n] = 0;
+            put_s(l, &n, "fps "); put_int(l, &n, (int)fps);
+            put_s(l, &n, "  exposure "); put_d10(l, &n, ae_exp * LINE_US10 / 1000); put_s(l, &n, " ms  gain ");
+            put_d10(l, &n, ae_gain * 10 / 16); put_s(l, &n, "x   ");
+            if (nm[0]) { put_s(l, &n, nm); put_s(l, &n, "   "); }
+            l[n] = 0;
             if (fb) fb_text_px(x0, y0 + (H / 2) * scale + 8, l, 0xFFFFFF, 0);
         }
-        if (con_trygetc() >= 0) break;
+        int k = con_trygetc();
+        if (k == 's' || k == 'S' || k == ' ') {
+            if (save_jpeg(0, nm) > 0) saved++;
+            else { nm[0] = 0; }
+            last = 0;
+        } else if (k >= 0) break;
     }
     u32 ibwp = ur(0x11C), lclk = ur(0x010), ld0 = ur(0x018), ld1 = ur(0x01C), sta_now = ur(0x004), ista = ur(0x104);
-    u8 s0100 = 0xEE, s4800 = 0xEE, s300d = 0xEE, s3036 = 0xEE, s4814 = 0xEE;
-    rd16(saddr, 0x0100, &s0100); rd16(saddr, 0x4800, &s4800); rd16(saddr, 0x300D, &s300d);
-    rd16(saddr, 0x3036, &s3036); rd16(saddr, 0x4814, &s4814);
-    u8 s4202 = 0xEE; rd16(saddr, 0x4202, &s4202);
-    if (!live && got && fb) { while (con_trygetc() < 0) delay_us(20000); }
+    if (!live && shown && fb) { while (con_trygetc() < 0) delay_us(20000); }
     cam_stop();
     if (fb) { fb_hold(0); fb_redraw(); }
-    kprintf("frames: start %u, end %u, shown %u in %u ms\n", n_fs, n_fe, shown, (u32)((timer_us() - t0) / 1000));
-    kprintf("receiver status:"); print_sta(sta_or); if (!sta_or) kprintf(" (nothing)");
-    kprintf("\nwrite pointer 0x%x (buffers 0x%x / 0x%x), lanes CLK %x DAT0 %x DAT1 %x\n",
-            ibwp, (u32)BUF_A | 0xC0000000u, (u32)BUF_B | 0xC0000000u, lclk, ld0, ld1);
-    kprintf("at the end: STA 0x%x ISTA 0x%x; sensor 0100=%02x 4800=%02x 300d=%02x 4202=%02x 3036=%02x 4814=%02x\n",
-            sta_now, ista, s0100, s4800, s300d, s4202, s3036, s4814);
-    if (!got) kprintf("NO PICTURE: no complete frame came in (send a photo of these lines)\n");
+    if (got) {
+        kprintf("frames: %u shown in %u ms, exposure %u.%u ms, gain %u.%ux, white balance R %u%% B %u%%",
+                shown, (u32)((timer_us() - t0) / 1000), (u32)(ae_exp * LINE_US10 / 10000), (u32)(ae_exp * LINE_US10 / 1000 % 10),
+                (u32)(ae_gain / 16), (u32)(ae_gain * 10 / 16 % 10), gr_cur * 100 / 256, gb_cur * 100 / 256);
+        if (saved && live) kprintf(", %d saved", saved);
+        kprintf("\n");
+    }
+    if (got && !trace) return;
+    kprintf("frames: start %u, end %u\nreceiver status:", n_fs, n_fe); print_sta(sta_or); if (!sta_or) kprintf(" (nothing)");
+    kprintf("\nwrite pointer 0x%x (buffers 0x%x / 0x%x), lanes CLK %x DAT0 %x DAT1 %x, STA 0x%x ISTA 0x%x\n",
+            ibwp, (u32)BUF_A | 0xC0000000u, (u32)BUF_B | 0xC0000000u, lclk, ld0, ld1, sta_now, ista);
+    if (!got) kprintf("NO PICTURE: no complete frame came in ('cam trace on' and send a photo)\n");
 }
 
 
@@ -576,7 +886,7 @@ void camera_cmd(int argc, char **argv)
                 if (!rd16(saddr, 0x0100, &v)) kprintf("  0x0100 mode select %02x (%s)\n", v, v & 1 ? "streaming" : "standby");
                 if (!rd16(saddr, 0x302A, &v)) kprintf("  0x302A revision    %02x\n", v);
             }
-            kprintf("'cam live' = picture on HDMI, 'cam snap' = one picture, 'cam bars' = test colour bars\n");
+            kprintf("'cam live' = picture on HDMI, 'cam snap' = JPEG to the card, 'cam set' = settings, 'cam bars' = test bars\n");
         } else {
             kprintf("no sensor: check the ribbon (contacts towards the HDMI port on the Pi 3,\n"
                     "the blue side towards the Ethernet port), and that it is the CAMERA socket\n");
@@ -614,8 +924,42 @@ void camera_cmd(int argc, char **argv)
         kprintf("MIPI clock: %s (test setting until reboot)\n", cont_clk ? "continuous" : "non-continuous (default)");
         return;
     }
-    if (!strcmp(a, "live")) { test_pattern = 0; show(1); return; }
-    if (!strcmp(a, "snap")) { test_pattern = 0; show(0); return; }
+    if (!strcmp(a, "live")) { test_pattern = 0; show(1, 0, 0); return; }
+    if (!strcmp(a, "snap")) { test_pattern = 0; show(0, 1, argc > 2 ? argv[2] : 0); return; }
+    if (!strcmp(a, "view")) { test_pattern = 0; show(0, 0, 0); return; }
+    if (!strcmp(a, "set") || !strcmp(a, "settings")) {
+        cfg_load();
+        char b[300]; cfg_text(b);
+        kprintf("camera settings (/CAM.TXT):\n");
+        for (char *l = b; *l; ) { char *e = l; while (*e && *e != '\n') e++; char sv = *e; *e = 0; kprintf("  %s\n", l); *e = sv; l = *e ? e + 1 : e; }
+        kprintf("change: cam exposure auto|<ms>, gain auto|<x>, ev <-3..3>, wb auto|lock|<r%%> <b%%>,\n"
+                "        brightness|contrast <-100..100>, saturation <0..300>, hue <-180..180>,\n"
+                "        gamma on|off, flip off|h|v|hv, quality <10..100>; cam defaults\n");
+        return;
+    }
+    if (!strcmp(a, "defaults")) {
+        cfg_load();
+        s_exp10 = s_gain10 = s_ev = s_wb = s_bri = s_con = s_hue = s_flip = 0;
+        s_wbr = s_wbb = s_sat = 100; s_gamma = 1; s_q = 85; gr_cur = gb_cur = 256;
+        prep(); cfg_save();
+        kprintf("camera settings back to the defaults\n");
+        return;
+    }
+    if (argc > 2) {
+        cfg_load();
+        int r = set_one(a, argv[2], argc > 3 ? argv[3] : 0);
+        if (r == 0) {
+            if (!strcmp(a, "wb") && s_wb == 2) { gr_cur = (u32)s_wbr * 256 / 100; gb_cur = (u32)s_wbb * 256 / 100; }
+            prep(); cfg_save();
+            char b[300]; cfg_text(b);
+            for (char *l = b; *l; ) { char *e = l; while (*e && *e != '\n') e++; char sv = *e; *e = 0;
+                if (!strncmp(l, a, strlen(a)) && l[strlen(a)] == ' ') kprintf("%s (saved in /CAM.TXT)\n", l);
+                *e = sv; l = *e ? e + 1 : e; }
+            if (!strcmp(a, "wb") && s_wb == 1) kprintf("white balance locked at the current values\n");
+            return;
+        }
+        if (r == -1) { kprintf("bad value for '%s' ('cam set' shows the ranges)\n", a); return; }
+    }
     if (!strcmp(a, "dump")) {                         /* start, wait 1 s, print every register, stop */
         test_pattern = 1;
         int t = trace; trace = 0;
@@ -629,7 +973,7 @@ void camera_cmd(int argc, char **argv)
         trace = t;
         return;
     }
-    if (!strcmp(a, "bars")) { test_pattern = 1; show(1); test_pattern = 0; return; }
+    if (!strcmp(a, "bars")) { test_pattern = 1; show(1, 0, 0); test_pattern = 0; return; }
     if (!strcmp(a, "reg") && argc > 2) {
         u64 reg, v;
         if (!parse_num(argv[2], &reg) || reg > 0xFFFF) { kprintf("cam reg <addr 0x0000-0xffff> [value]\n"); return; }
@@ -647,8 +991,13 @@ void camera_cmd(int argc, char **argv)
         return;
     }
     kprintf("usage: cam                 power the camera, find the sensor (OV5647 / IMX219)\n"
-            "       cam live            live picture on HDMI, any key stops\n"
-            "       cam snap            one picture, any key\n"
+            "       cam live            live picture on HDMI, s / space saves a JPEG, other keys stop\n"
+            "       cam snap [file]     one picture saved as JPEG (default /CAM/<date>/<time>.JPG)\n"
+            "       cam view            one picture on HDMI only, any key\n"
+            "       cam set             picture settings: exposure, gain, ev, wb, brightness, contrast,\n"
+            "                           saturation, hue, gamma, flip, quality (saved in /CAM.TXT)\n"
+            "       cam <setting> <value>  e.g. cam saturation 130, cam exposure 10, cam wb auto\n"
+            "       cam defaults        settings back to the defaults\n"
             "       cam bars            the sensor's test colour bars (checks the link without the lens)\n"
             "       cam dump            receiver registers while streaming (compare with Linux: tools/camdump.py)\n"
             "       cam mode 1296|fw|640 sensor mode (default 1296 = the Linux 1296x972 mode)\n"
