@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.101**
+Aktuálna verzia: **0.102**
 
 ## Podporované dosky
 
@@ -480,7 +480,8 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.98: `cam sregs` vypíše všetky registre senzora kamery, ktoré RoboOS nastavuje, počas vysielania; `tools/ov5647regs.sh` vypíše ten istý zoznam na Linuxe - na porovnanie.
 0.99: oprava kamery: počas čakania na snímky RoboOS tisíckrát za sekundu zapisoval stav prijímača späť (aj bity "zosynchronizované"); teraz maže len chybové bity. Predvolené ako Linux na tej istej doske: režim 1296x972, hradlo 0x15, najprv prijímač.
 0.100: v režime 1296 dostane senzor presne hodnoty, ktoré v ňom necháva Linux (ručná expozícia 0x57e, zosilnenie 0x40, dĺžka snímky 0x602, zrkadlenie 0x3821 = 3, bez AWB).
-0.101: NÁJDENÁ CHYBA kamery: RoboOS zapínal napájanie nesprávneho prijímača (doména firmvéru 13 = UNICAM0; konektor kamery používa UNICAM1 = 14), takže prijímač nikdy nevidel dáta. Opravené.
+0.101: NÁJDENÁ CHYBA kamery: RoboOS zapínal napájanie nesprávneho prijímača (doména firmvéru 13 = UNICAM0; konektor kamery používa UNICAM1 = 14), takže prijímač nikdy nevidel dáta. Opravené - **kamera na Pi 3B+ funguje** (majiteľ).
+0.102: farby kamery: poradie farebných bodov podľa zrkadlenia senzora (GBRG v predvolenom režime 1296, ako Linux); `cam bayer bggr|gbrg|grbg|rggb`, ak farby nesedia.
 
 ### Dátum a čas (NTP)
 
@@ -883,7 +884,7 @@ na jeho vlastnej I2C zbernici (I2C0 na GPIO44/45 - nie piny na lište) a vypíš
 `cam bars` vlastné farebné pruhy senzora (skúška spojenia cez kábel bez objektívu). Senzor beží
 v režime 640x480 (60 snímok/s) s vlastnou automatickou expozíciou a vyvážením bielej; obraz má
 320x240 farebných bodov, zväčšených 2x alebo 3x. Po skončení vypíše počty snímok a stav prijímača -
-ak obraz nie je, odfoť tie riadky. Senzor sa našiel na Pi 3B (0.88); **obraz na hardvéri zatiaľ neotestovaný.**
+ak obraz nie je, odfoť tie riadky. Senzor sa našiel na Pi 3B (0.88); **obraz na Pi 3B+ funguje od 0.101** (0.89-0.100 zapínali napájanie nesprávneho prijímača).
 
 ### MQTT
 

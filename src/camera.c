@@ -227,6 +227,7 @@ static const struct rv vga[] = {
     {0x3a09,0x2e},{0x3a0a,0x00},{0x3a0b,0xfb},{0x3a0d,0x02},{0x3a0e,0x01},{0x4004,0x02},{0x4800,0x34},
     {0x380c,0x07},{0x380d,0x3c},{0x380e,0x01},{0x380f,0xf8},          /* HTS 1852, VTS 0x1f8 (mode values) */
 };
+static int bayer = -1;   /* 0.102: -1 auto (GBRG when the 1296 mode mirrors with 0x3821 = 3, like Linux), 0 BGGR, 1 GBRG, 2 GRBG, 3 RGGB */
 static int test_pattern, cont_clk;                    /* 0.91: cont_clk = continuous MIPI clock (test) */
 
 static int wr_list(const struct rv *l, int n)
@@ -438,23 +439,33 @@ static u16 *next_frame(u32 ms)
 static void draw_frame(const u16 *f, int x0, int y0, int scale)
 {
     u32 orv = 0; u64 sr = 0, sg = 0, sb = 0;
+    int ord = bayer >= 0 ? bayer : (vga_mode == 0 ? 1 : 0);
+    /* offsets of B, G, G, R inside one 2x2 square: 0 top-left, 1 top-right, W bottom-left, W+1 bottom-right */
+    int ob, og1, og2, orr;
+    switch (ord) {
+    case 1:  ob = 1;     og1 = 0; og2 = W + 1; orr = W;     break;   /* GBRG */
+    case 2:  ob = W;     og1 = 0; og2 = W + 1; orr = 1;     break;   /* GRBG */
+    case 3:  ob = W + 1; og1 = 1; og2 = W;     orr = 0;     break;   /* RGGB */
+    default: ob = 0;     og1 = 1; og2 = W;     orr = W + 1; break;   /* BGGR */
+    }
     for (int y = 0; y < H; y += 8) for (int x = 0; x < W; x += 8) {
         const u16 *p = f + y * W + x;
         orv |= p[0] | p[1] | p[W] | p[W + 1];
-        sb += p[0]; sg += p[1] + p[W]; sr += p[W + 1];
+        sb += p[ob]; sg += p[og1] + p[og2]; sr += p[orr];
     }
     int sh = 0; while (sh < 8 && (orv >> (sh + 8))) sh++;         /* top bit -> 8 bit */
     sg /= 2; if (!sr) sr = 1; if (!sb) sb = 1;
     u32 gr = (u32)(sg * 256 / sr), gb = (u32)(sg * 256 / sb);       /* x256 */
     if (gr > 1024) gr = 1024; if (gb > 1024) gb = 1024;
     for (int y = 0; y < H / 2; y++) {
-        const u16 *a = f + (2 * y) * W, *b = a + W;
+        const u16 *a = f + (2 * y) * W;
         for (int s = 0; s < scale; s++) {
             int yy = y0 + y * scale + s;
             if (yy >= (int)fb_height()) break;
             u32 *row = fb_row(yy) + x0;
             for (int x = 0; x < W / 2; x++) {
-                u32 B = a[2 * x] >> sh, G = ((u32)a[2 * x + 1] + b[2 * x]) >> (sh + 1), R = b[2 * x + 1] >> sh;
+                const u16 *q = a + 2 * x;
+                u32 B = q[ob] >> sh, G = ((u32)q[og1] + q[og2]) >> (sh + 1), R = q[orr] >> sh;
                 R = R * gr >> 8; B = B * gb >> 8;
                 if (R > 255) R = 255; if (G > 255) G = 255; if (B > 255) B = 255;
                 u32 px = (R << 16) | (G << 8) | B;
@@ -586,6 +597,13 @@ void camera_cmd(int argc, char **argv)
         gate_val = (int)v; kprintf("lane clock gate 0x%x (until reboot)\n", gate_val);
         return;
     }
+    if (!strcmp(a, "bayer") && argc > 2) {
+        static const char *nm[] = { "bggr", "gbrg", "grbg", "rggb" };
+        bayer = -1;
+        for (int i = 0; i < 4; i++) if (!strcmp(argv[2], nm[i])) bayer = i;
+        kprintf("colour order: %s\n", bayer < 0 ? "auto" : nm[bayer]);
+        return;
+    }
     if (!strcmp(a, "order") && argc > 2) {
         sensor_first = strcmp(argv[2], "rx") != 0;
         kprintf("start order: %s (until reboot)\n", sensor_first ? "sensor first, then the receiver" : "receiver first, then the sensor");
@@ -635,6 +653,7 @@ void camera_cmd(int argc, char **argv)
             "       cam dump            receiver registers while streaming (compare with Linux: tools/camdump.py)\n"
             "       cam mode 1296|fw|640 sensor mode (default 1296 = the Linux 1296x972 mode)\n"
             "       cam gate 0x15|0x155 lane clock gate (default 0x15 like Linux)\n"
+            "       cam bayer auto|bggr|gbrg|grbg|rggb   colour order of the sensor pixels (if colours look wrong)\n"
             "       cam order sensor|rx start order (default rx = receiver first, like Linux)\n"
             "       cam sregs           sensor registers while streaming (compare with Linux: tools/ov5647regs.sh)\n"
             "       cam clock cont|ncont  MIPI clock mode (test; default ncont)\n"
