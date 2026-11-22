@@ -864,7 +864,7 @@ display thermal          max / min / avg / person on the I2C display (also under
 
 A person (two or more warm pixels) is sent to MQTT `<base>/presence` (1 / 0, retained) when it changes;
 BASIC `SENSOR(14)` = the hottest pixel (0.01 C), `SENSOR(15)` = person; the MQTT state and `GET /api/sensors`
-(with all 64 pixels) carry it too. **Not yet tested on hardware** (PC test `tools/test_thermal.c`: decoding,
+(with all 64 pixels) carry it too. **Works on the Pi 3B+** (the live map shows a hand; PC test `tools/test_thermal.c`: decoding,
 presence, the heat map picture).
 
 ### MQTT

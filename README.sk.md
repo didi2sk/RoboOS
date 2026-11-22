@@ -856,7 +856,7 @@ display thermal          max / min / priemer / človek na I2C displeji (aj pod K
 
 Človek (dva a viac teplých bodov) ide pri zmene do MQTT `<base>/presence` (1 / 0, retained); BASIC
 `SENSOR(14)` = najteplejší bod (0,01 C), `SENSOR(15)` = človek; aj stav v MQTT a `GET /api/sensors` (so všetkými
-64 bodmi). **Na hardvéri zatiaľ neotestované** (PC test `tools/test_thermal.c`: dekódovanie, prítomnosť, obrázok mapy).
+64 bodmi). **Funguje na Pi 3B+** (mapa naživo ukazuje ruku; PC test `tools/test_thermal.c`: dekódovanie, prítomnosť, obrázok mapy).
 
 ### MQTT
 
