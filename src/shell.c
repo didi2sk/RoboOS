@@ -713,6 +713,7 @@ static const struct cmd cmds[] = {
     { "ai",     "<question>|@cmd ..|key|model", "ask Claude (AI, needs an API key)", ai_cmd },
     { "radio",  "[MHz|up|down|scan|vol|off]", "FM radio (RDA5807M module)",  radio_cmd  },
     { "motion", "[watch|zero|threshold mg|alarm on|off]", "tilt, acceleration, shakes (MPU-6050)", motion_cmd },
+    { "cam", "[reg a [v]|off]", "camera on the CSI cable (OV5647 / IMX219)", camera_cmd },
     { "thermal", "[once|range lo hi|person C]", "8x8 thermal camera (AMG8833)", thermal_cmd },
     { "voice",  "[add id cmd|del id|volume|mute|wake]", "offline voice commands (DF2301Q)", voice_cmd },
     { "dcf",    "[on|off|pin n|invert|pull|pon]", "DCF77 radio clock receiver", dcf_cmd    },
