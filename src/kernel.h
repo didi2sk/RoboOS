@@ -243,6 +243,13 @@ struct sensor_values {
 void sensors_probe(void);
 int  sensors_have(void);
 int  sensors_read(struct sensor_values *v);
+/* motion.c - MPU-6050 (GY-521) at I2C 0x68/0x69 */
+struct motion_values { int ax_mg, ay_mg, az_mg, g_mg, gx_d10, gy_d10, gz_d10, temp_c100, pitch_d10, roll_d10; u32 shakes; };
+void motion_boot(void);
+void motion_poll(void);              /* core 0, con_trygetc: shake detection */
+void motion_cmd(int argc, char **argv);
+int  motion_present(void);
+int  motion_get(struct motion_values *m);   /* 0 = ok */
 void sensors_log_boot(void);         /* /SENSLOG.TXT: log every N minutes to /LOG/YYYYMMDD.CSV */
 void sensors_log_poll(void);         /* core 0, con_trygetc */
 int  sensors_log_every(void);        /* minutes, 0 = off */

@@ -598,8 +598,12 @@ logged_in:;
         if (v.have & SV_TEMP) C100("temp_c", v.temp_c100);
         if (v.have & SV_HUM) C100("hum_pct", v.hum_c100);
         if (v.have & SV_PRESS) C100("press_hpa", v.press_pa);
-        #undef C100
         if (v.have & SV_AIN) { put(",\"ain_mv\":["); for (int i = 0; i < 4; i++) { if (i) put(","); put_i(v.ain_mv[i]); } put("]"); }
+        { struct motion_values m;
+          if (motion_get(&m) == 0) { C100("pitch_deg", m.pitch_d10 * 10); C100("roll_deg", m.roll_d10 * 10);
+                                     put(",\"accel_mg\":["); put_i(m.ax_mg); put(","); put_i(m.ay_mg); put(","); put_i(m.az_mg); put("]");
+                                     put(",\"shakes\":"); put_i((int)m.shakes); } }
+        #undef C100
         put(",\"log_min\":"); put_i(sensors_log_every());
         put("}\n");
         return olen;

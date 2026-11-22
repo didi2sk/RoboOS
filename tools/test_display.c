@@ -46,6 +46,9 @@ static int sound_is_exclusive(void) { return 0; }
 struct sensor_values { int have, cpu_mc, temp_c100, hum_c100, press_pa, ain_mv[4]; };
 static int fake_have = SV_TEMP | SV_HUM | SV_PRESS;
 static int sensors_read(struct sensor_values *v) { memset(v, 0, sizeof(*v)); v->have = fake_have; v->temp_c100 = 2143; v->hum_c100 = 4520; v->press_pa = 100132; return v->have; }
+struct motion_values { int ax_mg, ay_mg, az_mg, g_mg, gx_d10, gy_d10, gz_d10, temp_c100, pitch_d10, roll_d10; unsigned shakes; };
+static int motion_get(struct motion_values *m) { memset(m, 0, sizeof(*m)); m->pitch_d10 = 123; m->roll_d10 = -45; m->g_mg = 1002; m->shakes = 3; return 0; }
+static int motion_present(void) { return 1; }
 static int radio_on(void) { return 1; }
 static unsigned radio_freq(void) { return 10440; }
 static int radio_rssi(void) { return 40; }
@@ -424,6 +427,11 @@ int main(void)
     reset(LCD, 0x27, 0xFF, "mode sensors\n");
     display_boot(); now_us += 2100000; display_poll();
     { const char *w[] = { "21.4C 45.2%", "1001.3 hPa" }; expect_rows("sensors lcd", 16, 0, 2, w); }
+
+    printf("motion screen:\n");
+    reset(SSD, 0x3C, 0x43, "mode motion\n");
+    display_boot(); now_us += 2100000; display_poll();
+    { const char *w[] = { "Pitch 12.3 deg", "Roll  -4.5 deg", "|a| 1002 mg", "Shakes 3" }; expect_rows("motion 4 rows", 0, 0, 4, w); }
 
     printf("Waveshare 1.3\" OLED HAT (SH1106 on SPI + keys):\n");
     reset(SH, 0, 0xFF, "bus spi\ntype sh1106\nmode text\n");

@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.82**
+Current version: **0.83**
 
 ## Supported boards
 
@@ -466,6 +466,7 @@ several minutes (hour and date stay, the minute goes +1), so the time comes even
 sending the STOP); `i2c scan` and the sensor search at boot missed devices that `i2c probe` saw.
 0.82: sensors on the display (`display sensors`, also under KEY1 on the HAT), a CSV log (`sensors log 5` ->
 /LOG/YYYYMMDD.CSV) and `GET /api/sensors` (JSON).
+0.83: MPU-6050 / GY-521 (`motion`): tilt (spirit level), acceleration, rotation, shake detection; display, MQTT, API, BASIC.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -823,6 +824,25 @@ printed, so you can find out the number of each phrase. The actions are saved in
 per line). They run only at the shell prompt (not while a program or BASIC runs; a command heard then waits
 up to 10 s). **Not yet tested on hardware** (PC test `tools/test_voice.c` with a fake module).
 
+### Tilt and shakes (MPU-6050 / GY-521, 0.83)
+
+The GY-521 board (MPU-6050: accelerometer + gyroscope + thermometer) goes on the I2C pins like the other
+sensors (VCC 3.3 V pin 1, GND pin 6, SCL pin 5, SDA pin 3; XDA / XCL / INT unconnected). AD0 open = address
+0x68, AD0 to 3.3 V = 0x69 (use that next to a DS3231 clock, which is also 0x68).
+
+```
+motion                  pitch / roll (deg), acceleration (mg), rotation (deg/s), chip temperature, shakes
+motion watch            live tilt - a spirit level (any key stops)
+motion zero             this position = level (and the gyro at rest = 0); saved in /MOTION.TXT
+motion threshold 400    a shake = |acceleration| more than 400 mg off 1 g (or turning > 150 deg/s)
+motion alarm on|off     print every shake; MQTT <base>/motion gets the count anyway
+display motion          pitch / roll / |a| / shakes on the display (also under KEY1 on the HAT)
+```
+
+BASIC `SENSOR(8)` pitch, `SENSOR(9)` roll (0.1 deg), `SENSOR(10)` shakes, `SENSOR(11..13)` acceleration x/y/z (mg);
+the MQTT state and `GET /api/sensors` carry pitch, roll and shakes too. **Not yet tested on hardware** (PC test
+`tools/test_motion.c`: integer atan2 within 0.1 deg of libm, tilt at known angles, gyro / temperature, shakes).
+
 ### MQTT
 
 MQTT is the usual way IoT devices talk to a server (Home Assistant, Node-RED, Mosquitto...).
@@ -1008,6 +1028,7 @@ If you connect after boot, press Enter.
 | `sensors [scan]`, `i2c scan\|read\|write` | I2C sensors (BME280, ADS1115, DS3231) |
 | `ai <question>\|@cmd ..\|key\|model` | ask Claude (own Anthropic API key) |
 | `radio [MHz\|up\|down\|scan\|vol n\|off]` | FM radio (RDA5807M module on I2C) |
+| `motion [watch\|zero\|threshold mg\|alarm on\|off]` | tilt, acceleration, shakes (MPU-6050 / GY-521) |
 | `voice [add id cmd\|del id\|volume\|mute\|wake]` | offline voice commands (DFRobot DF2301Q) |
 | `dcf [on\|off\|pin n\|invert\|pull\|pon]` | DCF77 radio clock receiver on a GPIO |
 | `display [scan\|text n ..\|clear\|status on\|off\|size\|type\|addr\|hat\|keys]` | I2C OLED / LCD display, Waveshare SPI OLED HAT |
