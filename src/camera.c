@@ -48,11 +48,10 @@ static u32 last_s;
 #define UNI_GATE  (MMIO_BASE + 0x802004)
 #define CM_CAM1CTL (MMIO_BASE + 0x101048)
 #define CM_CAM1DIV (MMIO_BASE + 0x10104C)
-#define W 640
-#define H 480
-#define FRAME_BYTES (W * H * 2)
+static int W = 1296, H = 972;                          /* 0.93: the 2x2 binned mode by default (the door Pi's firmware uses it) */
+#define FRAME_BYTES ((u32)(W * H * 2))
 #define BUF_A 0x13000000UL
-#define BUF_B 0x13100000UL
+#define BUF_B 0x13400000UL
 static int streaming, cur_buf;
 static u32 n_fs, n_fe, sta_or;
 
@@ -193,6 +192,16 @@ static const struct rv common[] = {
     {0x3a0f,0x58},{0x3a10,0x50},{0x3a1b,0x58},{0x3a1e,0x50},{0x3a11,0x60},{0x3a1f,0x28},{0x4001,0x02},
     {0x4000,0x09},{0x3503,0x03},
 };
+static const struct rv binned[] = {                     /* 1296x972, 2x2 binned, full field of view (Linux mode 2) */
+    {0x3036,0x69},{0x3821,0x01},{0x3820,0x41},{0x3612,0x59},{0x3618,0x00},{0x5002,0x41},{0x3800,0x00},
+    {0x3801,0x00},{0x3802,0x00},{0x3803,0x00},{0x3804,0x0a},{0x3805,0x3f},{0x3806,0x07},{0x3807,0xa3},
+    {0x3808,0x05},{0x3809,0x10},{0x380a,0x03},{0x380b,0xcc},{0x3811,0x0c},{0x3813,0x06},{0x3814,0x31},
+    {0x3815,0x31},{0x3a09,0x28},{0x3a0a,0x00},{0x3a0b,0xf6},{0x3a0d,0x08},{0x3a0e,0x06},{0x4004,0x04},
+    {0x4837,0x16},{0x4800,0x24},{0x350a,0x00},{0x350b,0x10},{0x3500,0x00},{0x3501,0x1a},{0x3502,0xf0},
+    {0x3212,0xa0},
+    {0x380c,0x07},{0x380d,0x68},{0x380e,0x05},{0x380f,0x9b},          /* HTS 1896, VTS 0x59b (mode values) */
+};
+static int vga_mode, gate_val = 0x155;                /* 0.93: gate 0x155 as the firmware writes it (Linux: 0x15) */
 static const struct rv vga[] = {
     {0x3036,0x46},{0x3821,0x01},{0x3820,0x41},{0x3612,0x59},{0x3618,0x00},{0x3814,0x35},{0x3815,0x35},
     {0x3708,0x64},{0x3709,0x52},{0x3800,0x00},{0x3801,0x10},{0x3802,0x00},{0x3803,0x00},{0x3804,0x0a},
@@ -215,7 +224,7 @@ static int sensor_stream(int on)
 {
     if (on) {
         if (wr_list(common, sizeof(common) / sizeof(common[0]))) return -1;
-        if (wr_list(vga, sizeof(vga) / sizeof(vga[0]))) return -1;
+        if (vga_mode ? wr_list(vga, sizeof(vga) / sizeof(vga[0])) : wr_list(binned, sizeof(binned) / sizeof(binned[0]))) return -1;
         u8 v = 0;
         if (!rd16(saddr, 0x4814, &v)) wr16(saddr, 0x4814, v & 0x3F);   /* virtual channel 0 */
         wr16(saddr, 0x3503, 0x00);                         /* auto exposure + auto gain */
@@ -253,7 +262,7 @@ static void set_buf(u64 a)
 
 static void unicam_start(void)
 {
-    mmio_write(UNI_GATE, 0x5a000000 | 0x15);             /* clock + 2 data lane gates */
+    mmio_write(UNI_GATE, 0x5a000000 | (u32)gate_val);    /* lane clock gates (0x15 = clock + 2 lanes) */
     uw(0x000, 2);                                        /* CTRL = MEM */
     uw(0x008, 4 | (7 << 4) | (7 << 8));                  /* ANA: reset, CTATADJ 7, PTATADJ 7 */
     delay_us(1500);
@@ -281,7 +290,7 @@ static void unicam_start(void)
     uw(0x010, lane);                                     /* CLK */
     uw(0x018, lane);                                     /* DAT0 */
     uw(0x01C, lane);                                     /* DAT1 */
-    uw(0x118, W * 2);                                    /* IBLS: bytes per line */
+    uw(0x118, (u32)W * 2);                               /* IBLS: bytes per line */
     cur_buf = 0;
     set_buf(BUF_A);
     uw(0x10C, 4 | (5u << 7));                            /* IPIPE: unpack RAW10, pack to 16 bit */
@@ -326,7 +335,7 @@ static int cam_start(void)
     STEP("cam 2: switched on: answer %s, now %s (%u)\n", ok ? "ok" : "NONE", ok2 ? (g[1] & 1 ? "on" : "OFF") : "?", g[1]);
     cam1_clock(1);
     STEP("cam 3: CAM1 clock ctl 0x%x div 0x%x\n", mmio_read(CM_CAM1CTL), mmio_read(CM_CAM1DIV));
-    dcache_clean_inval((void *)BUF_A, 0x200000);
+    dcache_clean_inval((void *)BUF_A, 0x800000);
     if (wr_list(oe_on, 3) || sensor_stream(0)) { kprintf("sensor does not answer\n"); return -1; }
     STEP("cam 4: sensor lanes in LP-11, reading the receiver...\n");
     STEP("cam 5: receiver CTRL 0x%x STA 0x%x ANA 0x%x\n", ur(0x000), ur(0x004), ur(0x008));
@@ -417,9 +426,10 @@ static void dump_regs(void)
 static void show(int live)
 {
     if (cam_start()) return;
-    int fb = fb_ready() && fb_width() >= 640 && fb_height() >= 480;
-    int scale = fb && fb_width() >= 1280 && fb_height() >= 1000 ? 3 : 2;
-    if (fb && fb_height() < 24 + 240 * (u32)scale + 24) fb = 0;   /* no room for picture + text */
+    int fb = fb_ready();
+    int scale = 1;                                       /* one RGB pixel per 2x2 Bayer square: W/2 x H/2 */
+    while (fb && (u32)(W / 2) * (scale + 1) <= fb_width() && 24 + (u32)(H / 2) * (scale + 1) + 24 <= fb_height() && scale < 3) scale++;
+    if (fb && (fb_width() < (u32)(W / 2) || fb_height() < 24 + (u32)(H / 2) + 24)) fb = 0;   /* no room for picture + text */
     STEP("cam 8: first frame...\n");
     u16 *f0 = 0;
     for (int i = 0; i < 6 && !f0; i++) {                 /* 0.91: 6 x 0.5 s, what the lanes and the sensor do meanwhile */
@@ -433,7 +443,7 @@ static void show(int live)
     }
     { STEP("cam 9: %s (FS %u FE %u, STA 0x%x, write pointer 0x%x)\n", f0 ? "frame OK" : "NO frame", n_fs, n_fe, sta_or, ur(0x11C)); if (trace) delay_us(1500000); }
     if (fb) { fb_hold(1); for (u32 y = 0; y < fb_height(); y++) { u32 *r = fb_row((int)y); for (u32 x = 0; x < fb_width(); x++) r[x] = 0; } }
-    int x0 = fb ? ((int)fb_width() - 320 * scale) / 2 : 0, y0 = 24;
+    int x0 = fb ? ((int)fb_width() - (W / 2) * scale) / 2 : 0, y0 = 24;
     if (fb) fb_text_px(8, 4, live ? "camera live - any key stops" : "camera picture - any key", 0xFFFFFF, 0);
     u64 t0 = timer_us(), last = t0;
     u32 shown = 0, fe0 = 0;
@@ -452,7 +462,7 @@ static void show(int live)
             const char *t = "fps "; while (*t) l[n++] = *t++;
             if (fps >= 10) l[n++] = (char)('0' + fps / 10);
             l[n++] = (char)('0' + fps % 10); l[n++] = ' '; l[n++] = ' '; l[n] = 0;
-            if (fb) fb_text_px(x0, y0 + 240 * scale + 8, l, 0xFFFFFF, 0);
+            if (fb) fb_text_px(x0, y0 + (H / 2) * scale + 8, l, 0xFFFFFF, 0);
         }
         if (con_trygetc() >= 0) break;
     }
@@ -498,6 +508,18 @@ void camera_cmd(int argc, char **argv)
     }
     if (!strcmp(a, "off")) { cam_stop(); power(0); sensor = 0; kprintf("camera power off\n"); return; }
     if (!strcmp(a, "trace")) { trace = argc > 2 && !strcmp(argv[2], "off") ? 0 : 1; kprintf("step trace %s\n", trace ? "on" : "off"); return; }
+    if (!strcmp(a, "mode") && argc > 2) {
+        if (streaming) { kprintf("stop the camera first\n"); return; }
+        vga_mode = !strcmp(argv[2], "640");
+        W = vga_mode ? 640 : 1296; H = vga_mode ? 480 : 972;
+        kprintf("sensor mode %dx%d (until reboot)\n", W, H);
+        return;
+    }
+    if (!strcmp(a, "gate") && argc > 2) {
+        u64 v; if (!parse_num(argv[2], &v) || v > 0xFFF) { kprintf("cam gate <hex value, e.g. 0x155 or 0x15>\n"); return; }
+        gate_val = (int)v; kprintf("lane clock gate 0x%x (until reboot)\n", gate_val);
+        return;
+    }
     if (!strcmp(a, "clock") && argc > 2) {
         cont_clk = !strcmp(argv[2], "cont");
         kprintf("MIPI clock: %s (test setting until reboot)\n", cont_clk ? "continuous" : "non-continuous (default)");
@@ -534,6 +556,8 @@ void camera_cmd(int argc, char **argv)
             "       cam snap            one picture, any key\n"
             "       cam bars            the sensor's test colour bars (checks the link without the lens)\n"
             "       cam dump            receiver registers while streaming (compare with Linux: tools/camdump.py)\n"
+            "       cam mode 1296|640   sensor mode (default 1296x972 binned, like the Pi firmware)\n"
+            "       cam gate 0x155|0x15 lane clock gate (default 0x155 like the Pi firmware)\n"
             "       cam clock cont|ncont  MIPI clock mode (test; default ncont)\n"
             "       cam reg <a> [v]     read / write a sensor register (16-bit address)\n"
             "       cam off             camera power off\n");
