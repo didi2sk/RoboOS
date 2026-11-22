@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.102**
+Current version: **0.103**
 
 ## Supported boards
 
@@ -486,6 +486,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.100: in the 1296 mode the sensor gets exactly the values Linux leaves in it (manual exposure 0x57e, gain 0x40, frame length 0x602, mirror 0x3821 = 3, no AWB).
 0.101: camera BUG FOUND: RoboOS powered the wrong camera receiver (firmware power domain 13 = UNICAM0; the camera connector uses UNICAM1 = 14), so the receiver never saw data. Fixed - **the camera works on the Pi 3B+** (owner).
 0.102: camera colours: the pixel colour order follows the sensor mirroring (GBRG in the default 1296 mode, like Linux); `cam bayer bggr|gbrg|grbg|rggb` if the colours look wrong.
+0.103: camera photos as JPEG (`cam snap [file]`, s / space in `cam live`; own encoder `src/jpeg.c`) + picture settings saved in /CAM.TXT: exposure, gain, ev, white balance, brightness, contrast, saturation, hue, gamma, flip, JPEG quality (`cam set`).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -882,7 +883,7 @@ BASIC `SENSOR(14)` = the hottest pixel (0.01 C), `SENSOR(15)` = person; the MQTT
 (with all 64 pixels) carry it too. **Works on the Pi 3B+** (the live map shows a hand; PC test `tools/test_thermal.c`: decoding,
 presence, the heat map picture).
 
-### Camera on the CSI ribbon (OV5647 / IMX219, being built, 0.88)
+### Camera on the CSI ribbon (OV5647 / IMX219, 0.88)
 
 The Raspberry Pi camera (v1 = OV5647, also most cheap clones; v2 = IMX219) is driven directly,
 without the GPU firmware (the Linux `bcm2835-unicam` way). Step 1: `cam` switches the camera on
@@ -894,6 +895,31 @@ its own I2C bus (I2C0 on GPIO44/45 - not the pins on the header) and prints the 
 640x480 mode (60 fps) with its own auto exposure and white balance; the picture is 320x240 colour
 pixels drawn 2x or 3x. After stopping it prints the frame counts and the receiver status - photograph
 those lines if there is no picture. The sensor was found on a Pi 3B (0.88); **the picture works on the Pi 3B+ since 0.101** (0.89-0.100 powered the wrong receiver).
+
+Since 0.103 the picture is 648x486 and photos are saved as JPEG (own small encoder in the kernel):
+
+```
+cam snap                one photo -> /CAM/20261122/213001.JPG (date folder + time; /CAM/IMG00001.JPG without the clock)
+cam snap /DOOR.JPG      one photo to a chosen file (8.3 name, the folder must exist)
+cam live                live picture; s or space saves a photo, other keys stop
+cam view                one picture on HDMI only
+cam set                 all picture settings
+cam exposure auto|10    exposure: own auto exposure or fixed ms (0.1 - 35.6 ms)
+cam gain auto|2.5       sensor gain 1 - 15.9x (auto: exposure first, then gain)
+cam ev -1               auto exposure brighter / darker (-3 .. 3, each step = 2x)
+cam wb auto|lock|120 90 white balance: auto (grey world), lock = keep the current, or red / blue gains in %
+cam brightness 10       -100 .. 100
+cam contrast 20         -100 .. 100
+cam saturation 130      0 .. 300 % (0 = black and white)
+cam hue -10             colour turn in degrees, -180 .. 180
+cam gamma on|off        gamma 2 (off = linear, the 0.102 look)
+cam flip h|v|hv|off     mirror the picture
+cam quality 85          JPEG quality 10 .. 100
+cam defaults            all back to the defaults
+```
+
+The settings are saved in `/CAM.TXT`. A 648x486 photo is about 50-100 KB; the live view shows fps,
+exposure and gain under the picture.
 
 ### MQTT
 

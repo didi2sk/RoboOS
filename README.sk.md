@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.102**
+Aktuálna verzia: **0.103**
 
 ## Podporované dosky
 
@@ -482,6 +482,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.100: v režime 1296 dostane senzor presne hodnoty, ktoré v ňom necháva Linux (ručná expozícia 0x57e, zosilnenie 0x40, dĺžka snímky 0x602, zrkadlenie 0x3821 = 3, bez AWB).
 0.101: NÁJDENÁ CHYBA kamery: RoboOS zapínal napájanie nesprávneho prijímača (doména firmvéru 13 = UNICAM0; konektor kamery používa UNICAM1 = 14), takže prijímač nikdy nevidel dáta. Opravené - **kamera na Pi 3B+ funguje** (majiteľ).
 0.102: farby kamery: poradie farebných bodov podľa zrkadlenia senzora (GBRG v predvolenom režime 1296, ako Linux); `cam bayer bggr|gbrg|grbg|rggb`, ak farby nesedia.
+0.103: fotky z kamery ako JPEG (`cam snap [súbor]`, s / medzera v `cam live`; vlastný kodér `src/jpeg.c`) + nastavenia obrazu v /CAM.TXT: expozícia, zisk, ev, vyváženie bielej, jas, kontrast, sýtosť, odtieň, gama, zrkadlenie, kvalita JPEG (`cam set`).
 
 ### Dátum a čas (NTP)
 
@@ -873,7 +874,7 @@ display thermal          max / min / priemer / človek na I2C displeji (aj pod K
 `SENSOR(14)` = najteplejší bod (0,01 C), `SENSOR(15)` = človek; aj stav v MQTT a `GET /api/sensors` (so všetkými
 64 bodmi). **Funguje na Pi 3B+** (mapa naživo ukazuje ruku; PC test `tools/test_thermal.c`: dekódovanie, prítomnosť, obrázok mapy).
 
-### Kamera na plochom kábli (OV5647 / IMX219, vo výstavbe, 0.88)
+### Kamera na plochom kábli (OV5647 / IMX219, 0.88)
 
 Kamera pre Raspberry Pi (v1 = OV5647, aj väčšina lacných klonov; v2 = IMX219) sa ovláda priamo,
 bez firmvéru grafického čipu (ako linuxový `bcm2835-unicam`). Krok 1: `cam` zapne kameru
@@ -885,6 +886,31 @@ na jeho vlastnej I2C zbernici (I2C0 na GPIO44/45 - nie piny na lište) a vypíš
 v režime 640x480 (60 snímok/s) s vlastnou automatickou expozíciou a vyvážením bielej; obraz má
 320x240 farebných bodov, zväčšených 2x alebo 3x. Po skončení vypíše počty snímok a stav prijímača -
 ak obraz nie je, odfoť tie riadky. Senzor sa našiel na Pi 3B (0.88); **obraz na Pi 3B+ funguje od 0.101** (0.89-0.100 zapínali napájanie nesprávneho prijímača).
+
+Od 0.103 má obraz 648x486 a fotky sa ukladajú ako JPEG (vlastný malý kodér v jadre):
+
+```
+cam snap                jedna fotka -> /CAM/20261122/213001.JPG (priečinok s dátumom + čas; bez hodín /CAM/IMG00001.JPG)
+cam snap /DVERE.JPG     jedna fotka do zvoleného súboru (meno 8.3, priečinok musí existovať)
+cam live                živý obraz; s alebo medzera uloží fotku, iné klávesy skončia
+cam view                jeden obrázok len na HDMI
+cam set                 všetky nastavenia obrazu
+cam exposure auto|10    expozícia: vlastná automatika alebo pevne v ms (0,1 - 35,6 ms)
+cam gain auto|2.5       zisk senzora 1 - 15,9x (automatika: najprv expozícia, potom zisk)
+cam ev -1               automatika svetlejšie / tmavšie (-3 .. 3, každý krok = 2x)
+cam wb auto|lock|120 90 vyváženie bielej: auto (sivý svet), lock = podrží súčasné, alebo zisk červenej / modrej v %
+cam brightness 10       jas -100 .. 100
+cam contrast 20         kontrast -100 .. 100
+cam saturation 130      sýtosť 0 .. 300 % (0 = čiernobielo)
+cam hue -10             posun odtieňa v stupňoch, -180 .. 180
+cam gamma on|off        gama 2 (off = lineárne, vzhľad z 0.102)
+cam flip h|v|hv|off     zrkadlenie obrazu
+cam quality 85          kvalita JPEG 10 .. 100
+cam defaults            všetko späť na predvolené
+```
+
+Nastavenia sa ukladajú do `/CAM.TXT`. Fotka 648x486 má asi 50-100 KB; živý obraz ukazuje pod obrázkom
+snímky/s, expozíciu a zisk.
 
 ### MQTT
 
