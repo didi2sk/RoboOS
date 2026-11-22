@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.91**
+Aktuálna verzia: **0.92**
 
 ## Podporované dosky
 
@@ -471,6 +471,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.89: kamera krok 2: `cam live` / `cam snap` / `cam bars` - prvý obraz z OV5647 na HDMI (640x480).
 0.90: `cam live` / `bars` vypíšu každý krok štartu (`cam 1` ... `cam 9`) - na 0.89 doska zamrzla, posledný riadok ukáže kde (`cam trace off` ich skryje).
 0.91: počas čakania na prvú snímku sa každých 0,5 s vypíšu linky kamery a expozícia senzora; `cam clock cont|ncont` skúsi druhý režim MIPI hodín.
+0.92: `cam dump` vypíše všetky registre prijímača kamery počas vysielania; `tools/camdump.py` vypíše to isté na Linuxe, kde kamera funguje - na porovnanie.
 
 ### Dátum a čas (NTP)
 
