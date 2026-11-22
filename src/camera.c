@@ -55,6 +55,9 @@ static int W = 1296, H = 972;                          /* 0.99: the Linux 1296x9
 #define BUF_A 0x13000000UL
 #define BUF_B 0x13400000UL
 static int streaming, cur_buf;
+static int web_stream;                                   /* 0.104: started by a web request */
+static int fake;                                         /* 0.104: `cam test on` = a made-up picture (QEMU, no camera) */
+static u32 fake_n;
 static u32 n_fs, n_fe, sta_or;
 
 static void settle(void)
@@ -363,6 +366,7 @@ static int trace = 0;                                    /* 0.90: print each ste
 static int cam_start(void)
 {
     if (streaming) return 0;
+    if (fake) { streaming = 1; n_fs = n_fe = sta_or = 0; return 0; }
     if (!sensor && !detect(0)) { kprintf("no camera sensor found ('cam' shows why)\n"); return -1; }
     if (sensor != 1) { kprintf("only the OV5647 can give a picture so far\n"); return -1; }
     /* 0.101: the FIRMWARE domain number of UNICAM1 is 14 (Linux raspberrypi-power: DT index 13 + 1; Circle
@@ -404,16 +408,46 @@ static int cam_start(void)
 static void cam_stop(void)
 {
     if (!streaming) return;
+    if (fake) { streaming = 0; web_stream = 0; return; }
     sensor_stream(0);
     unicam_stop();
     cam1_clock(0);
     { u32 pd[2] = { 14, 0 }; mbox_prop(0x00038030, pd, 2); }    /* UNICAM1 power off */
     streaming = 0;
+    web_stream = 0;
 }
 
 /* wait for the next complete frame; returns its buffer or 0 (timeout ms) */
+static int ae_exp_f(void);
+/* 0.104 test picture: GBRG RAW10 colour bars + a grey ramp + a moving square, brightness follows exposure x gain */
+static u16 *fake_frame(void)
+{
+    u16 *f = (u16 *)(cur_buf ? BUF_B : BUF_A);
+    cur_buf ^= 1;
+    u32 k = (u32)ae_exp_f();                              /* exposure x gain, 1406 x 64 = the Linux default */
+    int sq = (int)(fake_n * 16 % (u32)(W - 200));
+    fake_n++;
+    for (int y = 0; y < H; y++) {
+        u16 *row = f + y * W;
+        for (int x = 0; x < W; x++) {
+            int bar = x * 7 / W; u32 r, g, b;
+            if (y < H / 2) { r = (bar & 4) ? 800 : 80; g = (bar & 2) ? 800 : 80; b = (bar & 1) ? 800 : 80; }
+            else { r = g = b = (u32)x * 1000 / (u32)W; }
+            if (x >= sq && x < sq + 160 && y >= H / 2 - 80 && y < H / 2 + 80) { r = 900; g = 600; b = 100; }
+            r = r * 6 / 10;                                /* a colour cast for the white balance */
+            u32 v = (y & 1) ? ((x & 1) ? g : r) : ((x & 1) ? b : g);   /* GBRG */
+            v = (u32)((u64)v * k / (1406u * 64u) / 5);
+            row[x] = (u16)(v > 1023 ? 1023 : v);
+        }
+    }
+    n_fs++; n_fe++;
+    delay_us(20000);
+    return f;
+}
+
 static u16 *next_frame(u32 ms)
 {
+    if (fake) return fake_frame();
     u64 end = timer_us() + (u64)ms * 1000;
     int started = 0;
     while (timer_us() < end) {
@@ -479,6 +513,7 @@ static void prep(void)
 
 static void sensor_exposure(void)
 {
+    if (fake) return;
     u32 v = (u32)ae_exp << 4;
     wr16(saddr, 0x3500, (u8)((v >> 16) & 0x0F)); wr16(saddr, 0x3501, (u8)(v >> 8)); wr16(saddr, 0x3502, (u8)(v & 0xF0));
     wr16(saddr, 0x350A, (u8)((ae_gain >> 8) & 3)); wr16(saddr, 0x350B, (u8)ae_gain);
@@ -488,6 +523,7 @@ static void sensor_exposure(void)
 static void ae_begin(void)
 {
     u8 a = 0, b = 0;
+    if (fake) { ae_maxl = 1534; ae_skip = 2; ae_ok = 0; if (s_exp10) ae_exp = s_exp10 * 1000 / LINE_US10; if (s_gain10) ae_gain = s_gain10 * 16 / 10; return; }
     if (!rd16(saddr, 0x380E, &a) && !rd16(saddr, 0x380F, &b) && ((a << 8) | b) > 100) ae_maxl = ((a << 8) | b) - 4;
     wr16(saddr, 0x3503, 0x03);                            /* sensor AEC + AGC off */
     if (s_exp10) ae_exp = s_exp10 * 1000 / LINE_US10;
@@ -578,6 +614,8 @@ static void process_frame(const u16 *f)
         }
     }
 }
+
+static int ae_exp_f(void) { return ae_exp * ae_gain; }
 
 static void blit(int x0, int y0, int scale)
 {
@@ -782,12 +820,200 @@ static void dump_sensor(void)
     if (n) kprintf("\n");
 }
 
+/* ---- 0.104: the camera on the web page (/camera, GET|POST /api/camera, GET /api/camera.jpg) ----
+ * Core 1 (lwIP) asks, core 0 (camera_poll from con_trygetc, or the cam live/snap loop) takes the pictures:
+ * a request gets a ticket (web_req), core 0 encodes the next frame into the free one of two JPEG buffers and
+ * publishes it (web_idx, web_done = ticket served); core 1 marks the buffer busy while it sends it.
+ * Settings from the page are set by core 1 directly (plain ints), core 0 re-makes the tables and saves
+ * /CAM.TXT 2 s after the last change. The camera stops 10 s after the last web picture. */
+#define WEB_JPG0 0x14000000UL
+#define WEB_JPG1 0x14400000UL
+static volatile u32 web_req, web_done;
+static volatile int web_idx = -1, web_len[2], web_busy[2], web_err;
+static int web_lk;
+static volatile int web_prep, web_snap, web_defaults;
+static volatile u64 web_save_at;
+static u64 web_last;                                      /* core 0: time of the last served web picture */
+static int in_show, in_poll;
+static u64 nocam_until;                                  /* no camera: web requests fail at once until then */
+static char last_photo[64];
+static volatile u32 fps_x10;
+
+static void wlock(void)   { while (__atomic_test_and_set(&web_lk, __ATOMIC_ACQUIRE)) ; }
+static void wunlock(void) { __atomic_clear(&web_lk, __ATOMIC_RELEASE); }
+
+/* core 0: a processed picture is in RGB_BUF - answer a waiting web request with it */
+static void web_publish(void)
+{
+    u32 want = __atomic_load_n(&web_req, __ATOMIC_ACQUIRE);
+    if (want == web_done) return;
+    wlock();
+    int b = web_idx == 0 ? 1 : 0;
+    if (web_busy[b]) { wunlock(); return; }               /* both buffers being sent: next frame */
+    web_busy[b] = 1000;                                   /* ours while encoding */
+    wunlock();
+    int n = jpeg_encode((const u32 *)RGB_BUF, ow, oh, ow, s_q, (u8 *)(b ? WEB_JPG1 : WEB_JPG0), JPG_MAX);
+    wlock();
+    web_busy[b] = 0;
+    if (n > 0) { web_len[b] = n; web_idx = b; web_err = 0; }
+    else web_err = 2;
+    __atomic_store_n(&web_done, want, __ATOMIC_RELEASE);
+    wunlock();
+    web_last = timer_us();
+}
+
+static void web_fail(int code)
+{
+    web_err = code;
+    __atomic_store_n(&web_done, __atomic_load_n(&web_req, __ATOMIC_ACQUIRE), __ATOMIC_RELEASE);
+}
+
+static void web_defaults_now(void)
+{
+    s_exp10 = s_gain10 = s_ev = s_wb = s_bri = s_con = s_hue = s_flip = 0;
+    s_wbr = s_wbb = s_sat = 100; s_gamma = 1; s_q = 85; gr_cur = gb_cur = 256;
+}
+
+/* core 0, from con_trygetc */
+void camera_poll(void)
+{
+    if (in_show || in_poll || io_held()) return;
+    in_poll = 1;
+    if (!cfg_loaded) cfg_load();
+    if (web_defaults) { web_defaults = 0; web_defaults_now(); web_prep = 1; web_save_at = timer_us() + 100000; }
+    if (web_prep) { web_prep = 0; prep(); }
+    if (web_save_at && timer_us() >= web_save_at) { web_save_at = 0; cfg_save(); }
+    int want = __atomic_load_n(&web_req, __ATOMIC_ACQUIRE) != web_done || web_snap;
+    if (want) {
+        if (!streaming) {
+            if (nocam_until && timer_us() < nocam_until) { web_snap = 0; web_fail(1); in_poll = 0; return; }
+            int t = trace; trace = 0;
+            test_pattern = 0;
+            int r = cam_start();
+            trace = t;
+            if (r) { nocam_until = timer_us() + 30000000ULL; web_snap = 0; web_fail(1); in_poll = 0; return; }   /* try again in 30 s */
+            nocam_until = 0;
+            ae_begin();
+            web_stream = 1;
+            for (int i = 0; i < 12; i++) {                 /* let the exposure find its level */
+                u16 *f = next_frame(i ? 200 : 1500);
+                if (!f) break;
+                process_frame(f);
+                if (ae_ok >= 1 && i >= 3) break;
+            }
+            web_last = timer_us();
+        }
+        u16 *f = next_frame(300);
+        if (!f) { web_snap = 0; web_fail(3); }
+        else {
+            process_frame(f);
+            u64 now = timer_us();
+            static u64 prev;
+            if (prev && now > prev) fps_x10 = (u32)(10000000ULL / (now - prev));
+            prev = now;
+            if (web_snap) {
+                web_snap = 0;
+                if (save_jpeg(0, last_photo) <= 0) { const char *x = "(not saved)"; int i = 0; while (x[i]) { last_photo[i] = x[i]; i++; } last_photo[i] = 0; }
+            }
+            web_publish();
+        }
+    } else if (web_stream && streaming && timer_us() - web_last > 10000000ULL) {
+        cam_stop();                                        /* nobody watches any more */
+    }
+    in_poll = 0;
+}
+
+/* core 1: a ticket for the next picture */
+u32 camera_jpeg_want(void) { return __atomic_add_fetch(&web_req, 1, __ATOMIC_ACQ_REL); }
+
+/* core 1: 1 = the picture (buffer marked busy), 0 = not yet, < 0 = failed (-1 no camera, -2, -3 no frame) */
+int camera_jpeg_take(u32 ticket, const u8 **p, u32 *len)
+{
+    if ((int)(__atomic_load_n(&web_done, __ATOMIC_ACQUIRE) - ticket) < 0) return 0;
+    wlock();
+    int r = 0;
+    if (web_err || web_idx < 0) r = web_err ? -web_err : -2;
+    else { int b = web_idx; web_busy[b]++; *p = (const u8 *)(b ? WEB_JPG1 : WEB_JPG0); *len = (u32)web_len[b]; r = 1; }
+    wunlock();
+    return r;
+}
+
+void camera_jpeg_release(const u8 *p)
+{
+    wlock();
+    int b = (unsigned long)p == WEB_JPG1 ? 1 : 0;
+    if (web_busy[b] > 0) web_busy[b]--;
+    wunlock();
+}
+
+/* core 1: one setting from the page ("exposure", "12.5"); "defaults" / "snap" too. 0 ok, -1 bad value, -2 unknown */
+int camera_web_set(const char *k, const char *v)
+{
+    if (!cfg_loaded) return -3;
+    if (!strcmp(k, "snap")) { web_snap = 1; return 0; }
+    if (!strcmp(k, "defaults")) { web_defaults = 1; return 0; }
+    char a[24], b2[24]; int i = 0, j = 0;
+    while (v[i] && v[i] != ' ' && i < 23) { a[i] = v[i]; i++; }
+    a[i] = 0;
+    while (v[i] == ' ') i++;
+    while (v[i] && j < 23) { b2[j] = v[i]; i++; j++; }
+    b2[j] = 0;
+    int r = set_one(k, a, j ? b2 : 0);
+    if (r) return r;
+    if (!strcmp(k, "wb") && s_wb == 2) { gr_cur = (u32)s_wbr * 256 / 100; gb_cur = (u32)s_wbb * 256 / 100; }
+    web_prep = 1;
+    web_save_at = timer_us() + 2000000;
+    return 0;
+}
+
+/* core 1: settings + what the camera does now, as JSON members (no braces) */
+int camera_web_json(char *b, int max)
+{
+    char t[300]; int n = 0;
+    if (max < 700) return 0;
+    #define S(x) put_s(b, &n, x)
+    S("\"sensor\":\""); S(fake ? "test picture" : sensor ? sname() : "camera"); S("\"");
+    S(",\"streaming\":"); S(streaming ? "true" : "false");
+    S(",\"exposure\":\""); if (s_exp10) put_d10(b, &n, s_exp10); else S("auto"); S("\"");
+    S(",\"gain\":\""); if (s_gain10) put_d10(b, &n, s_gain10); else S("auto"); S("\"");
+    S(",\"ev\":"); put_int(b, &n, s_ev);
+    S(",\"wb\":\""); S(s_wb == 0 ? "auto" : s_wb == 1 ? "lock" : "manual"); S("\"");
+    S(",\"wb_r\":"); put_int(b, &n, s_wb == 2 ? s_wbr : (int)(gr_cur * 100 / 256));
+    S(",\"wb_b\":"); put_int(b, &n, s_wb == 2 ? s_wbb : (int)(gb_cur * 100 / 256));
+    S(",\"brightness\":"); put_int(b, &n, s_bri);
+    S(",\"contrast\":"); put_int(b, &n, s_con);
+    S(",\"saturation\":"); put_int(b, &n, s_sat);
+    S(",\"hue\":"); put_int(b, &n, s_hue);
+    S(",\"gamma\":"); S(s_gamma ? "true" : "false");
+    S(",\"flip\":\""); S(s_flip == 0 ? "off" : s_flip == 1 ? "h" : s_flip == 2 ? "v" : "hv"); S("\"");
+    S(",\"quality\":"); put_int(b, &n, s_q);
+    S(",\"now_exposure_ms\":"); put_d10(b, &n, ae_exp * LINE_US10 / 1000);
+    S(",\"now_gain\":"); put_d10(b, &n, ae_gain * 10 / 16);
+    S(",\"fps\":"); put_d10(b, &n, (int)fps_x10);
+    S(",\"width\":"); put_int(b, &n, W / 2);
+    S(",\"height\":"); put_int(b, &n, H / 2);
+    S(",\"last_photo\":\""); S(last_photo); S("\"");
+    #undef S
+    (void)t;
+    b[n] = 0;
+    return n;
+}
+
 /* live: picture until a key (s / space = save a JPEG); else one picture (after the exposure settled),
  * saved as JPEG when save (file 0 = auto name), shown until a key */
+static void show_(int live, int save, const char *file);
 static void show(int live, int save, const char *file)
+{
+    in_show = 1;
+    show_(live, save, file);
+    in_show = 0;
+}
+
+static void show_(int live, int save, const char *file)
 {
     cfg_load();
     if (cam_start()) return;
+    web_stream = 0;
     ae_begin();
     int fb = fb_ready();
     int scale = 1;                                       /* one RGB pixel per 2x2 Bayer square: W/2 x H/2 */
@@ -827,6 +1053,7 @@ static void show(int live, int save, const char *file)
         if (f) {
             shown++;
             process_frame(f);
+            web_publish();                                 /* a web page watching meanwhile */
             if (fb) blit(x0, y0, scale);
             if (!live) {
                 if (save) { int r = save_jpeg(file, nm); saved = r > 0; if (fb) fb_text_px(x0, y0 + (H / 2) * scale + 8, r > 0 ? nm : "NOT saved", 0xFFFFFF, 0); }
@@ -886,7 +1113,8 @@ void camera_cmd(int argc, char **argv)
                 if (!rd16(saddr, 0x0100, &v)) kprintf("  0x0100 mode select %02x (%s)\n", v, v & 1 ? "streaming" : "standby");
                 if (!rd16(saddr, 0x302A, &v)) kprintf("  0x302A revision    %02x\n", v);
             }
-            kprintf("'cam live' = picture on HDMI, 'cam snap' = JPEG to the card, 'cam set' = settings, 'cam bars' = test bars\n");
+            kprintf("'cam live' = picture on HDMI, 'cam snap' = JPEG to the card, 'cam set' = settings, 'cam bars' = test bars\n"
+                    "web page with sliders + preview: http://<board>/camera ('http on' + 'http token <secret>')\n");
         } else {
             kprintf("no sensor: check the ribbon (contacts towards the HDMI port on the Pi 3,\n"
                     "the blue side towards the Ethernet port), and that it is the CAMERA socket\n");
@@ -894,6 +1122,13 @@ void camera_cmd(int argc, char **argv)
         return;
     }
     if (!strcmp(a, "off")) { cam_stop(); power(0); sensor = 0; kprintf("camera power off\n"); return; }
+    if (!strcmp(a, "test")) {
+        if (streaming) cam_stop();
+        fake = argc > 2 && !strcmp(argv[2], "on");
+        nocam_until = 0;
+        kprintf("test picture %s\n", fake ? "ON: made-up colour bars instead of the camera (until reboot or 'cam test off')" : "off");
+        return;
+    }
     if (!strcmp(a, "trace")) { trace = argc > 2 && !strcmp(argv[2], "off") ? 0 : 1; kprintf("step trace %s\n", trace ? "on" : "off"); return; }
     if (!strcmp(a, "mode") && argc > 2) {
         if (streaming) { kprintf("stop the camera first\n"); return; }
@@ -1007,5 +1242,6 @@ void camera_cmd(int argc, char **argv)
             "       cam sregs           sensor registers while streaming (compare with Linux: tools/ov5647regs.sh)\n"
             "       cam clock cont|ncont  MIPI clock mode (test; default ncont)\n"
             "       cam reg <a> [v]     read / write a sensor register (16-bit address)\n"
+            "       cam test on|off     a made-up test picture instead of the camera (tests the web page)\n"
             "       cam off             camera power off\n");
 }

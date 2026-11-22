@@ -248,6 +248,8 @@ static void ntp_tick(void)
     if (dns_gethostbyname(clock_server(), &a, ntp_dns, 0) == ERR_OK) ntp_send(&a);
 }
 
+static void http_cam_tick(void);
+
 /* called every 5 ms from net_poll(); notify = may print (shell prompt) */
 void ip_poll(int notify)
 {
@@ -273,6 +275,7 @@ void ip_poll(int notify)
         __atomic_store_n(&upl.state, 0, __ATOMIC_RELEASE);
     }
     api_poll();
+    http_cam_tick();
     ntp_tick();
     mqtt_poll(!ip4_addr_isany_val(*netif_ip4_addr(&nif)) && netif_is_link_up(&nif));
 
@@ -509,6 +512,7 @@ static void build_page(void)
     add("<tr><td>visits</td><td>"); add_u(http_hits); add("</td></tr>");
     add("<tr><td>JSON API</td><td>"); add(api_token()[0] ? "on (/api/..., Bearer token)" : "off"); add("</td></tr>");
     add("<tr><td>HTTPS</td><td>"); add(https_pcb ? "on" : "off"); add("</td></tr>");
+    add("<tr><td>camera</td><td><a style=\"color:#8cf\" href=\"/camera\">/camera</a></td></tr>");
     if (page_user[0]) { add("<tr><td>logged in</td><td>"); add(page_user); add(page_role == 2 ? " (admin)" : " (view)"); add("</td></tr>"); }
     {
         char tb[32];
@@ -531,6 +535,12 @@ struct http_conn {
     struct tls_conn *tls;          /* 0 = plain HTTP */
     struct pbuf *pin;              /* TLS: received bytes not yet given to BearSSL */
     u16 pin_off;
+    /* 0.104: a long answer sent in pieces (the camera page, a JPEG): shdr, then sout */
+    int streaming, shlen, shoff, cam_wait, cam_hold;
+    u32 slen, soff, cam_ticket;
+    u64 cam_since;
+    const u8 *sout;
+    char shdr[200];
     char req[HTTP_REQ + 1];
 };
 static struct http_conn hconn[HTTP_CONNS];
@@ -545,6 +555,8 @@ static void conn_free(struct http_conn *c)
         if (upl.state == 1) { upl.state = 0; kprintf("\n[UPDATE] the upload broke off - nothing written\n"); }
     }
     c->upload = 0;
+    if (c->cam_hold) { camera_jpeg_release(c->sout); c->cam_hold = 0; }
+    c->cam_wait = 0; c->streaming = 0;
     if (c->tls) { tls_close(c->tls); c->tls = 0; }
     if (c->pin) { pbuf_free(c->pin); c->pin = 0; }
     c->used = 0;
@@ -683,7 +695,57 @@ static err_t upload_send(struct tcp_pcb *pcb, struct http_conn *c)
     return http_finish(pcb, c);
 }
 
-/* 1 = the answer is in page[0..plen) */
+/* ---- 0.104: long answers in pieces ---- */
+static void stream_setup(struct http_conn *c, const char *hdr, const void *data, u32 len)
+{
+    int n = 0;
+    while (hdr[n] && n < (int)sizeof(c->shdr) - 1) { c->shdr[n] = hdr[n]; n++; }
+    c->shdr[n] = 0;
+    c->shlen = n; c->shoff = 0;
+    c->sout = (const u8 *)data; c->slen = len; c->soff = 0;
+    c->streaming = 1;
+}
+
+/* the next piece: pointer + length, 0 = all sent */
+static u32 stream_piece(struct http_conn *c, const u8 **p)
+{
+    if (c->shoff < c->shlen) { *p = (const u8 *)c->shdr + c->shoff; return (u32)(c->shlen - c->shoff); }
+    if (c->soff < c->slen) { *p = c->sout + c->soff; return c->slen - c->soff; }
+    return 0;
+}
+static void stream_ack(struct http_conn *c, u32 n)
+{
+    if (c->shoff < c->shlen) c->shoff += (int)n; else c->soff += n;
+    c->idle = 0;
+}
+
+/* plain HTTP: as much as the send buffer takes; closes when all is queued */
+static err_t stream_plain(struct tcp_pcb *pcb, struct http_conn *c)
+{
+    for (;;) {
+        const u8 *p;
+        u32 n = stream_piece(c, &p);
+        if (!n) { tcp_output(pcb); return http_finish(pcb, c); }
+        u32 room = tcp_sndbuf(pcb);
+        if (!room || tcp_sndqueuelen(pcb) >= TCP_SND_QUEUELEN - 1) break;
+        if (n > room) n = room;
+        if (n > TCP_MSS) n = TCP_MSS;
+        if (tcp_write(pcb, p, (u16_t)n, TCP_WRITE_FLAG_COPY) != ERR_OK) break;
+        stream_ack(c, n);
+    }
+    tcp_output(pcb);
+    return ERR_OK;
+}
+
+static err_t http_sent(void *arg, struct tcp_pcb *pcb, u16_t len)
+{
+    struct http_conn *c = arg;
+    (void)len;
+    if (c && c->streaming && !c->tls) return stream_plain(pcb, c);
+    return ERR_OK;
+}
+
+/* 1 = the answer is in page[0..plen), 2 = waiting for the camera, 3 = a long answer is set up (stream) */
 static int http_try(struct tcp_pcb *pcb, struct http_conn *c)
 {
     char *end = strstr(c->req, "\r\n\r\n");
@@ -771,7 +833,17 @@ static int http_try(struct tcp_pcb *pcb, struct http_conn *c)
             if (auth) { char *e = strstr(auth, "\r\n"); if (e) *e = 0; }
             body[need] = 0;
             plen = api_handle(m, path, auth, role, body, need, from, page, sizeof(page));
+            if (plen == -2) {                            /* GET /api/camera.jpg: core 0 takes the picture */
+                c->cam_ticket = camera_jpeg_want();
+                c->cam_wait = 1;
+                c->cam_since = timer_us();
+                return 2;
+            }
         }
+    } else if (!strcmp(path, "/camera")) {
+        stream_setup(c, "HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+                     camera_page, (u32)strlen(camera_page));
+        return 3;
     } else {
         build_page();
     }
@@ -792,7 +864,10 @@ static err_t http_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err
         c->len += n;
         c->req[c->len] = 0;
         c->idle = 0;
-        if (http_try(pcb, c)) {
+        int r = http_try(pcb, c);
+        if (r == 2) { c->done = 1; pbuf_free(p); return ERR_OK; }   /* the camera answers later (http_cam_tick) */
+        if (r == 3) { c->done = 1; pbuf_free(p); return stream_plain(pcb, c); }
+        if (r) {
             c->done = 1;
             send_text(pcb, page, plen);
             pbuf_free(p);
@@ -837,7 +912,10 @@ static err_t tls_pump(struct tcp_pcb *pcb, struct http_conn *c)
                 memcpy(c->req + c->len, b, (size_t)n);
                 c->len += n;
                 c->req[c->len] = 0;
-                if (!c->done && http_try(pcb, c)) c->done = 1, c->closing = 2;   /* 2 = answer waiting */
+                int r = c->done ? 0 : http_try(pcb, c);
+                if (r == 1) c->done = 1, c->closing = 2;   /* 2 = answer waiting */
+                else if (r == 3) c->done = 1, c->closing = 3;   /* 3 = a long answer in pieces */
+                else if (r == 2) c->done = 1;            /* the camera: http_cam_tick sets closing 3 */
                 else if (c->upload && n < (int)len) upload_feed(b + n, (int)len - n);
                 br_ssl_engine_recvapp_ack(e, len);
                 progress = 1;
@@ -852,6 +930,25 @@ static err_t tls_pump(struct tcp_pcb *pcb, struct http_conn *c)
                 br_ssl_engine_flush(e, 0);
                 br_ssl_engine_close(e);
                 c->closing = 1;
+                progress = 1;
+            }
+        }
+        if ((st & BR_SSL_SENDAPP) && c->closing == 3) {  /* a long answer: as much as fits, close_notify at the end */
+            size_t len;
+            u8 *b = br_ssl_engine_sendapp_buf(e, &len);
+            const u8 *p;
+            u32 n = stream_piece(c, &p);
+            if (!n) {
+                br_ssl_engine_flush(e, 0);
+                br_ssl_engine_close(e);
+                c->closing = 1;
+                progress = 1;
+            } else if (len) {
+                if (n > len) n = (u32)len;
+                memcpy(b, p, n);
+                br_ssl_engine_sendapp_ack(e, n);
+                stream_ack(c, n);
+                if (!stream_piece(c, &p) || n == len) br_ssl_engine_flush(e, 0);
                 progress = 1;
             }
         }
@@ -871,6 +968,38 @@ static err_t tls_pump(struct tcp_pcb *pcb, struct http_conn *c)
     }
     tcp_output(pcb);
     return ERR_OK;
+}
+
+/* 0.104: connections waiting for a camera picture (core 0 makes it) */
+static void http_cam_tick(void)
+{
+    for (int i = 0; i < HTTP_CONNS; i++) {
+        struct http_conn *c = &hconn[i];
+        if (!c->used || !c->cam_wait) continue;
+        const u8 *p = 0; u32 len = 0;
+        int r = camera_jpeg_take(c->cam_ticket, &p, &len);
+        if (!r && timer_us() - c->cam_since < 8000000ULL) continue;
+        c->cam_wait = 0;
+        if (r > 0) {
+            char h[160]; int n = 0;
+            const char *a = "HTTP/1.0 200 OK\r\nContent-Type: image/jpeg\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: ";
+            while (*a) h[n++] = *a++;
+            char t[12]; int k = 0; u32 v = len; do t[k++] = (char)('0' + v % 10); while ((v /= 10)); while (k) h[n++] = t[--k];
+            a = "\r\nConnection: close\r\n\r\n"; while (*a) h[n++] = *a++;
+            h[n] = 0;
+            stream_setup(c, h, p, len);
+            c->cam_hold = 1;
+        } else {
+            const char *e = r == -1 ? "{\"ok\":false,\"error\":\"no camera found (OV5647 on the CSI cable)\"}\n"
+                          : r == -3 ? "{\"ok\":false,\"error\":\"the camera sent no picture\"}\n"
+                          : !r ? "{\"ok\":false,\"error\":\"no picture in 8 s (the board is busy with a command?)\"}\n"
+                               : "{\"ok\":false,\"error\":\"picture failed\"}\n";
+            stream_setup(c, "HTTP/1.0 503 Service Unavailable\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
+                         e, (u32)strlen(e));
+        }
+        if (c->tls) { c->closing = 3; tls_pump(c->pcb, c); }
+        else stream_plain(c->pcb, c);
+    }
 }
 
 static err_t https_recv(void *arg, struct tcp_pcb *pcb, struct pbuf *p, err_t err)
@@ -901,7 +1030,9 @@ static err_t http_poll(void *arg, struct tcp_pcb *pcb)
         if (upl.state == 2) c->idle = 0;
         return c->tls ? tls_pump(pcb, c) : ERR_OK;
     }
-    if (c && ++c->idle >= 10) return http_finish(pcb, c);   /* 5 s quiet */
+    if (c && c->cam_wait) return ERR_OK;                 /* http_cam_tick gives up after 8 s */
+    if (c && c->streaming && !c->tls) { if (++c->idle >= 20) return http_finish(pcb, c); return stream_plain(pcb, c); }
+    if (c && ++c->idle >= (c->streaming ? 20 : 10)) return http_finish(pcb, c);   /* 5 s quiet (10 s while sending) */
     if (c && c->tls) return tls_pump(pcb, c);
     return ERR_OK;
 }
@@ -923,6 +1054,7 @@ static struct http_conn *conn_new(struct tcp_pcb *pcb)
     }
     c->used = 1; c->len = 0; c->done = 0; c->closing = 0; c->idle = 0; c->req[0] = 0; c->upload = 0;
     c->since = timer_us(); c->pcb = pcb; c->tls = 0; c->pin = 0; c->pin_off = 0;
+    c->streaming = 0; c->cam_wait = 0; c->cam_hold = 0; c->sout = 0; c->slen = c->soff = 0; c->shlen = c->shoff = 0;
     return c;
 }
 
@@ -934,6 +1066,7 @@ static err_t http_accept(void *arg, struct tcp_pcb *pcb, err_t err)
     if (!c) { tcp_abort(pcb); return ERR_ABRT; }
     tcp_arg(pcb, c);
     tcp_recv(pcb, http_recv);
+    tcp_sent(pcb, http_sent);
     tcp_err(pcb, http_err);
     tcp_poll(pcb, http_poll, 1);                         /* every 0.5 s */
     return ERR_OK;

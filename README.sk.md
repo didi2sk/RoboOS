@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.103**
+Aktuálna verzia: **0.104**
 
 ## Podporované dosky
 
@@ -483,6 +483,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.101: NÁJDENÁ CHYBA kamery: RoboOS zapínal napájanie nesprávneho prijímača (doména firmvéru 13 = UNICAM0; konektor kamery používa UNICAM1 = 14), takže prijímač nikdy nevidel dáta. Opravené - **kamera na Pi 3B+ funguje** (majiteľ).
 0.102: farby kamery: poradie farebných bodov podľa zrkadlenia senzora (GBRG v predvolenom režime 1296, ako Linux); `cam bayer bggr|gbrg|grbg|rggb`, ak farby nesedia.
 0.103: fotky z kamery ako JPEG (`cam snap [súbor]`, s / medzera v `cam live`; vlastný kodér `src/jpeg.c`) + nastavenia obrazu v /CAM.TXT: expozícia, zisk, ev, vyváženie bielej, jas, kontrast, sýtosť, odtieň, gama, zrkadlenie, kvalita JPEG (`cam set`).
+0.104: webová stránka kamery `/camera`: živý náhľad + posuvníky pre každé nastavenie + uloženie fotky; API `GET|POST /api/camera`, `GET /api/camera.jpg`; `cam test on` = skúšobný obraz bez kamery.
 
 ### Dátum a čas (NTP)
 
@@ -911,6 +912,20 @@ cam defaults            všetko späť na predvolené
 
 Nastavenia sa ukladajú do `/CAM.TXT`. Fotka 648x486 má asi 50-100 KB; živý obraz ukazuje pod obrázkom
 snímky/s, expozíciu a zisk.
+
+**Webová stránka (0.104):** `http on` + `http token <heslo>`, potom otvor `http://<adresa dosky>/camera` (alebo https).
+Ukazuje živý náhľad (niekoľko obrázkov za sekundu) a posuvníky pre všetky nastavenia vyššie; zmena platí od
+ďalšieho obrázka a uloží sa do `/CAM.TXT` (2 s po poslednej zmene). „Save photo“ zapíše JPEG do `/CAM` na karte,
+„download this picture“ uloží náhľad do PC. Stránka si raz vypýta token (prehliadač si ho pamätá); s prihlasovaním
+(`users`) použije prihlásenie prehliadača. Kamera sa vypne 10 s po tom, čo stránka prestane pýtať obrázky.
+API: `GET /api/camera` (nastavenia + aktuálna expozícia / zisk), `POST /api/camera`
+`{"saturation":"130","wb":"auto","snap":"1"}`, `GET /api/camera.jpg` (jeden obrázok):
+
+```
+curl -H "Authorization: Bearer <heslo>" http://<doska>/api/camera.jpg -o foto.jpg
+```
+
+`cam test on` dá namiesto kamery vymyslený obraz s farebnými pruhmi (na vyskúšanie stránky bez kamery).
 
 ### MQTT
 

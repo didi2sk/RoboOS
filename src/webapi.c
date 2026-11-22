@@ -75,7 +75,7 @@ static void head(int code)
     put("HTTP/1.0 ");
     put_i(code);
     put(code == 200 ? " OK" : code == 400 ? " Bad Request" : code == 401 ? " Unauthorized" :
-        code == 202 ? " Accepted" : code == 403 ? " Forbidden" : code == 404 ? " Not Found" : code == 405 ? " Method Not Allowed" : code == 429 ? " Too Many Requests" : " Error");
+        code == 202 ? " Accepted" : code == 403 ? " Forbidden" : code == 404 ? " Not Found" : code == 405 ? " Method Not Allowed" : code == 429 ? " Too Many Requests" : code == 409 ? " Conflict" : code == 503 ? " Service Unavailable" : " Error");
     put("\r\nContent-Type: application/json\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n");
     if (code == 401) put(users_count() ? "WWW-Authenticate: Basic realm=\"RoboOS\", charset=\"UTF-8\"\r\n" : "WWW-Authenticate: Bearer\r\n");
     put("\r\n");
@@ -612,6 +612,39 @@ logged_in:;
         put("}\n");
         return olen;
     }
+    if (!strcmp(path, "/api/camera.jpg")) {               /* 0.104: ip.c sends the picture, camera.c takes it on core 0 */
+        if (!get) return fail(405, "use GET");
+        return -2;
+    }
+    if (!strcmp(path, "/api/camera")) {                   /* 0.104: camera settings (the /camera page) */
+        if (post) {
+            char key[16], sv[32];
+            long n = 0;
+            jp = body; jend = body + blen; jerr = 0;
+            if (!eat('{')) return fail(400, "expected an object {\"saturation\":130, ...}");
+            if (peek() != '}') do {
+                if (value(&n, key, sizeof(key)) != J_STR) return fail(400, jerr ? jerr : "expected a key");
+                if (!eat(':')) return fail(400, "expected ':'");
+                int k = value(&n, sv, sizeof(sv));
+                if (k == J_NONE) return fail(400, jerr);
+                if (k == J_NUM) { char t[16]; int tl = 0, z = 0; long x = n; if (x < 0) { sv[z++] = '-'; x = -x; }
+                                  do t[tl++] = (char)('0' + x % 10); while ((x /= 10)); while (tl) sv[z++] = t[--tl]; sv[z] = 0; }
+                else if (k == J_TRUE) scopy(sv, "on", sizeof(sv));
+                else if (k == J_FALSE) scopy(sv, "off", sizeof(sv));
+                else if (k != J_STR) return fail(400, "values: strings, numbers or true/false");
+                int r = camera_web_set(key, sv);
+                if (r == -1) { static char em[64]; scopy(em, "bad value for ", sizeof(em)); int l = 0; while (em[l]) l++; scopy(em + l, key, (int)sizeof(em) - l); return fail(400, em); }
+                if (r == -2) return fail(400, "unknown key: exposure, gain, ev, wb, brightness, contrast, saturation, hue, gamma, flip, quality, snap, defaults");
+                if (r == -3) return fail(503, "the board is starting, try again");
+            } while (eat(','));
+            if (!eat('}')) return fail(400, "expected ',' or '}'");
+        } else if (!get) return fail(405, "use GET or POST");
+        static char cj[1024];
+        camera_web_json(cj, sizeof(cj));
+        head(200);
+        put("{\"ok\":true,"); put(cj); put("}\n");
+        return olen;
+    }
     if (!strcmp(path, "/api/reboot")) {
         if (!post) return fail(405, "use POST");
         kprintf("\n[API] reboot asked by %s\n", from);
@@ -620,5 +653,5 @@ logged_in:;
         put("{\"ok\":true,\"rebooting\":true}\n");
         return olen;
     }
-    return fail(404, "unknown: GET /api/status, GET|POST /api/gpio, GET /api/gpio/<pin>, GET|POST /api/sound, GET|POST /api/display, GET|POST /api/radio, GET /api/sensors, POST /api/reboot");
+    return fail(404, "unknown: GET /api/status, GET|POST /api/gpio, GET /api/gpio/<pin>, GET|POST /api/sound, GET|POST /api/display, GET|POST /api/radio, GET /api/sensors, GET|POST /api/camera, GET /api/camera.jpg, POST /api/reboot");
 }
