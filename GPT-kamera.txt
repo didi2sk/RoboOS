@@ -42,3 +42,19 @@ Zdroje
 - Circle, štart OV5647: https://github.com/rsta2/libcamera/blob/main/lib/cameramodule1.cpp#L226-L299
 - Raspberry Pi Linux, nastavenie VPU a CSI: https://github.com/raspberrypi/linux/blob/rpi-6.12.y/drivers/media/platform/bcm2835/bcm2835-unicam.c#L2608-L2631
 - Raspberry Pi mailbox: https://github.com/raspberrypi/firmware/wiki/Mailbox-property-interface#get-clock-rate-measured
+
+Návrhy ďalšieho vývoja RoboOS (stav 0.102)
+
+Videosonček pre Home Assistant
+1. Snímka na vyžiadanie. Pridať príkaz `cam save /SNAP.JPG` na uloženie jednej snímky na SD kartu a autentifikovaný endpoint `GET /api/camera.jpg` cez existujúce webové API. Prvý míľnik je zobraziť snímku v prehliadači bez pripojeného HDMI.
+2. Tlačidlo pri dverách. Stlačenie GPIO tlačidla prehrá `DINGDONG.WAV`, uloží snímku na kartu a zverejní MQTT udalosť. Home Assistant z udalosti vytvorí upozornenie s fotkou. Pri výpadku siete zvonček zazvoní lokálne a snímka zostane na SD karte.
+3. Diagnostika kamery. Príkaz `diag camera` zobrazí identifikáciu senzora, stav napájacej domény Unicam, počty začiatkov a koncov snímok a poslednú chybu. Rovnaký výpis použiť pri overovaní kamery na Zero 2 W a pri pridávaní obrazu zo senzora IMX219.
+
+Spoľahlivejšie vzdialené aktualizácie
+- Pridať automatický návrat na predošlý kernel, ak nová verzia nepotvrdí úspešný štart. Návrh nadväzuje na existujúcu aktualizáciu cez sieť a zálohu `KERNEL8.BAK`. Mechanizmus návratu musí fungovať aj vtedy, keď nový kernel vôbec nenabehne. Míľnik je obnoviť boot bez vyberania SD karty.
+
+Súvisiace časti README
+- Kamera: https://github.com/didi2sk/RoboOS/blob/67c2d1e/README.sk.md#L876
+- Zvukové API: https://github.com/didi2sk/RoboOS/blob/67c2d1e/README.sk.md#L524
+- Aktualizácia cez sieť: https://github.com/didi2sk/RoboOS/blob/67c2d1e/README.sk.md#L562
+- MQTT: https://github.com/didi2sk/RoboOS/blob/67c2d1e/README.sk.md#L889
