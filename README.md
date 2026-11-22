@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.79**
+Current version: **0.80**
 
 ## Supported boards
 
@@ -461,6 +461,7 @@ longer break pulses); two good minutes that fit together set the clock even with
 0.78: DCF77 with a weak / noisy signal: the minute start is found by itself and the bits are summed over
 several minutes (hour and date stay, the minute goes +1), so the time comes even when every minute has errors.
 0.79: AHT20 / AHT10 humidity + temperature sensor at 0x38 (e.g. the AHT20 + BMP280 board) in `sensors`, MQTT, API, BASIC.
+0.80: offline voice commands with the DFRobot DF2301Q module (`voice`): a heard phrase runs a shell command.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -782,6 +783,28 @@ it. The first time comes after ~2-3 minutes of clean signal. Keep the antenna ab
 monitors and chargers, turned broadside to Frankfurt; reception is best at night. **Not yet tested on
 hardware** (PC test `tools/test_dcf.c`: CET/CEST, both polarities, glitches, a lost pulse, noise).
 
+### Offline voice commands (DFRobot DF2301Q, 0.80)
+
+The DFRobot Gravity offline voice recognition module (DF2301Q, SKU SEN0539) recognises speech by itself,
+without a network: a wake word ("Hello robot" or one you teach it), 121 fixed English commands and up to
+17 learned ones (taught on the module itself). Set its switch to **I2C** and wire it to the I2C pins
+(VCC 3.3 V pin 1, GND pin 6, SDA pin 3, SCL pin 5); its address is 0x64. RoboOS reads the id of every
+recognised command and runs the shell command you gave it:
+
+```
+voice                      status, the last heard id, the actions
+voice add 5 gpio 17 1      learned command 5 switches GPIO17 on
+voice add 6 gpio 17 0
+voice add 7 radio off      any shell command
+voice del 6
+voice volume 1-7 | mute on|off | wake <seconds> | play <id>
+```
+
+Say the wake word, then the command: `[VOICE] 5 -> gpio 17 1` and the command runs. An id with no action is
+printed, so you can find out the number of each phrase. The actions are saved in `/VOICE.TXT` (`<id> <command>`
+per line). They run only at the shell prompt (not while a program or BASIC runs; a command heard then waits
+up to 10 s). **Not yet tested on hardware** (PC test `tools/test_voice.c` with a fake module).
+
 ### MQTT
 
 MQTT is the usual way IoT devices talk to a server (Home Assistant, Node-RED, Mosquitto...).
@@ -967,6 +990,7 @@ If you connect after boot, press Enter.
 | `sensors [scan]`, `i2c scan\|read\|write` | I2C sensors (BME280, ADS1115, DS3231) |
 | `ai <question>\|@cmd ..\|key\|model` | ask Claude (own Anthropic API key) |
 | `radio [MHz\|up\|down\|scan\|vol n\|off]` | FM radio (RDA5807M module on I2C) |
+| `voice [add id cmd\|del id\|volume\|mute\|wake]` | offline voice commands (DFRobot DF2301Q) |
 | `dcf [on\|off\|pin n\|invert\|pull\|pon]` | DCF77 radio clock receiver on a GPIO |
 | `display [scan\|text n ..\|clear\|status on\|off\|size\|type\|addr\|hat\|keys]` | I2C OLED / LCD display, Waveshare SPI OLED HAT |
 | `mqtt [broker\|user\|pub\|interval\|off]` | MQTT client (IoT) |

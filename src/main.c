@@ -2,7 +2,7 @@
 #include "usb.h"
 #include "sd.h"
 
-#define VERSION "0.79"
+#define VERSION "0.80"
 
 const char *os_version(void) { return VERSION; }
 /* found by 'update' / POST /api/update in a kernel8.img: only a RoboOS kernel may replace the running one */
@@ -112,6 +112,7 @@ void kernel_main(void)
     display_boot();                      /* I2C: OLED / LCD display (/DISPLAY.TXT) */
     radio_boot();                        /* I2C: RDA5807M FM radio (/RADIO.TXT) */
     { u64 rt = rtc_read(); if (rt) clock_set_time(rt, 3); }   /* the time before NTP answers */
+    voice_boot();                        /* I2C 0x64: DFRobot offline voice module (/VOICE.TXT) */
     dcf_boot();                          /* /DCF.TXT: DCF77 receiver pin (core 1 samples it) */
     ip_prepare();
     mqtt_prepare();                      /* /MQTT.TXT */

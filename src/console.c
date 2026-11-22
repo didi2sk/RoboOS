@@ -130,6 +130,7 @@ static int raw_trygetc(void)
     bt_boot_poll();                             /* Bluetooth at boot, once WiFi has joined */
     display_poll();                             /* I2C display: the status screen */
     radio_poll();                               /* FM radio: RDS, network commands */
+    voice_poll();                               /* offline voice module: run the command for a heard id */
     return kbd_getc();
 }
 
