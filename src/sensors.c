@@ -9,6 +9,9 @@
  * Used by the 'sensors' command, MQTT, the JSON API, BASIC SENSOR() and C sensorRead().
  */
 #include "kernel.h"
+#ifndef SENSORS_NO_LOG
+#include "sd.h"
+#endif
 #include "bme280_math.h"
 #include "bmp180_math.h"
 
@@ -251,10 +254,138 @@ static void put_c100(const char *what, int v, const char *unit)
     kprintf("  %-12s %s%d.%02d %s\n", what, v < 0 ? "-" : "", a / 100, a % 100, unit);
 }
 
+/* ---------------- the log (0.82): one CSV per day, /LOG/YYYYMMDD.CSV ----------------
+ * "time,temp_c,hum_pct,press_hpa,cpu_c" and a line every N minutes (on the minute, local time). The day's
+ * file is kept in RAM and rewritten whole (fat_write_file has no append; a day at 1 minute = ~45 KB). */
+#ifndef SENSORS_NO_LOG
+static int log_every;                                     /* minutes, 0 = off */
+static char logbuf[64 * 1024];
+static int loglen = -1;                                   /* -1 = not loaded for log_day */
+static char log_day[16];                                  /* "YYYYMMDD" */
+static u64 log_last_min;
+static u32 log_lines;
+static const char *log_err = "";
+
+int sensors_log_every(void) { return log_every; }
+
+static void log_save_cfg(void)
+{
+    char b[32]; int n = 0;
+    const char *s = "every "; while (*s) b[n++] = *s++;
+    int v = log_every; char t[8]; int k = 0; do t[k++] = (char)('0' + v % 10); while ((v /= 10)); while (k) b[n++] = t[--k];
+    b[n++] = '\n';
+    if (fat_mounted()) fat_write_file("/SENSLOG.TXT", b, (u32)n);
+}
+
+void sensors_log_boot(void)
+{
+    struct fat_file f; char b[32];
+    if (!fat_mounted() || fat_open("/SENSLOG.TXT", &f) || f.is_dir) return;
+    int n = fat_read(&f, b, sizeof(b) - 1);
+    if (n <= 0) return;
+    b[n] = 0;
+    u64 v;
+    char *p = b; while (*p && (*p < '0' || *p > '9')) p++;
+    char *e = p; while (*e >= '0' && *e <= '9') e++;
+    *e = 0;
+    if (parse_num(p, &v) && v <= 1440) log_every = (int)v;
+}
+
+static int app_c100(char *b, int n, int v)
+{
+    if (v < 0) { b[n++] = '-'; v = -v; }
+    char t[12]; int k = 0; u32 w = (u32)(v / 100); do t[k++] = (char)('0' + w % 10); while ((w /= 10)); while (k) b[n++] = t[--k];
+    b[n++] = '.'; b[n++] = (char)('0' + v / 10 % 10); b[n++] = (char)('0' + v % 10);
+    return n;
+}
+
+static int log_write(u64 now)
+{
+    char ts[32];
+    clock_format(ts, now, 0);                             /* "YYYY-MM-DD HH:MM:SS" local */
+    char day[16]; int d = 0;
+    for (int i = 0; i < 10; i++) if (ts[i] != '-') day[d++] = ts[i];
+    day[d] = 0;
+    char path[24] = "/LOG/"; int pn = 5;
+    for (int i = 0; day[i]; i++) path[pn++] = day[i];
+    const char *ext = ".CSV"; while (*ext) path[pn++] = *ext++;
+    path[pn] = 0;
+    if (loglen < 0 || strcmp(day, log_day)) {             /* a new day (or the first line since boot) */
+        for (int i = 0; i <= d; i++) log_day[i] = day[i];
+        loglen = 0;
+        struct fat_file f;
+        if (fat_open(path, &f) == 0 && !f.is_dir) {
+            int n = fat_read(&f, logbuf, sizeof(logbuf) - 1);
+            loglen = n > 0 ? n : 0;
+        } else {
+            fat_mkdir("/LOG");
+            const char *h = "time,temp_c,hum_pct,press_hpa,cpu_c\n";
+            while (*h) logbuf[loglen++] = *h++;
+        }
+    }
+    struct sensor_values v;
+    sensors_read(&v);
+    char line[96]; int n = 0;
+    for (int i = 11; i < 16; i++) line[n++] = ts[i];      /* HH:MM */
+    line[n++] = ',';
+    if (v.have & SV_TEMP) n = app_c100(line, n, v.temp_c100);
+    line[n++] = ',';
+    if (v.have & SV_HUM) n = app_c100(line, n, v.hum_c100);
+    line[n++] = ',';
+    if (v.have & SV_PRESS) n = app_c100(line, n, v.press_pa);
+    line[n++] = ',';
+    if (v.have & SV_CPU) n = app_c100(line, n, v.cpu_mc / 10);
+    line[n++] = '\n';
+    if (loglen + n >= (int)sizeof(logbuf)) { log_err = "the day's file is full (64 KB)"; return -1; }
+    for (int i = 0; i < n; i++) logbuf[loglen + i] = line[i];
+    loglen += n;
+    int e = fat_write_file(path, logbuf, (u32)loglen);
+    if (e) { log_err = "card write failed"; return -1; }
+    log_lines++; log_err = "";
+    return 0;
+}
+
+void sensors_log_poll(void)                               /* core 0 */
+{
+    static u64 next_check;
+    if (!log_every || io_held() || timer_us() < next_check) return;
+    next_check = timer_us() + 1000000;
+    u64 now = clock_now();
+    if (!now || !fat_mounted()) return;
+    u64 local_min = (now + (u64)(clock_offset(now) * 60)) / 60;
+    if (local_min == log_last_min || local_min % (u64)log_every) return;
+    log_last_min = local_min;
+    log_write(now);
+}
+
+static void log_cmd(int argc, char **argv)
+{
+    u64 v;
+    if (argc > 2 && !strcmp(argv[2], "off")) { log_every = 0; log_save_cfg(); kprintf("sensor log off\n"); return; }
+    if (argc > 2 && !strcmp(argv[2], "now")) {
+        u64 now = clock_now();
+        if (!now) { kprintf("the time is not known yet (NTP / 'time set')\n"); return; }
+        kprintf(log_write(now) ? "failed: %s\n" : "written to /LOG/%s.CSV\n", log_err[0] ? log_err : log_day);
+        return;
+    }
+    if (argc > 2) {
+        if (!parse_num(argv[2], &v) || v < 1 || v > 1440) { kprintf("sensors log <minutes 1-1440> | off | now\n"); return; }
+        log_every = (int)v; log_save_cfg();
+    }
+    if (!log_every) { kprintf("sensor log off ('sensors log 5' = a line every 5 minutes to /LOG/YYYYMMDD.CSV)\n"); return; }
+    kprintf("sensor log every %d min -> /LOG/YYYYMMDD.CSV (one file per day), %u lines written since boot%s%s\n",
+            log_every, log_lines, log_err[0] ? ", last problem: " : "", log_err);
+    if (!clock_now()) kprintf("  (waiting for the time: NTP or 'time set')\n");
+}
+#endif
+
 void sensors_cmd(int argc, char **argv)
 {
+#ifndef SENSORS_NO_LOG
+    if (argc > 1 && !strcmp(argv[1], "log")) { log_cmd(argc, argv); return; }
+#endif
     if (argc > 1 && !strcmp(argv[1], "scan")) sensors_probe();
-    else if (argc > 1) { kprintf("usage: sensors [scan]\n"); return; }
+    else if (argc > 1) { kprintf("usage: sensors [scan | log <minutes>|off|now]\n"); return; }
     struct sensor_values v;
     sensors_read(&v);
     kprintf("sensors (I2C on GPIO2/3; 'i2c scan' lists every device):\n");

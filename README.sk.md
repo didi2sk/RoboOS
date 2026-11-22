@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.81**
+Aktuálna verzia: **0.82**
 
 ## Podporované dosky
 
@@ -460,6 +460,8 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.80: hlasové príkazy offline s modulom DFRobot DF2301Q (`voice`): počutá veta spustí príkaz shellu.
 0.81: oprava I2C - po adrese, ktorá neodpovedala, zlyhal ďalší prenos (radič ešte posielal STOP);
 `i2c scan` a hľadanie senzorov pri štarte nevideli zariadenia, ktoré `i2c probe` videl.
+0.82: senzory na displeji (`display sensors`, aj pod KEY1 na HATe), záznam do CSV (`sensors log 5` ->
+/LOG/YYYYMMDD.CSV) a `GET /api/sensors` (JSON).
 
 ### Dátum a čas (NTP)
 
@@ -643,6 +645,20 @@ Pri štarte RoboOS tieto moduly nájde sám (`sensors scan` hľadá znova):
 | BME280 (BMP280) | 0x76 / 0x77 | teplota, vlhkosť (len BME280), tlak |
 | BMP180 (BMP085) | 0x77 | teplota, tlak (0.73) |
 | AHT20 (AHT10) | 0x38 | vlhkosť, teplota (0.79; doska AHT20 + BMP280 dá vlhkosť + tlak) |
+
+Ako hodnoty využiť (0.82):
+
+```
+sensors                 všetky hodnoty teraz
+display sensors         teplota / vlhkosť / tlak na displeji (2 riadky: "21.4C 45.2%" + "1001.3 hPa")
+sensors log 5           riadok každých 5 minút do /LOG/YYYYMMDD.CSV (súbor na každý deň; uloží sa do /SENSLOG.TXT)
+sensors log now | off
+```
+
+CSV (`time,temp_c,hum_pct,press_hpa,cpu_c`, miestny čas) sa otvorí v Exceli / LibreOffice na graf; záznam
+potrebuje čas (NTP, DCF77, batériové hodiny alebo `time set`). `GET /api/sensors` (s tokenom API) vráti napr.
+`{"ok":true,"cpu_c":48.31,"temp_c":21.43,"hum_pct":45.20,"press_hpa":1001.32,"log_min":5}`. BASIC `SENSOR(n)`,
+C `sensorRead(n)` a MQTT (JSON stavu) majú tie isté hodnoty.
 | ADS1115 | 0x48-0x4B | 4 analógové vstupy A0-A3, 0-4,096 V v mV (neprekročiť 3,3 V!) |
 | DS3231 (DS1307) | 0x68 | hodiny s batériou: čas je známy po štarte aj bez siete |
 
