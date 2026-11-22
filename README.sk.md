@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.96**
+Aktuálna verzia: **0.97**
 
 ## Podporované dosky
 
@@ -476,6 +476,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.94: senzor dostane presne ten zoznam registrov, ktorý zapisuje firmvér Pi (1296x976, zachytený projektom raspiraw) - bez synchronizačných paketov riadkov; `cam mode fw|1296|640`.
 0.95: senzor sa nastaví a spustí PRED prijímačom kamery (ako rsta2/libcamera); `cam order rx` = staré poradie.
 0.96: oprava: v režime z firmvéru senzor ostal v stave "bez snímok" (0x4202) zo štartu a posielal len takt.
+0.97: Bluetooth volá spárovanú klávesnicu znova, kým sa neozve (každých 8 s, potom 20 s, po ~3 minútach každých 60 s), aj keď sa odpojí.
 
 ### Dátum a čas (NTP)
 

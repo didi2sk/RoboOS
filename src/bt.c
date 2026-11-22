@@ -532,6 +532,7 @@ static volatile int kb_state;              /* 0 none, 1 connecting, 2 linked, 3 
 static volatile u32 kb_reports;
 static char kb_msg[80];
 static u64 kb_open_at, kb_auth_at, kb_enc_at;   /* deferred steps when the keyboard called us */
+static u64 kb_retry_at; static int kb_retry_n;  /* 0.97: keep calling the paired keyboard until it answers */
 static struct l2ch { u16 psm, lcid, rcid; u8 used, cfg_in, cfg_out, open; } ch[2];   /* 0 control, 1 interrupt */
 static u8 sig_id = 1;
 
@@ -600,7 +601,7 @@ static void ch_check(void)
     if (ch[0].open && ch[1].open && kb_state != 4) {
         u8 sp = 0x70;                                  /* HIDP SET_PROTOCOL boot */
         acl_queue_h(kb_h, 1, ch[0].rcid, &sp, 1);
-        kb_state = 4; kb_quiet = 0;
+        kb_state = 4; kb_quiet = 0; kb_retry_at = 0;
         char a[18], m[64] = "keyboard ready: ";
         mac_str(a, kb_addr);
         int k = 16; for (int i = 0; a[i]; i++) m[k++] = a[i]; m[k] = 0;
@@ -697,6 +698,23 @@ static void kb_tick(u64 now)
         kb_enc_at = 0;
         if (kb_h >= 0 && kb_state < 3) { u8 d[3] = { (u8)kb_h, (u8)(kb_h >> 8), 1 }; hci_queue(0x0413, d, 3); }
     }
+    /* 0.97: a paired keyboard that did not come at boot (asleep / switched off) is called again:
+     * every 8 s at first, then 20 s, after ~3 minutes every 60 s (a page takes up to 5 s of the radio
+     * WiFi shares). It can still connect by itself at any time when a key is pressed. */
+    if (kb_retry_at && now >= kb_retry_at) {
+        if (kb_state == 4) kb_retry_at = 0;
+        else if (kb_h >= 0 || kb_state == 1 || kb_want) kb_retry_at = now + 5000000;   /* busy: later */
+        else {
+            int k = -1;
+            for (int i = 0; i < NKEYS && k < 0; i++) if (keys[i].used) k = i;
+            if (k < 0) kb_retry_at = 0;
+            else {
+                kb_quiet = 1; kb_create(keys[k].addr);
+                kb_retry_n++;
+                kb_retry_at = now + (kb_retry_n < 4 ? 8000000ull : kb_retry_n < 12 ? 20000000ull : 60000000ull);
+            }
+        }
+    }
     if (kb_open_at && now >= kb_open_at) {             /* encrypted, the keyboard opened nothing: we do */
         kb_open_at = 0;
         if (kb_h >= 0 && !ch[0].used) { kb_we_called = 1; ch_connect(0); }
@@ -711,7 +729,7 @@ static int kb_event(const u8 *e)
     case 0x03:                                         /* Connection Complete */
         if (p[9] != 1) return 1;                       /* link type: not ACL */
         if (p[0]) {
-            if (!kb_quiet) { char a[18]; mac_str(a, p + 3); kprintf("\n[BT] could not connect to %s (error 0x%02x)\n", a, p[0]); }
+            if (!kb_quiet && !kb_retry_at) { char a[18]; mac_str(a, p + 3); kprintf("\n[BT] could not connect to %s (error 0x%02x)\n", a, p[0]); }
             kb_state = kb_quiet ? 0 : -1; kb_quiet = 0; kb_we_called = 0;
             return 1;
         }
@@ -842,6 +860,7 @@ static void hci_event(const u8 *e)              /* e[0] code, e[1] length, e + 2
         if (((e[3] | e[4] << 8) & 0xFFF) == kb_h && kb_h >= 0) {
             if (kb_state == 4) kb_say("keyboard disconnected (it connects again when you press a key)");
             kb_reset(); kb_quiet = 0; if (kb_state > 0) kb_state = 0;
+            kb_retry_n = 0; kb_retry_at = timer_us() + 3000000;     /* call it again soon */
             return;
         }
         if (conn >= 0) { con_color(COL_CYAN); kprintf("\n[BT] phone disconnected\n"); con_color(COL_DEFAULT); }
@@ -1094,7 +1113,9 @@ static int bt_start(void)
     scan_restart = timer_us() + 15000000; adv_again = 0;
     kb_reset(); kb_state = 0; kb_want = 0;
     for (int i = 0; i < NKEYS; i++) if (keys[i].used) {   /* try the paired keyboard once (it may be asleep) */
-        kb_quiet = 1; kb_create(keys[i].addr); break;
+        kb_quiet = 1; kb_create(keys[i].addr);
+        kb_retry_n = 0; kb_retry_at = timer_us() + 8000000;   /* and again until it answers */
+        break;
     }
     bt_up = 1;
     bt_live = 1;                                   /* core 1 takes the UART from here */
