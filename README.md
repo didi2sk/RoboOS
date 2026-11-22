@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.84**
+Current version: **0.85**
 
 ## Supported boards
 
@@ -468,6 +468,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 /LOG/YYYYMMDD.CSV) and `GET /api/sensors` (JSON).
 0.83: MPU-6050 / GY-521 (`motion`): tilt (spirit level), acceleration, rotation, shake detection; display, MQTT, API, BASIC.
 0.84: MPU-6050 wake-up fixed (a GY-521 stayed asleep and gave all 0, which also counted fake shakes).
+0.85: `motion` runs live on the whole screen until a key (spirit-level bars for pitch / roll); `motion once` prints once.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -832,8 +833,9 @@ sensors (VCC 3.3 V pin 1, GND pin 6, SCL pin 5, SDA pin 3; XDA / XCL / INT uncon
 0x68, AD0 to 3.3 V = 0x69 (use that next to a DS3231 clock, which is also 0x68).
 
 ```
-motion                  pitch / roll (deg), acceleration (mg), rotation (deg/s), chip temperature, shakes
-motion watch            live tilt - a spirit level (any key stops)
+motion                  LIVE until a key: pitch / roll (deg) with spirit-level bars, acceleration (mg),
+                        rotation (deg/s), chip temperature, shakes
+motion once             the same values printed once
 motion zero             this position = level (and the gyro at rest = 0); saved in /MOTION.TXT
 motion threshold 400    a shake = |acceleration| more than 400 mg off 1 g (or turning > 150 deg/s)
 motion alarm on|off     print every shake; MQTT <base>/motion gets the count anyway

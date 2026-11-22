@@ -202,6 +202,49 @@ static void put_d10(const char *what, int v, const char *unit)
     kprintf("  %-10s %s%d.%d %s\n", what, v < 0 ? "-" : "", a / 10, a % 10, unit);
 }
 
+#ifndef MOTION_HOST_TEST
+static int lrow;
+static void lline(void) { con_goto(0, lrow++); }
+static void lend(void) { con_clreol(); }
+static void sgn10(int v) { int a = v < 0 ? -v : v; kprintf("%s%d.%d", v < 0 ? "-" : " ", a / 10, a % 10); }
+static void bar(int v)                                    /* a spirit-level bubble, +-45 deg over 31 cells */
+{
+    int pos = 15 + v * 15 / 450; if (pos < 0) pos = 0; if (pos > 30) pos = 30;
+    kprintf("  [");
+    for (int i = 0; i < 31; i++) kprintf("%c", i == pos ? 'O' : i == 15 ? '|' : '-');
+    kprintf("]");
+}
+static void live_view(void)
+{
+    struct motion_values m;
+    con_clear();
+    u32 frames = 0;
+    while (con_trygetc() < 0) {
+        int e = motion_get(&m);
+        lrow = 0;
+        lline(); kprintf("MPU-%s at 0x%02x - live, any key stops", kind == 0x68 ? "6050" : kind == 0x70 ? "6500" : "9250", (u32)addr); lend();
+        lline(); lend();
+        if (e) {
+            lline(); kprintf(e == -2 ? "  no data (all 0) - asleep? waking it ... PWR_MGMT_1 0x%02x" : "  not answering", (u32)pwr); lend();
+            for (int i = 0; i < 8; i++) { lline(); lend(); }
+        } else {
+            lline(); kprintf("  pitch "); sgn10(m.pitch_d10); kprintf(" deg"); bar(m.pitch_d10); lend();
+            lline(); kprintf("  roll  "); sgn10(m.roll_d10); kprintf(" deg"); bar(m.roll_d10); lend();
+            lline(); lend();
+            lline(); kprintf("  accel   x %6d  y %6d  z %6d mg   |a| %5d mg", m.ax_mg, m.ay_mg, m.az_mg, m.g_mg); lend();
+            lline(); kprintf("  gyro    x "); sgn10(m.gx_d10); kprintf("  y "); sgn10(m.gy_d10); kprintf("  z "); sgn10(m.gz_d10); kprintf(" deg/s"); lend();
+            { int t = m.temp_c100, at = t < 0 ? -t : t; lline(); kprintf("  temp    %s%d.%02d C (chip)", t < 0 ? "-" : "", at / 100, at % 100); lend(); }
+            lline(); kprintf("  shakes  %u   (threshold %d mg)", m.shakes, thresh); lend();
+            lline(); lend();
+            lline(); kprintf("  %u", ++frames); lend();
+        }
+        u64 end = timer_us() + 150000;
+        while (timer_us() < end) { motion_poll(); delay_us(10000); }
+    }
+    con_goto(0, lrow); kprintf("\n");
+}
+#endif
+
 void motion_cmd(int argc, char **argv)
 {
     const char *a = argc > 1 ? argv[1] : "";
@@ -209,17 +252,8 @@ void motion_cmd(int argc, char **argv)
     if (!addr) { kprintf("no motion sensor (MPU-6050 / GY-521 at I2C 0x68 or 0x69; 'motion scan' looks again)\n"); return; }
     struct motion_values m;
 #ifndef MOTION_HOST_TEST
-    if (!strcmp(a, "watch")) {                          /* live, until a key */
-        kprintf("pitch / roll (deg), |a| (g) - any key stops\n");
-        while (!con_trygetc()) {
-            if (motion_get(&m) == 0) {
-                int p = m.pitch_d10, r = m.roll_d10;
-                kprintf("\r  pitch %s%d.%d  roll %s%d.%d  |a| %d.%02d   ", p < 0 ? "-" : " ", (p < 0 ? -p : p) / 10, (p < 0 ? -p : p) % 10,
-                        r < 0 ? "-" : " ", (r < 0 ? -r : r) / 10, (r < 0 ? -r : r) % 10, m.g_mg / 1000, m.g_mg % 1000 / 10);
-            }
-            delay_us(100000);
-        }
-        kprintf("\n");
+    if (!*a || !strcmp(a, "watch")) {                  /* 0.85: live on the whole screen until a key */
+        live_view();
         return;
     }
     if (!strcmp(a, "zero")) {                           /* this position = level, gyro at rest = 0 */
@@ -238,9 +272,10 @@ void motion_cmd(int argc, char **argv)
         thresh = (int)v; save(); kprintf("shake threshold %d mg\n", thresh); return;
     }
     if (!strcmp(a, "alarm") && argc > 2) { alarm_on = !strcmp(argv[2], "on"); save(); kprintf("shake messages %s\n", alarm_on ? "on" : "off"); return; }
-    if (*a) {
-        kprintf("usage: motion                 values (tilt, acceleration, rotation, temperature)\n"
-                "       motion watch           live tilt (a spirit level), any key stops\n"
+    if (strcmp(a, "once")) {
+        kprintf("usage: motion                 live values until a key (motion once = print once)\n"
+                "       motion once            values (tilt, acceleration, rotation, temperature)\n"
+
                 "       motion zero            this position = level (+ gyro offsets)\n"
                 "       motion threshold <mg>  shake = this far off 1 g (default 400)\n"
                 "       motion alarm on|off    print every shake (MQTT <base>/motion always)\n"
