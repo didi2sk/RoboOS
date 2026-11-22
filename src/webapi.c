@@ -603,6 +603,10 @@ logged_in:;
           if (motion_get(&m) == 0) { C100("pitch_deg", m.pitch_d10 * 10); C100("roll_deg", m.roll_d10 * 10);
                                      put(",\"accel_mg\":["); put_i(m.ax_mg); put(","); put_i(m.ay_mg); put(","); put_i(m.az_mg); put("]");
                                      put(",\"shakes\":"); put_i((int)m.shakes); } }
+        { struct thermal_values th;
+          if (thermal_get(&th) == 0) { C100("ir_max_c", th.max_c100); C100("ir_min_c", th.min_c100);
+                                       put(",\"presence\":"); put_i(th.present);
+                                       put(",\"ir_pixels_c100\":["); for (int i = 0; i < 64; i++) { if (i) put(","); put_i(th.pix[i]); } put("]"); } }
         #undef C100
         put(",\"log_min\":"); put_i(sensors_log_every());
         put("}\n");

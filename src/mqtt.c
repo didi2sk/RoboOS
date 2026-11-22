@@ -124,6 +124,9 @@ static void publish_state(void)
     { struct motion_values m;
       if (motion_get(&m) == 0) { ja("\"pitch\":"); jfix(m.pitch_d10 * 10); ja(",\"roll\":"); jfix(m.roll_d10 * 10);
                                  ja(",\"shakes\":"); jnum((long)m.shakes); ja(","); } }
+    { struct thermal_values th;
+      if (thermal_get(&th) == 0) { ja("\"ir_max\":"); jfix(th.max_c100); ja(",\"ir_min\":"); jfix(th.min_c100);
+                                   ja(",\"presence\":"); jnum(th.present); ja(","); } }
     ja("\"uptime\":"); jnum((long)(timer_us() / 1000000));
     ja(",\"ip\":\""); ja(ip_address_str()); ja("\"");
     u64 now = clock_now();

@@ -49,6 +49,9 @@ static int sensors_read(struct sensor_values *v) { memset(v, 0, sizeof(*v)); v->
 struct motion_values { int ax_mg, ay_mg, az_mg, g_mg, gx_d10, gy_d10, gz_d10, temp_c100, pitch_d10, roll_d10; unsigned shakes; };
 static int motion_get(struct motion_values *m) { memset(m, 0, sizeof(*m)); m->pitch_d10 = 123; m->roll_d10 = -45; m->g_mg = 1002; m->shakes = 3; return 0; }
 static int motion_present(void) { return 1; }
+struct thermal_values { int pix[64], min_c100, max_c100, avg_c100, median_c100, therm_c100, warm, present; };
+static int thermal_get(struct thermal_values *t) { memset(t, 0, sizeof(*t)); t->max_c100 = 3412; t->min_c100 = 2100; t->avg_c100 = 2250; t->warm = 3; return 0; }
+static int thermal_present(void) { return 1; }
 static int radio_on(void) { return 1; }
 static unsigned radio_freq(void) { return 10440; }
 static int radio_rssi(void) { return 40; }
@@ -432,6 +435,11 @@ int main(void)
     reset(SSD, 0x3C, 0x43, "mode motion\n");
     display_boot(); now_us += 2100000; display_poll();
     { const char *w[] = { "Pitch 12.3 deg", "Roll  -4.5 deg", "|a| 1002 mg", "Shakes 3" }; expect_rows("motion 4 rows", 0, 0, 4, w); }
+
+    printf("thermal screen:\n");
+    reset(SSD, 0x3C, 0x43, "mode thermal\n");
+    display_boot(); now_us += 2100000; display_poll();
+    { const char *w[] = { "IR max 34.1 C", "IR min 21.0 C", "Avg    22.5 C", "Person: YES" }; expect_rows("thermal 4 rows", 0, 0, 4, w); }
 
     printf("Waveshare 1.3\" OLED HAT (SH1106 on SPI + keys):\n");
     reset(SH, 0, 0xFF, "bus spi\ntype sh1106\nmode text\n");

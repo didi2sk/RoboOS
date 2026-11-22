@@ -203,6 +203,11 @@ int sensor_value(int n)
     static const int need[8] = { SV_CPU, SV_TEMP, SV_HUM, SV_PRESS, SV_AIN, SV_AIN, SV_AIN, SV_AIN };
     struct sensor_values v;
 #ifndef SENSORS_NO_LOG
+    if (n == 14 || n == 15) {                             /* 0.87: AMG8833 */
+        struct thermal_values t;
+        if (thermal_get(&t)) return SENSOR_NONE;
+        return n == 14 ? t.max_c100 : t.present;
+    }
     if (n >= 8 && n <= 13) {                              /* 0.83: MPU-6050 */
         struct motion_values m;
         if (motion_get(&m)) return SENSOR_NONE;

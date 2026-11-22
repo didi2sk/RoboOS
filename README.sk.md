@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.86**
+Aktuálna verzia: **0.87**
 
 ## Podporované dosky
 
@@ -466,6 +466,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.84: oprava zobudenia MPU-6050 (GY-521 ostal spať a dával samé 0, čo navyše počítalo falošné otrasy).
 0.85: `motion` beží naživo na celej obrazovke do stlačenia klávesy (vodováha pre pitch / roll); `motion once` vypíše raz.
 0.86: MPU-6050 na vnútornom oscilátore (GY-521 sa zobudil, ale s hodinami z gyroskopu nemeral nič).
+0.87: termokamera AMG8833 Grid-EYE (`thermal`): tepelná mapa naživo na HDMI, detekcia človeka (MQTT), displej, API, BASIC.
 
 ### Dátum a čas (NTP)
 
@@ -839,6 +840,24 @@ BASIC `SENSOR(8)` pitch, `SENSOR(9)` roll (0,1 stupňa), `SENSOR(10)` otrasy, `S
 stav v MQTT aj `GET /api/sensors` obsahujú pitch, roll a otrasy. **Na hardvéri zatiaľ neotestované** (PC test
 `tools/test_motion.c`: celočíselný atan2 do 0,1 stupňa od libm, náklon pri známych uhloch, gyroskop / teplota, otrasy).
 
+### Termokamera (AMG8833 Grid-EYE, 0.87)
+
+AMG8833 (Panasonic Grid-EYE, napr. doska Adafruit) meria 8x8 teplôt (0-80 C, asi +-2,5 C, do ~7 m). Zapojí sa
+na I2C (VIN 3,3 V pin 1, GND pin 6, SDA pin 3, SCL pin 5; 3Vo a INT voľné); adresa 0x69.
+
+```
+thermal                  tepelná mapa naživo na HDMI (plynulo zväčšená, farebná stupnica, max / min / priemer,
+                         človek áno/nie), ktorákoľvek klávesa skončí
+thermal once             64 teplôt ako čísla
+thermal range 20 35      pevné farby (C); 'thermal range auto' = od najstudenšieho po najteplejší bod
+thermal person 2         človek / teplý predmet = body o 2 C teplejšie ako pozadie (predvolené)
+display thermal          max / min / priemer / človek na I2C displeji (aj pod KEY1 na HATe)
+```
+
+Človek (dva a viac teplých bodov) ide pri zmene do MQTT `<base>/presence` (1 / 0, retained); BASIC
+`SENSOR(14)` = najteplejší bod (0,01 C), `SENSOR(15)` = človek; aj stav v MQTT a `GET /api/sensors` (so všetkými
+64 bodmi). **Na hardvéri zatiaľ neotestované** (PC test `tools/test_thermal.c`: dekódovanie, prítomnosť, obrázok mapy).
+
 ### MQTT
 
 MQTT je bežný spôsob, ako IoT zariadenia hovoria so serverom (Home Assistant, Node-RED,
@@ -1024,6 +1043,7 @@ Systém komunikuje po anglicky.
 | `ai <otázka>\|@príkaz ..\|key\|model` | otázka pre Claude (vlastný API kľúč Anthropic) |
 | `radio [MHz\|up\|down\|scan\|vol n\|off]` | FM rádio (modul RDA5807M na I2C) |
 | `motion [watch\|zero\|threshold mg\|alarm on\|off]` | náklon, zrýchlenie, otrasy (MPU-6050 / GY-521) |
+| `thermal [once\|range lo hi\|person C]` | termokamera 8x8 (AMG8833), tepelná mapa naživo |
 | `voice [add id cmd\|del id\|volume\|mute\|wake]` | hlasové príkazy offline (DFRobot DF2301Q) |
 | `dcf [on\|off\|pin n\|invert\|pull\|pon]` | prijímač rádiových hodín DCF77 na GPIO |
 | `display [scan\|text n ..\|clear\|status on\|off\|size\|type\|addr\|hat\|keys]` | I2C displej OLED / LCD, Waveshare SPI OLED HAT |
