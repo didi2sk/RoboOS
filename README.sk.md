@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.89**
+Aktuálna verzia: **0.90**
 
 ## Podporované dosky
 
@@ -469,6 +469,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.87: termokamera AMG8833 Grid-EYE (`thermal`): tepelná mapa naživo na HDMI, detekcia človeka (MQTT), displej, API, BASIC.
 0.88: kamera na plochom kábli, krok 1 (`cam`): zapne kameru a nájde senzor (OV5647 / IMX219).
 0.89: kamera krok 2: `cam live` / `cam snap` / `cam bars` - prvý obraz z OV5647 na HDMI (640x480).
+0.90: `cam live` / `bars` vypíšu každý krok štartu (`cam 1` ... `cam 9`) - na 0.89 doska zamrzla, posledný riadok ukáže kde (`cam trace off` ich skryje).
 
 ### Dátum a čas (NTP)
 
