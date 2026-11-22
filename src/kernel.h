@@ -251,6 +251,10 @@ void motion_cmd(int argc, char **argv);
 int  motion_present(void);
 int  motion_get(struct motion_values *m);   /* 0 = ok */
 int  motion_addr(void);
+/* camera.c - CSI camera (step 1: power + sensor id) */
+void camera_cmd(int argc, char **argv);
+int  camera_present(void);
+
 /* thermal.c - AMG8833 Grid-EYE 8x8 thermal camera at I2C 0x69 */
 struct thermal_values { int pix[64], min_c100, max_c100, avg_c100, median_c100, therm_c100, warm, present; };
 void thermal_boot(void);

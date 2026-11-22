@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.87**
+Aktuálna verzia: **0.88**
 
 ## Podporované dosky
 
@@ -467,6 +467,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.85: `motion` beží naživo na celej obrazovke do stlačenia klávesy (vodováha pre pitch / roll); `motion once` vypíše raz.
 0.86: MPU-6050 na vnútornom oscilátore (GY-521 sa zobudil, ale s hodinami z gyroskopu nemeral nič).
 0.87: termokamera AMG8833 Grid-EYE (`thermal`): tepelná mapa naživo na HDMI, detekcia človeka (MQTT), displej, API, BASIC.
+0.88: kamera na plochom kábli, krok 1 (`cam`): zapne kameru a nájde senzor (OV5647 / IMX219).
 
 ### Dátum a čas (NTP)
 
@@ -858,6 +859,16 @@ display thermal          max / min / priemer / človek na I2C displeji (aj pod K
 `SENSOR(14)` = najteplejší bod (0,01 C), `SENSOR(15)` = človek; aj stav v MQTT a `GET /api/sensors` (so všetkými
 64 bodmi). **Funguje na Pi 3B+** (mapa naživo ukazuje ruku; PC test `tools/test_thermal.c`: dekódovanie, prítomnosť, obrázok mapy).
 
+### Kamera na plochom kábli (OV5647 / IMX219, vo výstavbe, 0.88)
+
+Kamera pre Raspberry Pi (v1 = OV5647, aj väčšina lacných klonov; v2 = IMX219) sa ovláda priamo,
+bez firmvéru grafického čipu (ako linuxový `bcm2835-unicam`). Krok 1: `cam` zapne kameru
+(CAM_GPIO0: pin 5 firmvérového expandéra na Pi 3, GPIO40 na Zero 2 W), porozpráva sa so senzorom
+na jeho vlastnej I2C zbernici (I2C0 na GPIO44/45 - nie piny na lište) a vypíše ID čipu
+(OV5647 = `5647`). `cam reg <adresa> [hodnota]` číta / zapisuje register senzora, `cam off` ju vypne.
+Obraz príde v ďalších krokoch (nastavenie senzora, prijímač Unicam CSI-2, farby, HDMI / web).
+**Na hardvéri zatiaľ neotestované.**
+
 ### MQTT
 
 MQTT je bežný spôsob, ako IoT zariadenia hovoria so serverom (Home Assistant, Node-RED,
@@ -1043,6 +1054,7 @@ Systém komunikuje po anglicky.
 | `ai <otázka>\|@príkaz ..\|key\|model` | otázka pre Claude (vlastný API kľúč Anthropic) |
 | `radio [MHz\|up\|down\|scan\|vol n\|off]` | FM rádio (modul RDA5807M na I2C) |
 | `motion [watch\|zero\|threshold mg\|alarm on\|off]` | náklon, zrýchlenie, otrasy (MPU-6050 / GY-521) |
+| `cam [reg a [v]\|off]` | kamera na plochom kábli: nájde senzor (krok 1) |
 | `thermal [once\|range lo hi\|person C]` | termokamera 8x8 (AMG8833), tepelná mapa naživo |
 | `voice [add id cmd\|del id\|volume\|mute\|wake]` | hlasové príkazy offline (DFRobot DF2301Q) |
 | `dcf [on\|off\|pin n\|invert\|pull\|pon]` | prijímač rádiových hodín DCF77 na GPIO |
