@@ -7,8 +7,8 @@ Overenie opravy v RoboOS 0.101
 - Overené nezávisle v dvoch zdrojoch. Linux Device Tree má index 12 pre UNICAM0 a 13 pre UNICAM1. Ovládač raspberrypi-power.c pre tieto domény prekladá index Device Tree na ID firmvéru ako index + 1. Circle pre rozhranie firmvéru priamo definuje UNICAM0 = 13 a UNICAM1 = 14.
 - Ide o internú napájaciu doménu prijímača v SoC. Napájanie snímača UC-261 a komunikácia I2C sú samostatná cesta. Odpoveď senzora 0x5647 a čitateľné registre prijímača preto nepotvrdzujú zapnutie správnej domény. Chybné ID je konzistentné s príznakom CS bez snímok. Presný stav analógovej časti prijímača počas starého testu nebol priamo zmeraný.
 - PR #102 je zlúčený do main. Verzia 0.101 prepína GET/SET na ID 14, pri štarte vypne doménu 13 a pri zastavení vypne doménu 14. Pri vypnutí prijímača pribudol reset CPR. Commit obsahuje aj sd/kernel8.img.
-- Výsledok na doske zatiaľ v repozitári nie je. Prvý test je studený štart 0.101 na pôvodnom Pi 3B+ s UC-261. Skontroluj verziu pri štarte, spusti cam a potom cam snap. V riadku cam 2 očakávaj potvrdené zapnutie domény 14. Úspešný test znamená zachytené FS a FE, pohyb IBWP a viditeľnú snímku. Potom skús zopakovať cam snap po ukončení prvého snímania, aby sa overil ďalší cyklus zapnutia a vypnutia.
-- Ak cam 2 ukáže OFF alebo chýbajúcu odpoveď, začni stavom mailboxu. Aktuálny cam_start() pri neúspešnom SET/GET stále pokračuje k hodinám a MMIO. Ak je doména 14 potvrdene zapnutá, ale FS/FE ďalej zostanú na nule, pokračuj meraním a testami nižšie. Pri prvej skúške 0.101 ich nemiešaj s opravou napájania.
+- Výsledok na doske: používateľ po oprave potvrdil, že kamera funguje. Konkrétny príkaz a hodnoty FS, FE a IBWP neboli uvedené.
+- Pri opakovaní problému skontroluj stav domény 14 v riadku cam 2, počty FS/FE a pohyb IBWP. Aktuálny cam_start() pri neúspešnom SET/GET stále pokračuje k hodinám a MMIO.
 
 Zdroje k napájaniu
 - Oprava: https://github.com/didi2sk/RoboOS/pull/102
@@ -16,7 +16,7 @@ Zdroje k napájaniu
 - Linux, preklad indexu na ID firmvéru: https://github.com/raspberrypi/linux/blob/rpi-6.12.y/drivers/pmdomain/bcm/raspberrypi-power.c#L109-L123
 - Circle, ID domén firmvéru: https://github.com/rsta2/circle/blob/master/include/circle/bcmpropertytags.h#L170-L171
 
-Staršie zistenia z RoboOS 0.100 a doplnkové testy
+Staršie zistenia z RoboOS 0.100 a doplnkové testy pri opakovaní problému
 
 Pozorovania z testov na doske
 - Pi 3B+ s kamerou UC-261 odpovie cez I2C na 0x36 a vráti ID 0x5647. Na rovnakej doske s tou istou kamerou Raspberry Pi OS Lite 64-bit (Trixie) vytvoril snímku cez rpicam-still.
