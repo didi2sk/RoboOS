@@ -409,7 +409,7 @@ static void show(int live)
     int scale = fb && fb_width() >= 1280 && fb_height() >= 1000 ? 3 : 2;
     if (fb && fb_height() < 24 + 240 * (u32)scale + 24) fb = 0;   /* no room for picture + text */
     STEP("cam 8: first frame...\n");
-    { u16 *f0 = next_frame(1500); STEP("cam 9: %s (FS %u FE %u, STA 0x%x, write pointer 0x%x)\n", f0 ? "frame OK" : "NO frame", n_fs, n_fe, sta_or, ur(0x11C)); if (trace) delay_us(1500000); }
+    { u16 *f0 = next_frame(3000); STEP("cam 9: %s (FS %u FE %u, STA 0x%x, write pointer 0x%x)\n", f0 ? "frame OK" : "NO frame", n_fs, n_fe, sta_or, ur(0x11C)); if (trace) delay_us(1500000); }
     if (fb) { fb_hold(1); for (u32 y = 0; y < fb_height(); y++) { u32 *r = fb_row((int)y); for (u32 x = 0; x < fb_width(); x++) r[x] = 0; } }
     int x0 = fb ? ((int)fb_width() - 320 * scale) / 2 : 0, y0 = 24;
     if (fb) fb_text_px(8, 4, live ? "camera live - any key stops" : "camera picture - any key", 0xFFFFFF, 0);
@@ -417,7 +417,7 @@ static void show(int live)
     u32 shown = 0, fe0 = 0;
     int got = 0;
     for (;;) {
-        u16 *f = next_frame(live ? 500 : 2000);
+        u16 *f = next_frame(got ? 500 : 3000);
         if (f) {
             got = 1; shown++;
             if (fb) draw_frame(f, x0, y0, scale);
@@ -434,14 +434,19 @@ static void show(int live)
         }
         if (con_trygetc() >= 0) break;
     }
-    u32 ibwp = ur(0x11C);
+    u32 ibwp = ur(0x11C), lclk = ur(0x010), ld0 = ur(0x018), ld1 = ur(0x01C), sta_now = ur(0x004), ista = ur(0x104);
+    u8 s0100 = 0xEE, s4800 = 0xEE, s300d = 0xEE, s3036 = 0xEE, s4814 = 0xEE;
+    rd16(saddr, 0x0100, &s0100); rd16(saddr, 0x4800, &s4800); rd16(saddr, 0x300D, &s300d);
+    rd16(saddr, 0x3036, &s3036); rd16(saddr, 0x4814, &s4814);
     if (!live && got && fb) { while (con_trygetc() < 0) delay_us(20000); }
     cam_stop();
     if (fb) { fb_hold(0); fb_redraw(); }
     kprintf("frames: start %u, end %u, shown %u in %u ms\n", n_fs, n_fe, shown, (u32)((timer_us() - t0) / 1000));
     kprintf("receiver status:"); print_sta(sta_or); if (!sta_or) kprintf(" (nothing)");
     kprintf("\nwrite pointer 0x%x (buffers 0x%x / 0x%x), lanes CLK %x DAT0 %x DAT1 %x\n",
-            ibwp, (u32)BUF_A | 0xC0000000u, (u32)BUF_B | 0xC0000000u, ur(0x010), ur(0x018), ur(0x01C));
+            ibwp, (u32)BUF_A | 0xC0000000u, (u32)BUF_B | 0xC0000000u, lclk, ld0, ld1);
+    kprintf("at the end: STA 0x%x ISTA 0x%x; sensor 0100=%02x 4800=%02x 300d=%02x 3036=%02x 4814=%02x\n",
+            sta_now, ista, s0100, s4800, s300d, s3036, s4814);
     if (!got) kprintf("NO PICTURE: no complete frame came in (send a photo of these lines)\n");
 }
 
