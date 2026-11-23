@@ -1449,7 +1449,7 @@ void camera_microscope(void)
                        put_s(l, &n, " "); put_int(l, &n, (int)(rec_len >> 20)); put_s(l, &n, " MB  "); }
             if (now < msg_until && nm[0]) { put_s(l, &n, nm); put_s(l, &n, "  "); }
             else if (now < msg_until && msg[0]) { put_s(l, &n, msg); put_s(l, &n, "  "); }
-            put_s(l, &n, "1-5 +- zoom, arrows, c centre, f fill/fit, k cores, space photo, v video, q quit");
+            put_s(l, &n, "+- zoom (1-7), arrows, c centre, f fill/fit, k cores, space photo, v video, q quit");
             int maxc = sw / 8 - 2;
             while (n < maxc && n < 210) l[n++] = ' ';
             if (n > maxc) n = maxc;
@@ -1460,9 +1460,12 @@ void camera_microscope(void)
         int k = micro_key();
         if (k < 0) continue;
         int step = (W * 10 / zm10) / 8;
-        if (k >= '1' && k <= '5') zm10 = (k - '0') * 10;
-        else if (k == '+' || k == '=') { if (zm10 < 50) zm10 += 5; }
-        else if (k == '-') { if (zm10 > 10) zm10 -= 5; }
+        /* 0.112: finer zoom, up to 2.5x (owner: more than that only blurs) */
+        static const int zl[] = { 10, 12, 15, 18, 20, 22, 25 };
+        int zi = 0; while (zi < 6 && zl[zi] < zm10) zi++;
+        if (k >= '1' && k <= '7') zm10 = zl[k - '1'];
+        else if (k == '+' || k == '=') { if (zi < 6) zm10 = zl[zi + 1]; }
+        else if (k == '-') { if (zi > 0) zm10 = zl[zi - 1]; }
         else if (k == K_LEFT) pan_x += (s_flip & 1) ? step : -step;
         else if (k == K_RIGHT) pan_x += (s_flip & 1) ? -step : step;
         else if (k == K_UP) pan_y += (s_flip & 2) ? step : -step;
@@ -1742,7 +1745,7 @@ void camera_cmd(int argc, char **argv)
             "       cam live            live picture on HDMI, s / space saves a JPEG, other keys stop\n"
             "       cam snap [file]     one picture saved as JPEG (default /CAM/<date>/<time>.JPG)\n"
             "       cam view            one picture on HDMI only, any key\n"
-            "       microscope          full screen, zoom 1-5x, photo + video (also 'cam micro')\n"
+            "       microscope          full screen, zoom 1-2.5x, photo + video (also 'cam micro')\n"
             "       cam send [save]     one photo to MQTT <base>/camera (Home Assistant camera), save = also to the card\n"
             "       cam set             picture settings: exposure, gain, ev, wb, brightness, contrast,\n"
             "                           saturation, hue, gamma, flip, quality (saved in /CAM.TXT)\n"
