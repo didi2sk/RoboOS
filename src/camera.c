@@ -52,8 +52,8 @@ static u32 last_s;
 #define CM_CAM1DIV (MMIO_BASE + 0x10104C)
 static int W = 1296, H = 972;                          /* 0.99: the Linux 1296x972 mode by default (works under Linux on the same board) */
 #define FRAME_BYTES ((u32)(W * H * 2))
-#define BUF_A 0x13000000UL
-#define BUF_B 0x13400000UL
+#define BUF_A 0x15000000UL                                /* 0.109: 8 MB each (1920x1080 x 2 B = 4.1 MB) */
+#define BUF_B 0x15800000UL
 static int streaming, cur_buf;
 static int web_stream;                                   /* 0.104: started by a web request */
 static int fake;                                         /* 0.104: `cam test on` = a made-up picture (QEMU, no camera) */
@@ -239,6 +239,16 @@ static const struct rv fwmode[] = {
     {0x4000,0x09},{0x4837,0x16},{0x4800,0x24},{0x3503,0x03},{0x3820,0x41},{0x3821,0x03},{0x380E,0x05},
     {0x380F,0x9B},{0x350A,0x00},{0x350B,0x10},{0x3500,0x00},{0x3501,0x1A},{0x3502,0xF0},{0x3212,0xA0},
 };
+/* 0.109: 1920x1080 30 fps, the centre of the full sensor without binning (Linux ov5647 mode 1) - the
+ * full screen picture of the microscope, one sensor pixel per screen pixel on a 1080p screen */
+static const struct rv hd1080[] = {
+    {0x3036,0x69},{0x3821,0x02},{0x3820,0x00},{0x3612,0x5b},{0x3618,0x04},{0x5002,0x41},{0x3814,0x11},
+    {0x3815,0x11},{0x3708,0x64},{0x3709,0x12},{0x3800,0x01},{0x3801,0x5c},{0x3802,0x01},{0x3803,0xb2},
+    {0x3804,0x08},{0x3805,0xe3},{0x3806,0x05},{0x3807,0xf1},{0x3808,0x07},{0x3809,0x80},{0x380a,0x04},
+    {0x380b,0x38},{0x3811,0x04},{0x3813,0x02},{0x3a09,0x4b},{0x3a0a,0x01},{0x3a0b,0x13},{0x3a0d,0x04},
+    {0x3a0e,0x03},{0x4004,0x04},{0x4837,0x19},
+    {0x380c,0x09},{0x380d,0x70},{0x380e,0x04},{0x380f,0x50},          /* HTS 2416, VTS 0x450 */
+};
 static int vga_mode = 0, gate_val = 0x15;             /* vga_mode: 2 = firmware 1296x976, 0 = Linux 1296x972, 1 = 640x480 */                /* 0.93: gate 0x155 as the firmware writes it (Linux: 0x15) */
 static const struct rv vga[] = {
     {0x3036,0x46},{0x3821,0x01},{0x3820,0x41},{0x3612,0x59},{0x3618,0x00},{0x3814,0x35},{0x3815,0x35},
@@ -274,10 +284,14 @@ static int sensor_stream(int on)
     }
     if (on) {
         if (wr_list(common, sizeof(common) / sizeof(common[0]))) return -1;
-        if (vga_mode ? wr_list(vga, sizeof(vga) / sizeof(vga[0])) : wr_list(binned, sizeof(binned) / sizeof(binned[0]))) return -1;
+        if (vga_mode == 3 ? wr_list(hd1080, sizeof(hd1080) / sizeof(hd1080[0])) :
+            vga_mode ? wr_list(vga, sizeof(vga) / sizeof(vga[0])) : wr_list(binned, sizeof(binned) / sizeof(binned[0]))) return -1;
         u8 v = 0;
         if (!rd16(saddr, 0x4814, &v)) wr16(saddr, 0x4814, v & 0x3F);   /* virtual channel 0 */
-        if (vga_mode == 0) {                               /* 0.100: exactly what Linux leaves in the sensor (owner's dump, same board) */
+        if (vga_mode == 3) {                               /* like below, with this mode's frame length */
+            static const struct rv lx3[] = { {0x3503,0x03},{0x5001,0x00},{0x350a,0x00},{0x350b,0x40},{0x380e,0x04},{0x380f,0x50} };
+            wr_list(lx3, sizeof(lx3) / sizeof(lx3[0]));
+        } else if (vga_mode == 0) {                        /* 0.100: exactly what Linux leaves in the sensor (owner's dump, same board) */
             static const struct rv lx[] = { {0x3503,0x03},{0x5001,0x00},{0x3500,0x00},{0x3501,0x57},{0x3502,0xe0},
                                             {0x350a,0x00},{0x350b,0x40},{0x380e,0x06},{0x380f,0x02},{0x3821,0x03} };
             wr_list(lx, sizeof(lx) / sizeof(lx[0]));
@@ -398,7 +412,7 @@ static int cam_start(void)
     STEP("cam 2: switched on: answer %s, now %s (%u)\n", ok ? "ok" : "NONE", ok2 ? (g[1] & 1 ? "on" : "OFF") : "?", g[1]);
     cam1_clock(1);
     STEP("cam 3: CAM1 clock ctl 0x%x div 0x%x\n", mmio_read(CM_CAM1CTL), mmio_read(CM_CAM1DIV));
-    dcache_clean_inval((void *)BUF_A, 0x800000);
+    dcache_clean_inval((void *)BUF_A, 0x1000000);
     if (wr_list(oe_on, 3) || sensor_stream(0)) { kprintf("sensor does not answer\n"); return -1; }
     STEP("cam 4: sensor lanes in LP-11, reading the receiver...\n");
     STEP("cam 5: receiver CTRL 0x%x STA 0x%x ANA 0x%x\n", ur(0x000), ur(0x004), ur(0x008));
@@ -494,12 +508,12 @@ static u16 *next_frame(u32 ms)
  * locked / manual), gamma 2 (isqrt LUT), then brightness / contrast / saturation / hue in YCbCr, flip.
  * Exposure + gain: our own auto exposure on the mean level (the sensor's AEC is off, 0x3503 = 3), or fixed. */
 #ifndef RGB_BUF
-#define RGB_BUF 0x13800000UL
+#define RGB_BUF 0x16000000UL                              /* 0.109: up to 1920x1080 x 4 B */
 #endif
                              /* up to 648 x 488 x 4 = 1.3 MB */
 #define JPG_BUF 0x13C00000UL
 #define JPG_MAX (4 << 20)
-#define LINE_US10 232                                     /* one sensor line = 23.2 us (Linux mode 2: HTS 1896 / 81.67 MHz) */
+#define LINE_US10 (vga_mode == 3 ? 276 : vga_mode == 1 ? 318 : 232)   /* one sensor line in 0.1 us: HTS / pixel rate (Linux modes) */
 static int s_exp10, s_gain10, s_ev, s_wb, s_wbr = 100, s_wbb = 100;   /* exposure ms x10 / gain x10 (0 = auto); wb 0 auto 1 lock 2 manual */
 static int s_bri, s_con, s_sat = 100, s_hue, s_gamma = 1, s_flip, s_q = 85;
 static int cfg_loaded;
@@ -611,10 +625,13 @@ static inline u32 px_out(u32 R, u32 G, u32 B)
 }
 
 /* raw frame -> RGB_BUF (ow x oh), white balance + exposure updated from it */
-static void process_frame(const u16 *f)
+static int g_sh, g_ob, g_og1, g_og2, g_orr;             /* from frame_stats: bit shift, Bayer offsets */
+/* white balance + exposure from a raw frame; sets the g_ values the renderers use */
+static void frame_stats(const u16 *f)
 {
+
     u32 orv = 0; u64 sr = 0, sg = 0, sb = 0; u32 cnt = 0;
-    int ord = bayer >= 0 ? bayer : (vga_mode == 0 ? 1 : 0);
+    int ord = bayer >= 0 ? bayer : ((vga_mode == 0 || vga_mode == 3) ? 1 : 0);
     int ob, og1, og2, orr;
     switch (ord) {
     case 1:  ob = 1;     og1 = 0; og2 = W + 1; orr = W;     break;   /* GBRG */
@@ -636,6 +653,13 @@ static void process_frame(const u16 *f)
     } else if (s_wb == 2) { gr_cur = (u32)s_wbr * 256 / 100; gb_cur = (u32)s_wbb * 256 / 100; }
     u32 mean = (u32)(((sr * gr_cur >> 8) + 2 * sg + (sb * gb_cur >> 8)) / 4 / cnt) >> sh;
     ae_step(mean);
+    g_sh = sh; g_ob = ob; g_og1 = og1; g_og2 = og2; g_orr = orr;
+}
+
+static void process_frame(const u16 *f)
+{
+    frame_stats(f);
+    int sh = g_sh, ob = g_ob, og1 = g_og1, og2 = g_og2, orr = g_orr;
     ow = W / 2; oh = H / 2;
     u32 *out = (u32 *)RGB_BUF;
     u32 grc = gr_cur, gbc = gb_cur;
@@ -685,6 +709,76 @@ static void process_frame(const u16 *f)
             row[(s_flip & 1) ? ow - 1 - x : x] = px_out(R * grc >> 8, G, B * gbc >> 8);
         }
     }
+}
+
+
+/* 0.109: any part of the sensor picture (x0, y0, cw x ch sensor pixels) into dst (dw x dh, stride in pixels),
+ * one sliding 2x2 Bayer window per output pixel = full sensor detail; flip applied. Rows y_from..y_to-1 only,
+ * so cores 2 and 3 can draw parts of the same picture (render_par). Needs frame_stats() for this frame. */
+struct rjob { const u16 *f; u32 *dst; int stride, dw, dh, x0, y0, cw, ch, yf, yt; };
+static int r_off[4][4];                                    /* [sensor parity y*2+x][B, G1, G2, R] window offsets */
+static int r_xm[4096];
+
+static void r_prepare(int dw, int x0, int cw)
+{
+    int typ[4], e[4] = { g_ob, g_og1, g_og2, g_orr };
+    for (int k = 0; k < 4; k++) { int pos = e[k] == 0 ? 0 : e[k] == 1 ? 1 : e[k] == W ? 2 : 3; typ[pos] = k == 0 ? 0 : k == 3 ? 2 : 1; }
+    for (int py = 0; py < 2; py++) for (int px = 0; px < 2; px++) {
+        int g = 0, *o = r_off[py * 2 + px];
+        for (int dy = 0; dy < 2; dy++) for (int dx = 0; dx < 2; dx++) {
+            int t = typ[((py + dy) & 1) * 2 + ((px + dx) & 1)], a = dy * W + dx;
+            if (t == 0) o[0] = a; else if (t == 2) o[3] = a; else o[1 + g++] = a;
+        }
+    }
+    if (dw > 4096) dw = 4096;
+    for (int x = 0; x < dw; x++) {
+        int xx = (s_flip & 1) ? dw - 1 - x : x;
+        r_xm[x] = x0 + (int)((long)xx * cw / dw);
+    }
+}
+
+static void r_rows(void *arg)
+{
+    struct rjob *j = arg;
+    u32 grc = gr_cur, gbc = gb_cur;
+    int sh = g_sh;
+    for (int y = j->yf; y < j->yt; y++) {
+        int yy = (s_flip & 2) ? j->dh - 1 - y : y;
+        int ry = j->y0 + (int)((long)yy * j->ch / j->dh);
+        const u16 *a = j->f + ry * W;
+        u32 *row = j->dst + (long)y * j->stride;
+        const int (*oo)[4] = r_off + (ry & 1) * 2;
+        for (int x = 0; x < j->dw; x++) {
+            int rx = r_xm[x];
+            const u16 *q = a + rx;
+            const int *o = oo[rx & 1];
+            u32 B = (u32)q[o[0]] >> sh, G = ((u32)q[o[1]] + q[o[2]]) >> (sh + 1), R = (u32)q[o[3]] >> sh;
+            row[x] = px_out(R * grc >> 8, G, B * gbc >> 8);
+        }
+    }
+}
+
+/* the whole job on core 0 + the worker cores 2 and 3 (a third each) */
+static void render_par(const u16 *f, u32 *dst, int stride, int dw, int dh, int x0, int y0, int cw, int ch)
+{
+    if (dw > 4096) dw = 4096;
+    if (cw > W - 1) cw = W - 1;
+    if (ch > H - 1) ch = H - 1;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x0 + cw > W - 1) x0 = W - 1 - cw;
+    if (y0 + ch > H - 1) y0 = H - 1 - ch;
+    r_prepare(dw, x0, cw);
+    static struct rjob jb[3];
+    int used[3] = { 0, 0, 0 };
+    for (int k = 0; k < 3; k++) {
+        jb[k].f = f; jb[k].dst = dst; jb[k].stride = stride; jb[k].dw = dw; jb[k].dh = dh;
+        jb[k].x0 = x0; jb[k].y0 = y0; jb[k].cw = cw; jb[k].ch = ch;
+        jb[k].yf = dh * k / 3; jb[k].yt = dh * (k + 1) / 3;
+    }
+    for (int k = 1; k < 3; k++) if (smp_worker_ok(k + 1) && smp_run(k + 1, r_rows, &jb[k]) == 0) used[k] = 1;
+    r_rows(&jb[0]);
+    for (int k = 1; k < 3; k++) { if (used[k]) { if (smp_wait(k + 1, 500)) r_rows(&jb[k]); } else r_rows(&jb[k]); }
 }
 
 static int ae_exp_f(void) { return ae_exp * ae_gain; }
@@ -1219,29 +1313,6 @@ static void rec_save(char *name_out)
     if (name_out) { int i = 0; while (p[i] && i < 63) { name_out[i] = p[i]; i++; } name_out[i] = 0; }
 }
 
-/* the picture as big as the screen (4:3 kept), above a 20 px status line */
-static void blit_fit(void)
-{
-    static int xm[4096];
-    int sw = (int)fb_width(), shh = (int)fb_height() - 20;
-    if (sw > 4096) sw = 4096;
-    int dw = sw, dh = sw * oh / ow;
-    if (dh > shh) { dh = shh; dw = shh * ow / oh; }
-    int x0 = (sw - dw) / 2;
-    for (int x = 0; x < dw; x++) xm[x] = x * ow / dw;
-    const u32 *in = (const u32 *)RGB_BUF;
-    int last = -1;
-    u32 *prev = 0;
-    for (int y = 0; y < dh; y++) {
-        int sy = y * oh / dh;
-        u32 *row = fb_row(y) + x0;
-        if (sy == last && prev) { for (int x = 0; x < dw; x++) row[x] = prev[x]; continue; }
-        const u32 *src = in + sy * ow;
-        for (int x = 0; x < dw; x++) row[x] = src[xm[x]];
-        last = sy; prev = row;
-    }
-}
-
 static int micro_key(void)
 {
     int c = con_trygetc();
@@ -1256,42 +1327,82 @@ void camera_microscope(void)
 {
     if (!fb_ready() || fb_width() < 320) { kprintf("the microscope needs the HDMI screen\n"); return; }
     cfg_load();
+    if (streaming) cam_stop();                             /* the web view may run in another mode */
+    int old_mode = vga_mode, oldW = W, oldH = H;
+    vga_mode = 3; W = 1920; H = 1080;                      /* 1920x1080: every sensor pixel, 16:9 like the screen */
     in_show = 1;
     test_pattern = 0;
     int t = trace; trace = 0;
     int r = cam_start();
     trace = t;
-    if (r) { in_show = 0; return; }
-    ae_begin();
+    u16 *f = 0;
+    if (!r) { ae_begin(); f = next_frame(3000); }
+    if (!r && !f && vga_mode == 3) {                       /* the 1080p mode gave nothing: back to the mode that works */
+        cam_stop();
+        kprintf("no picture in 1920x1080 - using 1296x972\n");
+        vga_mode = 0; W = 1296; H = 972;
+        r = cam_start();
+        if (!r) { ae_begin(); f = next_frame(3000); }
+    }
+    if (r || !f) {
+        if (!r) cam_stop();
+        if (!r) kprintf("no picture from the camera\n");
+        vga_mode = old_mode; W = oldW; H = oldH; in_show = 0;
+        return;
+    }
     web_stream = 0;
     zm10 = 10; pan_x = W / 2; pan_y = H / 2;
     fb_hold(1);
+    int sw = (int)fb_width(), shh = (int)fb_height() - 20;
+    u32 *fb0 = fb_row(0);
+    int pitch = (int)(fb_row(1) - fb0);
     for (u32 y = 0; y < fb_height(); y++) { u32 *rw = fb_row((int)y); for (u32 x = 0; x < fb_width(); x++) rw[x] = 0; }
-    int rec = 0, fails = 0;
+    int rec = 0, fails = 0, fill = 1, vw = W / 2, vh = H / 2;
     char nm[64] = "", msg[64] = "";
     u64 last = timer_us(), msg_until = 0;
-    u32 fe0 = n_fe, fps = 0;
+    u32 fe0 = n_fe, fps = 0, ms_frame = 0;
     for (;;) {
-        u16 *f = next_frame(500);
+        if (!f) f = next_frame(500);
         if (!f) { if (++fails >= 6) { kprintf("the camera stopped sending pictures\n"); break; } continue; }
         fails = 0;
-        process_frame(f);
-        blit_fit();
-        web_publish();
-        if (rec && rec_frame()) { rec = 0; fb_text_px(8, (int)fb_height() - 18, "memory full - saving video...                    ", 0xFFFF00, 0); rec_save(nm); msg_until = timer_us() + 5000000; }
+        u64 tf = timer_us();
+        frame_stats(f);
+        /* the visible part of the sensor: zoom + pan, then fill (crop to the screen shape) or fit */
+        int cw = W * 10 / zm10, ch = H * 10 / zm10;
+        int dw = sw, dh = shh, vcw = cw, vch = ch;
+        if (fill) { if ((long)sw * ch > (long)shh * cw) vch = (int)((long)cw * shh / sw); else vcw = (int)((long)ch * sw / shh); }
+        else { if ((long)sw * ch > (long)shh * cw) dw = (int)((long)shh * cw / ch); else dh = (int)((long)sw * ch / cw); }
+        int x0 = pan_x - vcw / 2, y0 = pan_y - vch / 2;
+        if (x0 > W - vcw - 2) x0 = W - vcw - 2;
+        if (y0 > H - vch - 2) y0 = H - vch - 2;
+        if (x0 < 0) x0 = 0;
+        if (y0 < 0) y0 = 0;
+        pan_x = x0 + vcw / 2; pan_y = y0 + vch / 2;
+        int ox = (sw - dw) / 2, oy = (shh - dh) / 2;
+        render_par(f, fb0 + (long)oy * pitch + ox, pitch, dw, dh, x0, y0, vcw, vch);
+        ms_frame = (u32)((timer_us() - tf) / 1000);
+        if (rec || __atomic_load_n(&web_req, __ATOMIC_ACQUIRE) != web_done) {   /* video / web: a fixed-size copy */
+            render_par(f, (u32 *)RGB_BUF, vw, vw, vh, x0, y0, vcw, vch);
+            ow = vw; oh = vh;
+            web_publish();
+            if (rec && rec_frame()) { rec = 0; fb_text_px(8, (int)fb_height() - 18, "memory full - saving video...                    ", 0xFFFF00, 0); rec_save(nm); msg_until = timer_us() + 5000000; }
+        }
+        u16 *fphoto = f;
+        f = 0;
         u64 now = timer_us();
         if (now - last >= 1000000) { fps = (n_fe - fe0) * 10000000 / (u32)(now - last); fe0 = n_fe; last = now; }
         {   /* status line */
-            char l[200]; int n = 0;
-            put_s(l, &n, "zoom "); put_d10(l, &n, zm10); put_s(l, &n, "x  ");
-            put_d10(l, &n, (int)fps); put_s(l, &n, " fps  ");
-            if (rec) { u32 s = (u32)((now - rec_t0) / 1000000); put_s(l, &n, "REC "); put_int(l, &n, (int)(s / 60)); put_s(l, &n, s % 60 < 10 ? ":0" : ":"); put_int(l, &n, (int)(s % 60));
+            char l[220]; int n = 0;
+            put_int(l, &n, W); put_s(l, &n, "x"); put_int(l, &n, H);
+            put_s(l, &n, "  zoom "); put_d10(l, &n, zm10); put_s(l, &n, fill ? "x fill  " : "x fit  ");
+            put_d10(l, &n, (int)fps); put_s(l, &n, " fps "); put_int(l, &n, (int)ms_frame); put_s(l, &n, " ms  ");
+            if (rec) { u32 s2 = (u32)((now - rec_t0) / 1000000); put_s(l, &n, "REC "); put_int(l, &n, (int)(s2 / 60)); put_s(l, &n, s2 % 60 < 10 ? ":0" : ":"); put_int(l, &n, (int)(s2 % 60));
                        put_s(l, &n, " "); put_int(l, &n, (int)(rec_len >> 20)); put_s(l, &n, " MB  "); }
             if (now < msg_until && nm[0]) { put_s(l, &n, nm); put_s(l, &n, "  "); }
             else if (now < msg_until && msg[0]) { put_s(l, &n, msg); put_s(l, &n, "  "); }
-            put_s(l, &n, "1-5 +- zoom, arrows move, c centre, space photo, v video, q quit");
-            int maxc = (int)fb_width() / 8 - 2;
-            while (n < maxc && n < 190) l[n++] = ' ';
+            put_s(l, &n, "1-5 +- zoom, arrows, c centre, f fill/fit, space photo, v video, q quit");
+            int maxc = sw / 8 - 2;
+            while (n < maxc && n < 210) l[n++] = ' ';
             if (n > maxc) n = maxc;
             l[n] = 0;
             fb_text_px(8, (int)fb_height() - 18, l, rec ? 0xFF6060 : 0xFFFFFF, 0);
@@ -1307,7 +1418,13 @@ void camera_microscope(void)
         else if (k == K_UP) pan_y += (s_flip & 2) ? step : -step;
         else if (k == K_DOWN) pan_y += (s_flip & 2) ? -step : step;
         else if (k == 'c' || k == 'C') { pan_x = W / 2; pan_y = H / 2; }
+        else if (k == 'f' || k == 'F') { fill = !fill; for (u32 y = 0; y < (u32)shh; y++) { u32 *rw = fb_row((int)y); for (int x = 0; x < sw; x++) rw[x] = 0; } }
         else if (k == ' ' || k == 'p' || k == 'P' || k == 's' || k == 'S') {
+            /* the photo: what is on the screen, at the sensor's own resolution (up to 1920x1080) */
+            int pw = vcw, ph = vch;
+            if (pw > 1920) { ph = ph * 1920 / pw; pw = 1920; }
+            render_par(fphoto, (u32 *)RGB_BUF, pw, pw, ph, x0, y0, vcw, vch);
+            ow = pw; oh = ph;
             if (save_jpeg(0, nm) <= 0) { const char *x = "photo NOT saved"; int i = 0; while (x[i]) { msg[i] = x[i]; i++; } msg[i] = 0; nm[0] = 0; }
             msg_until = timer_us() + 3000000;
         }
@@ -1315,6 +1432,7 @@ void camera_microscope(void)
             if (!rec) { rec_start(); rec = 1; nm[0] = 0; }
             else {
                 rec = 0;
+                ow = vw; oh = vh;
                 fb_text_px(8, (int)fb_height() - 18, "saving video to the card...                       ", 0xFFFF00, 0);
                 rec_save(nm);
                 msg_until = timer_us() + 5000000;
@@ -1326,9 +1444,10 @@ void camera_microscope(void)
         if (pan_y < 0) pan_y = 0;
         if (pan_y > H) pan_y = H;
     }
-    if (rec) { fb_text_px(8, (int)fb_height() - 18, "saving video to the card...                       ", 0xFFFF00, 0); rec_save(0); }
+    if (rec) { ow = vw; oh = vh; fb_text_px(8, (int)fb_height() - 18, "saving video to the card...                       ", 0xFFFF00, 0); rec_save(0); }
     zm10 = 10;
     cam_stop();
+    vga_mode = old_mode; W = oldW; H = oldH;
     fb_hold(0); fb_redraw();
     in_show = 0;
 }
@@ -1467,8 +1586,8 @@ void camera_cmd(int argc, char **argv)
     if (!strcmp(a, "trace")) { trace = argc > 2 && !strcmp(argv[2], "off") ? 0 : 1; kprintf("step trace %s\n", trace ? "on" : "off"); return; }
     if (!strcmp(a, "mode") && argc > 2) {
         if (streaming) { kprintf("stop the camera first\n"); return; }
-        vga_mode = !strcmp(argv[2], "640") ? 1 : !strcmp(argv[2], "1296") ? 0 : 2;
-        W = vga_mode == 1 ? 640 : 1296; H = vga_mode == 1 ? 480 : vga_mode == 0 ? 972 : 976;
+        vga_mode = !strcmp(argv[2], "640") ? 1 : !strcmp(argv[2], "1296") ? 0 : !strcmp(argv[2], "1080") ? 3 : 2;
+        W = vga_mode == 1 ? 640 : vga_mode == 3 ? 1920 : 1296; H = vga_mode == 1 ? 480 : vga_mode == 0 ? 972 : vga_mode == 3 ? 1080 : 976;
         kprintf("sensor mode %dx%d (until reboot)\n", W, H);
         return;
     }
@@ -1580,7 +1699,7 @@ void camera_cmd(int argc, char **argv)
             "       cam ir <gpio>|off   IR light on a pin; cam ir_mode off|on|photo|auto (auto = only in the dark)\n"
             "       cam bars            the sensor's test colour bars (checks the link without the lens)\n"
             "       cam dump            receiver registers while streaming (compare with Linux: tools/camdump.py)\n"
-            "       cam mode 1296|fw|640 sensor mode (default 1296 = the Linux 1296x972 mode)\n"
+            "       cam mode 1296|1080|fw|640 sensor mode (default 1296 = 1296x972 whole picture; 1080 = 1920x1080 centre)\n"
             "       cam gate 0x15|0x155 lane clock gate (default 0x15 like Linux)\n"
             "       cam bayer auto|bggr|gbrg|grbg|rggb   colour order of the sensor pixels (if colours look wrong)\n"
             "       cam order sensor|rx start order (default rx = receiver first, like Linux)\n"

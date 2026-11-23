@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.108**
+Aktuálna verzia: **0.109**
 
 ## Podporované dosky
 
@@ -488,6 +488,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.106: IR prisvietenie kamery na GPIO (`cam ir <pin>`, `cam ir_mode off|on|photo|auto`; auto = len v tme), aj na stránke /camera.
 0.107: ultrazvukový senzor HC-SR04 pri dverách (`doorbell distance <trig> <echo> [cm]`): fotka len keď je niekto bližšie ako hranica (s radarom: oba).
 0.108: `microscope` - kamera na celú obrazovku so zoomom 1-5x (body snímača), šípky, fotka (medzera) a video MJPEG AVI (v).
+0.109: mikroskop v plnom rozlíšení na celú obrazovku: režim snímača 1920x1080 (aj `cam mode 1080`), každý bod obrazovky z bodov snímača na 3 jadrách, `f` = celá obrazovka / celý obraz, fotky do 1920x1080.
 
 ### Dátum a čas (NTP)
 
@@ -937,13 +938,16 @@ oneskorením (na spájkovanie pod kamerou), ovládanie len klávesnicou:
 | Kláves | |
 |---|---|
 | `1` ... `5` | zoom 1x ... 5x (`+` / `-` po 0,5) |
+| `f` | celá obrazovka (predvolené) / celý obraz |
 | šípky | posun priblíženej časti, `c` = späť do stredu |
 | medzera (alebo `p`) | fotka (JPEG do `/CAM/<dátum>/`) |
 | `v` | video štart / stop (MJPEG AVI, `/CAM/<dátum>/<čas>.AVI`; prehrá VLC, Windows aj mobil) |
 | `q` / Enter | koniec |
 
-Zoom berie vlastné body snímača (1296x972), takže 2x ukáže naozaj viac detailov, nie len zväčšený obraz; nad ~2,5x
-sa už len zväčšuje. Video sa počas nahrávania drží v RAM (do ~190 MB, pár minút) a na kartu sa zapíše po zastavení -
+Od 0.109 beží snímač v mikroskope v režime 1920x1080 (stred snímača, bez spájania bodov, 30 snímok/s) a každý bod
+obrazovky sa kreslí priamo z bodov snímača (prácu si delia jadrá 0, 2 a 3), na celú obrazovku; na 1080p obrazovke je
+pri 1x jeden bod snímača = jeden bod obrazovky, zoom ukazuje skutočné detaily. Fotky sa ukladajú v rozlíšení snímača
+z toho, čo je na obrazovke (do 1920x1080), videá v 960x540. Ak kamera v tom režime nedá obraz, sama sa vráti na 1296x972. Video sa počas nahrávania drží v RAM (do ~190 MB, pár minút) a na kartu sa zapíše po zastavení -
 počas nahrávania je obraz trochu pomalší (každá snímka sa kóduje do JPEG). Platia nastavenia z `cam set` / stránky
 `/camera` (expozícia, vyváženie bielej, zrkadlenie...). Na skutočný mikroskop daj na kameru makro / mikroskopový
 objektív (napr. mikroskopové objektívy Waveshare alebo Arducam pre kameru k Pi, alebo objektív M12 / C-mount na
