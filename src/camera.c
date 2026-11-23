@@ -677,9 +677,29 @@ static inline u32 px_win(const u16 *q, const int *o, int sh, u32 grc, u32 gbc, i
 
 /* raw frame -> RGB_BUF (ow x oh), white balance + exposure updated from it */
 static int g_sh, g_ob, g_og1, g_og2, g_orr;             /* from frame_stats: bit shift, Bayer offsets */
+static volatile int web_prep, web_defaults;                /* set by core 1 (web page), done by core 0 */
+static void web_defaults_now(void);
+/* 0.116: settings from the web page take effect on the NEXT frame, also while the microscope / cam live run
+ * (before, only the web preview's own loop applied them: brightness, contrast, saturation, hue, gamma and a
+ * fixed exposure / gain stayed as they were until the camera was started again) */
+static void apply_pending(void)
+{
+    if (web_defaults) { web_defaults = 0; web_defaults_now(); web_prep = 1; }
+    if (!web_prep) return;
+    web_prep = 0;
+    prep();
+    if (streaming && (s_exp10 || s_gain10)) {              /* a fixed exposure / gain: to the sensor now */
+        if (s_exp10) { ae_exp = s_exp10 * 1000 / LINE_US10; if (ae_exp > ae_maxl) ae_exp = ae_maxl; if (ae_exp < 2) ae_exp = 2; }
+        if (s_gain10) ae_gain = s_gain10 * 16 / 10;
+        sensor_exposure();
+        ae_skip = 2;
+    }
+    ae_ok = 0;                                             /* auto parts settle again (ev changed etc.) */
+}
 /* white balance + exposure from a raw frame; sets the g_ values the renderers use */
 static void frame_stats(const u16 *f)
 {
+    apply_pending();
 
     u32 orv = 0; u64 sr = 0, sg = 0, sb = 0; u32 cnt = 0;
     int ord = bayer >= 0 ? bayer : ((vga_mode == 0 || vga_mode == 3) ? 1 : 0);
@@ -1069,7 +1089,7 @@ static void dump_sensor(void)
 static volatile u32 web_req, web_done;
 static volatile int web_idx = -1, web_len[2], web_busy[2], web_err;
 static int web_lk;
-static volatile int web_prep, web_snap, web_defaults;
+static volatile int web_snap;
 static volatile u64 web_save_at;
 static u64 web_last;                                      /* core 0: time of the last served web picture */
 static int in_show, in_poll;
@@ -1189,8 +1209,8 @@ void camera_poll(void)
     if (in_show || in_poll || io_held()) return;
     in_poll = 1;
     if (!cfg_loaded) cfg_load();
-    if (web_defaults) { web_defaults = 0; web_defaults_now(); web_prep = 1; web_save_at = timer_us() + 100000; }
-    if (web_prep) { web_prep = 0; prep(); }
+    if (web_defaults) { web_save_at = timer_us() + 100000; }
+    apply_pending();
     if (web_save_at && timer_us() >= web_save_at) { web_save_at = 0; cfg_save(); }
     int want = __atomic_load_n(&web_req, __ATOMIC_ACQUIRE) != web_done || web_snap;
     if (want) {

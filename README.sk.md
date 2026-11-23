@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.115**
+Aktuálna verzia: **0.116**
 
 ## Podporované dosky
 
@@ -495,6 +495,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.113: s `cam flicker 50|60` automatická expozícia nikdy nejde pod jednu periódu siete (10 / 8,3 ms) - pri veľkom svetle radšej zníži zisk (blikanie lampy zmizne).
 0.114: mikroskop: Enter zastaví video namiesto ukončenia (koniec len `q`), ukladanie ukazuje priebeh (%, MB, zostávajúce sekundy).
 0.115: odšumenie kamery (`cam denoise on|off`, políčko na stránke, `d` v mikroskope); v mikroskope klávesy `,` `.` = ostrosť.
+0.116: každý posuvník stránky `/camera` sa prejaví na ďalšej snímke, aj počas mikroskopu / `cam live` (jas, kontrast, sýtosť, odtieň, gama a pevná expozícia / zisk predtým nie).
 
 ### Dátum a čas (NTP)
 

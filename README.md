@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.115**
+Current version: **0.116**
 
 ## Supported boards
 
@@ -499,6 +499,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.113: with `cam flicker 50|60` the auto exposure never goes below one mains period (10 / 8.3 ms) - a bright scene lowers the gain instead (lamp blinking gone).
 0.114: microscope: Enter stops a video instead of quitting (only `q` quits), saving shows progress (% , MB, seconds left).
 0.115: camera noise reduction (`cam denoise on|off`, checkbox on the page, `d` in the microscope); microscope keys `,` `.` = sharpness.
+0.116: every slider of the `/camera` page takes effect on the next frame, also while the microscope / `cam live` run (brightness, contrast, saturation, hue, gamma and a fixed exposure / gain did not).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
