@@ -254,3 +254,4 @@ Keys: `con_getkey()` decodes escape sequences into `K_UP`... (kbd.c sends the sa
   works on the 3B (v0.26 `sound test`); still to hear: a WAV file, the JSON API sound, video sound, I2S DAC
 - I2C / SPI / PWM in API and BASIC, interrupts + timer, editor search / go to line / save as
 - optional AArch32 port for Pi 2 v1.1 / Zero
+- owner's next idea (not started): a USB eyepiece camera for a telescope (most are UVC = one standard driver; ZWO/QHY astro cameras are proprietary - skip) + mount control (servos via PCA9685, steppers A4988/TMC2209 with sidereal tracking, or a SynScan/LX200 mount over serial). Needs isochronous IN in usb.c (not there), UVC probe/commit, MJPEG preferred (stb_image decodes it), then reuse the microscope view/photo/video/stamp/web. First ask the owner whether the camera is UVC (Windows Camera app without a driver, or `lsusb` on Linux). Still waiting for feedback: 0.119 time stamp, 0.117 /files page on hardware.
