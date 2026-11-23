@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.114**
+Aktuálna verzia: **0.115**
 
 ## Podporované dosky
 
@@ -494,6 +494,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.112: zoom mikroskopu v jemnejších krokoch do 2,5x: 1; 1,2; 1,5; 1,8; 2; 2,2; 2,5 (`+` / `-`, klávesy 1-7).
 0.113: s `cam flicker 50|60` automatická expozícia nikdy nejde pod jednu periódu siete (10 / 8,3 ms) - pri veľkom svetle radšej zníži zisk (blikanie lampy zmizne).
 0.114: mikroskop: Enter zastaví video namiesto ukončenia (koniec len `q`), ukladanie ukazuje priebeh (%, MB, zostávajúce sekundy).
+0.115: odšumenie kamery (`cam denoise on|off`, políčko na stránke, `d` v mikroskope); v mikroskope klávesy `,` `.` = ostrosť.
 
 ### Dátum a čas (NTP)
 
@@ -918,6 +919,7 @@ cam gamma on|off        gama 2 (off = lineárne, vzhľad z 0.102)
 cam flip h|v|hv|off     zrkadlenie obrazu
 cam quality 85          kvalita JPEG 10 .. 100
 cam sharpness 30        doostrenie 0 .. 200 % (0.110, predvolene 30)
+cam denoise on|off      odšumenie (0.115): malé rozdiely oproti susedom sa vyhladia, hrany ostanú
 cam flicker 50          frekvencia siete pre lampy 50|60|off: expozícia v celých 10 ms krokoch, nikdy kratšia = nebliká (0.110/0.113)
 cam defaults            všetko späť na predvolené
 ```
@@ -947,6 +949,8 @@ oneskorením (na spájkovanie pod kamerou), ovládanie len klávesnicou:
 | `+` / `-` | zoom 1 - 1,2 - 1,5 - 1,8 - 2 - 2,2 - 2,5x (0.112; klávesy `1` ... `7` skočia na krok) |
 | `f` | celá obrazovka (predvolené) / celý obraz |
 | `k` | počet jadier na kreslenie: 3 / 1 / 2 (aj `cam cores 1-3` a na stránke `/camera`) |
+| `,` / `.` | ostrosť - / + 10 % (0.115) |
+| `d` | odšumenie zapnúť / vypnúť (0.115) |
 | šípky | posun priblíženej časti, `c` = späť do stredu |
 | medzera (alebo `p`) | fotka (JPEG do `/CAM/<dátum>/`) |
 | `v` | video štart / stop (MJPEG AVI, `/CAM/<dátum>/<čas>.AVI`; prehrá VLC, Windows aj mobil); zastaví ho aj Enter |

@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.114**
+Current version: **0.115**
 
 ## Supported boards
 
@@ -498,6 +498,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.112: microscope zoom in finer steps up to 2.5x: 1, 1.2, 1.5, 1.8, 2, 2.2, 2.5 (`+` / `-`, keys 1-7).
 0.113: with `cam flicker 50|60` the auto exposure never goes below one mains period (10 / 8.3 ms) - a bright scene lowers the gain instead (lamp blinking gone).
 0.114: microscope: Enter stops a video instead of quitting (only `q` quits), saving shows progress (% , MB, seconds left).
+0.115: camera noise reduction (`cam denoise on|off`, checkbox on the page, `d` in the microscope); microscope keys `,` `.` = sharpness.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -927,6 +928,7 @@ cam gamma on|off        gamma 2 (off = linear, the 0.102 look)
 cam flip h|v|hv|off     mirror the picture
 cam quality 85          JPEG quality 10 .. 100
 cam sharpness 30        sharpening 0 .. 200 % (0.110, default 30)
+cam denoise on|off      noise reduction (0.115): small differences from the neighbours are smoothed, edges stay
 cam flicker 50          mains frequency of the lamps 50|60|off: exposure in whole 10 ms steps, never shorter = no flicker (0.110/0.113)
 cam defaults            all back to the defaults
 ```
@@ -956,6 +958,8 @@ the lowest delay (made for soldering under the camera), keyboard only:
 | `+` / `-` | zoom 1 - 1.2 - 1.5 - 1.8 - 2 - 2.2 - 2.5x (0.112; keys `1` ... `7` jump to a step) |
 | `f` | fill the whole screen (default) / fit the whole picture |
 | `k` | cores that draw: 3 / 1 / 2 (also `cam cores 1-3` and on the `/camera` page) |
+| `,` / `.` | sharpness - / + 10 % (0.115) |
+| `d` | noise reduction on / off (0.115) |
 | arrows | move the zoomed area, `c` = back to the centre |
 | space (or `p`) | photo (JPEG to `/CAM/<date>/`) |
 | `v` | video start / stop (MJPEG AVI, `/CAM/<date>/<time>.AVI`; VLC, Windows and phones play it); Enter also stops it |
