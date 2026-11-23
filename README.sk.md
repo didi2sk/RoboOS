@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.116**
+Aktuálna verzia: **0.117**
 
 ## Podporované dosky
 
@@ -496,6 +496,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.114: mikroskop: Enter zastaví video namiesto ukončenia (koniec len `q`), ukladanie ukazuje priebeh (%, MB, zostávajúce sekundy).
 0.115: odšumenie kamery (`cam denoise on|off`, políčko na stránke, `d` v mikroskope); v mikroskope klávesy `,` `.` = ostrosť.
 0.116: každý posuvník stránky `/camera` sa prejaví na ďalšej snímke, aj počas mikroskopu / `cam live` (jas, kontrast, sýtosť, odtieň, gama a pevná expozícia / zisk predtým nie).
+0.117: správca súborov na webe: `/files` a `/microscope` (zobraziť, stiahnuť, zmazať fotky a videá na karte).
 
 ### Dátum a čas (NTP)
 
@@ -965,6 +966,13 @@ počas nahrávania je obraz trochu pomalší (každá snímka sa kóduje do JPEG
 `/camera` (expozícia, vyváženie bielej, zrkadlenie...). Na skutočný mikroskop daj na kameru makro / mikroskopový
 objektív (napr. mikroskopové objektívy Waveshare alebo Arducam pre kameru k Pi, alebo objektív M12 / C-mount na
 kamere s takým uchytením) - zoom tu je digitálny.
+
+**Súbory na karte cez web (0.117):** `http://<doska>/files` (alebo `/microscope` = rovno `/CAM` s fotkami
+a videami) ukáže priečinok, otvára podpriečinky, súbor **zobrazí** / **stiahne**, **zmaže** jeden alebo všetky
+zaškrtnuté. Rovnaký token / prihlásenie ako stránka `/camera`. Súbory priamo v koreni karty (zavádzacie
+a nastavenia) sa z webu nemažú; priečinok sa zmaže, len keď je prázdny. API: `GET /api/files?path=/CAM`,
+`GET /api/file?path=/CAM/X.JPG` (`&dl=1` = ako stiahnutie), `POST /api/files {"delete":"/CAM/X.JPG"}`.
+Veľké video sa najprv načíta z karty do pamäte, preto sťahovanie chvíľu trvá, kým začne.
 
 **IR prisvietenie (0.106):** IR LED alebo IR lampa spínaná cez GPIO (cez tranzistor / MOSFET / relé - nie priamo
 z pinu): `cam ir 22` (pin, `cam ir off` = žiadne), `cam ir_mode off|on|photo|auto` (photo = svieti, keď kamera beží,

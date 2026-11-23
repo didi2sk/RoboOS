@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.116**
+Current version: **0.117**
 
 ## Supported boards
 
@@ -500,6 +500,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.114: microscope: Enter stops a video instead of quitting (only `q` quits), saving shows progress (% , MB, seconds left).
 0.115: camera noise reduction (`cam denoise on|off`, checkbox on the page, `d` in the microscope); microscope keys `,` `.` = sharpness.
 0.116: every slider of the `/camera` page takes effect on the next frame, also while the microscope / `cam live` run (brightness, contrast, saturation, hue, gamma and a fixed exposure / gain did not).
+0.117: file manager on the web: `/files` and `/microscope` (view, download, delete photos and videos on the card).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -975,6 +976,13 @@ when stopped - during recording the picture is a little slower (every frame is J
 `cam set` / the `/camera` page (exposure, white balance, flip...) apply here too. For a real microscope use a
 macro / microscope lens on the camera (e.g. the Waveshare or Arducam microscope lenses for the Pi camera, or an
 M12 / C-mount lens on a camera board with that mount) - the zoom here is digital.
+
+**Files on the card over the web (0.117):** `http://<board>/files` (or `/microscope` = straight to `/CAM`
+with the photos and videos) lists a folder, opens sub-folders, **view** / **download** a file, **delete** one or
+all ticked ones. Same token / login as the `/camera` page. Files directly in the root (boot and settings files)
+are not deleted from the web; a folder is deleted only when empty. API: `GET /api/files?path=/CAM`,
+`GET /api/file?path=/CAM/X.JPG` (`&dl=1` = as a download), `POST /api/files {"delete":"/CAM/X.JPG"}`.
+A big video is first read from the card into memory, so its download starts after a while.
 
 **IR light (0.106):** IR LEDs or an IR lamp switched by a GPIO (through a transistor / MOSFET / relay - not
 straight from the pin): `cam ir 22` (the pin, `cam ir off` = none), `cam ir_mode off|on|photo|auto`

@@ -274,7 +274,13 @@ void doorbell_poll(void);                      /* core 0, con_trygetc */
 int  doorbell_enabled(void);
 int  doorbell_radar(void);                     /* the radar GPIO, 0 = none */
 void doorbell_cmd(int argc, char **argv);
-extern const char camera_page[];               /* campage.c: GET /camera */
+extern const char camera_page[];
+extern const char files_page[];                /* filespage.c: GET /files, /microscope (0.117) */
+int  files_request(int type, const char *path); /* core 1: 1 list, 2 read, 3 delete; 0 ok, -1 busy, -2 bad path */
+int  files_take(const u8 **p, u32 *len, int *type, int *err);
+void files_release(void);
+const char *files_path(void);
+void files_poll(void);                         /* core 0, con_trygetc */               /* campage.c: GET /camera */
 
 /* thermal.c - AMG8833 Grid-EYE 8x8 thermal camera at I2C 0x69 */
 struct thermal_values { int pix[64], min_c100, max_c100, avg_c100, median_c100, therm_c100, warm, present; };
