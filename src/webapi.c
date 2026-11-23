@@ -612,6 +612,15 @@ logged_in:;
         put("}\n");
         return olen;
     }
+    if (!strcmp(path, "/api/files")) {                    /* 0.117: list (GET ?path=) / delete (POST) - files.c on core 0 */
+        if (get) return -3;
+        if (post) return -4;
+        return fail(405, "use GET (list) or POST {\"delete\":\"/DIR/FILE\"}");
+    }
+    if (!strcmp(path, "/api/file")) {                     /* 0.117: GET ?path= = download (POST /api/file = upload) */
+        if (!get) return fail(405, "use GET ?path=/DIR/FILE (POST uploads)");
+        return -5;
+    }
     if (!strcmp(path, "/api/camera.jpg")) {               /* 0.104: ip.c sends the picture, camera.c takes it on core 0 */
         if (!get) return fail(405, "use GET");
         return -2;

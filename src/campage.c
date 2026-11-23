@@ -25,7 +25,7 @@ const char camera_page[] =
 "<div id=\"wrap\"><div id=\"pv\"><img id=\"im\" alt=\"\">"
 "<div><label><input type=\"checkbox\" id=\"live\" checked> live</label> "
 "<button onclick=\"snap()\">Save photo</button> "
-"<a id=\"dl\" download=\"camera.jpg\" style=\"color:#8cf\">download this picture</a></div>"
+"<a id=\"dl\" download=\"camera.jpg\" style=\"color:#8cf\">download this picture</a> &nbsp; <a href=\"/microscope\" style=\"color:#8cf\">photos &amp; videos on the card</a></div>"
 "<div id=\"st\"></div><div id=\"msg\"></div></div>"
 "<div id=\"side\">"
 "<div class=\"row\"><span>exposure</span><input type=\"range\" id=\"exposure\" min=\"1\" max=\"356\" step=\"1\"><span class=\"v\" id=\"exposure_v\"></span></div>"

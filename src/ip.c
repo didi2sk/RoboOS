@@ -513,6 +513,7 @@ static void build_page(void)
     add("<tr><td>JSON API</td><td>"); add(api_token()[0] ? "on (/api/..., Bearer token)" : "off"); add("</td></tr>");
     add("<tr><td>HTTPS</td><td>"); add(https_pcb ? "on" : "off"); add("</td></tr>");
     add("<tr><td>camera</td><td><a style=\"color:#8cf\" href=\"/camera\">/camera</a></td></tr>");
+    add("<tr><td>files</td><td><a style=\"color:#8cf\" href=\"/files\">/files</a> &nbsp; <a style=\"color:#8cf\" href=\"/microscope\">/microscope</a></td></tr>");
     if (page_user[0]) { add("<tr><td>logged in</td><td>"); add(page_user); add(page_role == 2 ? " (admin)" : " (view)"); add("</td></tr>"); }
     {
         char tb[32];
@@ -540,7 +541,8 @@ struct http_conn {
     u32 slen, soff, cam_ticket;
     u64 cam_since;
     const u8 *sout;
-    char shdr[200];
+    char shdr[360];
+    int fdl;                                               /* 0.117: download (attachment) instead of view */
     char req[HTTP_REQ + 1];
 };
 static struct http_conn hconn[HTTP_CONNS];
@@ -555,7 +557,9 @@ static void conn_free(struct http_conn *c)
         if (upl.state == 1) { upl.state = 0; kprintf("\n[UPDATE] the upload broke off - nothing written\n"); }
     }
     c->upload = 0;
-    if (c->cam_hold) { camera_jpeg_release(c->sout); c->cam_hold = 0; }
+    if (c->cam_hold == 1) camera_jpeg_release(c->sout);
+    if (c->cam_hold == 2 || c->cam_wait == 2) files_release();   /* 0.117: the files slot (sent, or the client left) */
+    c->cam_hold = 0;
     c->cam_wait = 0; c->streaming = 0;
     if (c->tls) { tls_close(c->tls); c->tls = 0; }
     if (c->pin) { pbuf_free(c->pin); c->pin = 0; }
@@ -758,7 +762,8 @@ static int http_try(struct tcp_pcb *pcb, struct http_conn *c)
     char *cl = header(c->req, "Content-Length");
     if (cl) while (*cl >= '0' && *cl <= '9' && need < 0x10000000) need = need * 10 + (*cl++ - '0');
     int up_req = !strncmp(c->req, "POST /api/update", 16) || !strncmp(c->req, "PUT /api/update", 15)
-              || !strncmp(c->req, "POST /api/file", 14) || !strncmp(c->req, "PUT /api/file", 13);
+              || ((!strncmp(c->req, "POST /api/file", 14) && (c->req[14] == ' ' || c->req[14] == '?'))
+              ||  (!strncmp(c->req, "PUT /api/file", 13) && (c->req[13] == ' ' || c->req[13] == '?')));   /* not /api/files (0.117) */
     if (!up_req && need > HTTP_REQ - (int)(body - c->req)) { plen = 0; add("HTTP/1.0 413 Too Large\r\nConnection: close\r\n\r\n"); return 1; }
     if (!up_req && have < need) return 0;
     if (have > need) have = need;
@@ -833,6 +838,29 @@ static int http_try(struct tcp_pcb *pcb, struct http_conn *c)
             if (auth) { char *e = strstr(auth, "\r\n"); if (e) *e = 0; }
             body[need] = 0;
             plen = api_handle(m, path, auth, role, body, need, from, page, sizeof(page));
+            if (plen <= -3 && plen >= -5) {              /* 0.117: files on the card (files.c, core 0) */
+                char fp[96] = "", dl[4] = "";
+                int type = plen == -3 ? 1 : plen == -5 ? 2 : 3;
+                if (type == 3) {                         /* body {"delete":"/CAM/X.JPG"} */
+                    char *d = strstr(body, "\"delete\"");
+                    if (d) { d = strchr(d + 8, '"'); }
+                    if (d) { d++; int k = 0; while (d[k] && d[k] != '"' && k < 95) { fp[k] = d[k]; k++; } fp[k] = 0; }
+                } else if (!query || !qparam(query, "path", fp, sizeof(fp))) {
+                    if (type == 1) { fp[0] = '/'; fp[1] = 0; }
+                }
+                if (query) qparam(query, "dl", dl, sizeof(dl));
+                int r = files_request(type, fp);
+                if (r) {
+                    plen = 0;
+                    add(r == -1 ? "HTTP/1.0 503 Busy\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"ok\":false,\"error\":\"the card is busy with another web request - try again\"}\n"
+                                : "HTTP/1.0 400 Bad Request\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"ok\":false,\"error\":\"give path=/DIR/FILE (absolute, no ..)\"}\n");
+                    return 1;
+                }
+                c->fdl = dl[0] == '1';
+                c->cam_wait = 2;
+                c->cam_since = timer_us();
+                return 2;
+            }
             if (plen == -2) {                            /* GET /api/camera.jpg: core 0 takes the picture */
                 c->cam_ticket = camera_jpeg_want();
                 c->cam_wait = 1;
@@ -840,6 +868,10 @@ static int http_try(struct tcp_pcb *pcb, struct http_conn *c)
                 return 2;
             }
         }
+    } else if (!strcmp(path, "/files") || !strcmp(path, "/microscope")) {   /* 0.117: file manager page */
+        stream_setup(c, "HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+                     files_page, (u32)strlen(files_page));
+        return 3;
     } else if (!strcmp(path, "/camera")) {
         stream_setup(c, "HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
                      camera_page, (u32)strlen(camera_page));
@@ -976,6 +1008,41 @@ static void http_cam_tick(void)
     for (int i = 0; i < HTTP_CONNS; i++) {
         struct http_conn *c = &hconn[i];
         if (!c->used || !c->cam_wait) continue;
+        if (c->cam_wait == 2) {                          /* 0.117: a files job */
+            const u8 *fp = 0; u32 fl = 0; int ft = 0, fe = 0;
+            int got = files_take(&fp, &fl, &ft, &fe);
+            if (!got && timer_us() - c->cam_since < 600000000ULL) continue;
+            c->cam_wait = 0;
+            char h[360]; int n = 0;
+            #define HA(x) do { const char *a_ = (x); while (*a_ && n < 350) h[n++] = *a_++; } while (0)
+            if (!got) {
+                files_release();
+                stream_setup(c, "HTTP/1.0 504 Timeout\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n", "{\"ok\":false,\"error\":\"the card did not answer\"}\n", 44);
+            } else {
+                if (fe) {
+                    HA("HTTP/1.0 "); char t[8]; int k = 0, v = fe; do t[k++] = (char)('0' + v % 10); while ((v /= 10)); while (k) h[n++] = t[--k];
+                    HA(" Error\r\nContent-Type: application/json");
+                } else if (ft == 2) {
+                    const char *pth = files_path(), *nm = pth, *ext = 0;
+                    for (const char *q = pth; *q; q++) { if (*q == '/') nm = q + 1; if (*q == '.') ext = q + 1; }
+                    char e3[5] = ""; for (int i = 0; ext && i < 4 && ext[i]; i++) e3[i] = (char)(ext[i] | 0x20);
+                    HA("HTTP/1.0 200 OK\r\nContent-Type: ");
+                    HA(!strcmp(e3, "jpg") || !strcmp(e3, "jpeg") ? "image/jpeg" : !strcmp(e3, "png") ? "image/png" : !strcmp(e3, "bmp") ? "image/bmp" :
+                       !strcmp(e3, "avi") ? "video/x-msvideo" : !strcmp(e3, "wav") ? "audio/wav" : !strcmp(e3, "mpg") ? "video/mpeg" :
+                       !strcmp(e3, "txt") || !strcmp(e3, "csv") || !strcmp(e3, "bas") ? "text/plain; charset=utf-8" : "application/octet-stream");
+                    HA("\r\nContent-Disposition: "); HA(c->fdl ? "attachment" : "inline"); HA("; filename=\""); HA(nm); HA("\"");
+                    HA("\r\nContent-Length: "); char t[12]; int k = 0; u32 v = fl; do t[k++] = (char)('0' + v % 10); while ((v /= 10)); while (k) h[n++] = t[--k];
+                } else HA("HTTP/1.0 200 OK\r\nContent-Type: application/json");
+                HA("\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n");
+                h[n] = 0;
+                stream_setup(c, h, fp, fl);
+                c->cam_hold = 2;
+            }
+            #undef HA
+            if (c->tls) { c->closing = 3; tls_pump(c->pcb, c); }
+            else stream_plain(c->pcb, c);
+            continue;
+        }
         const u8 *p = 0; u32 len = 0;
         int r = camera_jpeg_take(c->cam_ticket, &p, &len);
         if (!r && timer_us() - c->cam_since < 8000000ULL) continue;
