@@ -540,7 +540,7 @@ static u16 *next_frame(u32 ms)
 #define LINE_US10 (vga_mode == 4 ? 325 : vga_mode == 3 ? 276 : vga_mode == 1 ? 318 : 232)   /* one sensor line in 0.1 us: HTS / pixel rate (Linux modes) */
 static int s_exp10, s_gain10, s_ev, s_wb, s_wbr = 100, s_wbb = 100;   /* exposure ms x10 / gain x10 (0 = auto); wb 0 auto 1 lock 2 manual */
 static int s_bri, s_con, s_sat = 100, s_hue, s_gamma = 1, s_flip, s_q = 85;
-static int s_sharp = 30, s_flicker = 50, s_cores = 3, s_denoise, s_mmode;   /* 0.118: s_mmode microscope sensor mode 0 1080 / 1 full / 2 1296 */   /* 0.115: s_denoise 0/1 */   /* 0.111: s_cores = cores that draw (1-3) */                   /* 0.110: sharpness 0-100 %, mains Hz for the exposure (0 = off) */
+static int s_sharp = 30, s_flicker = 50, s_cores = 3, s_denoise, s_mmode, s_stamp = 1;   /* 0.119: s_stamp = date + time in photos / videos */   /* 0.118: s_mmode microscope sensor mode 0 1080 / 1 full / 2 1296 */   /* 0.115: s_denoise 0/1 */   /* 0.111: s_cores = cores that draw (1-3) */                   /* 0.110: sharpness 0-100 %, mains Hz for the exposure (0 = off) */
 static int cfg_loaded;
 static u32 gr_cur = 256, gb_cur = 256;                    /* white balance gains x256 */
 static int ae_exp = 1406, ae_gain = 64, ae_maxl = 1534, ae_skip, ae_ok;   /* lines, gain x16 */
@@ -920,6 +920,7 @@ static int cfg_text(char *b)
     put_s(b, &n, "\nsharpness "); put_int(b, &n, s_sharp);
     put_s(b, &n, "\ncores "); put_int(b, &n, s_cores);
     put_s(b, &n, "\ndenoise "); put_s(b, &n, s_denoise ? "on" : "off");
+    put_s(b, &n, "\nstamp "); put_s(b, &n, s_stamp ? "on" : "off");
     put_s(b, &n, "\nmicro_mode "); put_s(b, &n, s_mmode == 1 ? "full" : s_mmode == 2 ? "1296" : "1080");
     put_s(b, &n, "\nflicker "); if (s_flicker) put_int(b, &n, s_flicker); else put_s(b, &n, "off");
     put_s(b, &n, "\nir "); if (ir_pin) put_int(b, &n, ir_pin); else put_s(b, &n, "off");
@@ -976,6 +977,7 @@ static int set_one(const char *k, const char *v, const char *v2)
     if (!strcmp(k, "ir_mode")) { if (!strcmp(v, "off")) ir_mode = 0; else if (!strcmp(v, "on")) ir_mode = 1; else if (!strcmp(v, "photo")) ir_mode = 2;
                                  else if (!strcmp(v, "auto")) ir_mode = 3; else return -1; ir_dark = 0; ir_changed = 0; return 0; }
     if (!strcmp(k, "ir_active")) { if (strcmp(v, "high") && strcmp(v, "low")) return -1; ir_low = !strcmp(v, "low"); ir_now = -1; return 0; }
+    if (!strcmp(k, "stamp")) { if (strcmp(v, "on") && strcmp(v, "off")) return -1; s_stamp = !strcmp(v, "on"); return 0; }
     if (!strcmp(k, "micro_mode")) { if (!strcmp(v, "1080")) s_mmode = 0; else if (!strcmp(v, "full")) s_mmode = 1; else if (!strcmp(v, "1296")) s_mmode = 2; else return -1; return 0; }
     if (!strcmp(k, "denoise")) { if (strcmp(v, "on") && strcmp(v, "off")) return -1; s_denoise = !strcmp(v, "on"); return 0; }
     if (!strcmp(k, "cores")) { if (num_arg(v, 0, &x) || x < 1 || x > 3) return -1; s_cores = x; return 0; }
@@ -1013,6 +1015,38 @@ static void cfg_load(void)
         }
     }
     prep();
+}
+
+/* 0.119: the date and time into the picture (bottom right, white on a darkened box), before it is
+ * encoded - photos, videos, Home Assistant photos. Size grows with the picture; nothing without the clock. */
+extern const unsigned char font8x16[95][16];
+static void stamp(u32 *img, int w, int h)
+{
+    if (!s_stamp) return;
+    u64 t = clock_now();
+    if (!t) return;
+    char txt[32];
+    clock_format(txt, t, 0);                               /* "YYYY-MM-DD HH:MM:SS" */
+    int n = 0; while (txt[n]) n++;
+    int sc = w >= 1800 ? 3 : w >= 900 ? 2 : 1;
+    int tw = n * 8 * sc, th = 16 * sc, m = 6 * sc;
+    int x0 = w - tw - 2 * m, y0 = h - th - 2 * m;
+    if (x0 < 0 || y0 < 0) return;
+    for (int y = y0; y < y0 + th + 2 * m; y++) {           /* darken the box (half) */
+        u32 *row = img + (long)y * w;
+        for (int x = x0; x < x0 + tw + 2 * m; x++) row[x] = (row[x] >> 1) & 0x7F7F7F;
+    }
+    for (int i = 0; i < n; i++) {
+        u8 ch = (u8)txt[i];
+        const unsigned char *g = font8x16[(ch >= 32 && ch < 127) ? ch - 32 : 0];
+        for (int gy = 0; gy < 16; gy++) for (int gx = 0; gx < 8; gx++) {
+            if (!(g[gy] & (0x80 >> gx))) continue;
+            for (int sy = 0; sy < sc; sy++) {
+                u32 *row = img + (long)(y0 + m + gy * sc + sy) * w + x0 + m + (i * 8 + gx) * sc;
+                for (int sx = 0; sx < sc; sx++) row[sx] = 0xFFFFFF;
+            }
+        }
+    }
 }
 
 /* ---- JPEG to the card ---- */
@@ -1061,6 +1095,7 @@ static int save_jpeg(const char *path, char *name_out)
     if (path) { if (path_abs(path, p, sizeof(p))) { kprintf("bad file name\n"); return -1; } }
     else if (auto_name(p)) { kprintf("no free file name in /CAM\n"); return -1; }
     u64 t0 = timer_us();
+    stamp((u32 *)RGB_BUF, ow, oh);
     int n = jpeg_encode((const u32 *)RGB_BUF, ow, oh, ow, s_q, (u8 *)JPG_BUF, JPG_MAX);
     if (n <= 0) { kprintf("JPEG encoding failed (%d)\n", n); return -1; }
     u32 enc_ms = (u32)((timer_us() - t0) / 1000);
@@ -1197,6 +1232,7 @@ int camera_take(int save, int send, char *name_out)
     if (send) {
         if (!mqtt_connected()) { r = -5; goto out; }
         if (mqtt_photo_busy()) { r = -6; goto out; }
+        if (!save) stamp((u32 *)RGB_BUF, ow, oh);           /* (save_jpeg above already stamped it) */
         int n = jpeg_encode((const u32 *)RGB_BUF, ow, oh, ow, s_q, (u8 *)MQTT_JPG, JPG_MAX);
         if (n <= 0) { r = -3; goto out; }
         int m = mqtt_send_photo((const u8 *)MQTT_JPG, (u32)n);
@@ -1318,6 +1354,7 @@ int camera_web_json(char *b, int max)
     S(",\"sharpness\":"); put_int(b, &n, s_sharp);
     S(",\"cores\":"); put_int(b, &n, s_cores);
     S(",\"denoise\":"); S(s_denoise ? "true" : "false");
+    S(",\"stamp\":"); S(s_stamp ? "true" : "false");
     S(",\"flicker\":"); put_int(b, &n, s_flicker);
     S(",\"ir_pin\":"); put_int(b, &n, ir_pin);
     S(",\"ir_mode\":\""); S(ir_mode == 0 ? "off" : ir_mode == 1 ? "on" : ir_mode == 2 ? "photo" : "auto"); S("\"");
@@ -1360,6 +1397,7 @@ static int rec_frame(void)
 {
     u8 *b = (u8 *)REC_BUF;
     if (rec_len + 8 + 2 * 1024 * 1024 + 16 * (rec_frames + 2) > REC_MAX || rec_frames >= 500000) return -1;
+    stamp((u32 *)RGB_BUF, ow, oh);
     int n = jpeg_encode((const u32 *)RGB_BUF, ow, oh, ow, s_q, b + rec_len + 8, 2 * 1024 * 1024);
     if (n <= 0) return 0;
     w4c(b + rec_len, "00dc"); w32(b + rec_len + 4, (u32)n);
@@ -1794,7 +1832,7 @@ void camera_cmd(int argc, char **argv)
         for (char *l = b; *l; ) { char *e = l; while (*e && *e != '\n') e++; char sv = *e; *e = 0; kprintf("  %s\n", l); *e = sv; l = *e ? e + 1 : e; }
         kprintf("change: cam exposure auto|<ms>, gain auto|<x>, ev <-3..3>, wb auto|lock|<r%%> <b%%>,\n"
                 "        brightness|contrast <-100..100>, saturation <0..300>, hue <-180..180>,\n"
-                "        gamma on|off, flip off|h|v|hv, quality <10..100>, sharpness <0..200>, flicker 50|60|off, cores 1-3, denoise on|off; cam defaults\n"
+                "        gamma on|off, flip off|h|v|hv, quality <10..100>, sharpness <0..200>, flicker 50|60|off, cores 1-3, denoise on|off, stamp on|off; cam defaults\n"
                 "IR light: cam ir <gpio>|off, cam ir_mode off|on|photo|auto, cam ir_active high|low\n");
         return;
     }

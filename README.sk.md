@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.118**
+Aktuálna verzia: **0.119**
 
 ## Podporované dosky
 
@@ -496,6 +496,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.114: mikroskop: Enter zastaví video namiesto ukončenia (koniec len `q`), ukladanie ukazuje priebeh (%, MB, zostávajúce sekundy).
 0.115: odšumenie kamery (`cam denoise on|off`, políčko na stránke, `d` v mikroskope); v mikroskope klávesy `,` `.` = ostrosť.
 0.116: každý posuvník stránky `/camera` sa prejaví na ďalšej snímke, aj počas mikroskopu / `cam live` (jas, kontrast, sýtosť, odtieň, gama a pevná expozícia / zisk predtým nie).
+0.119: časová značka (dátum + čas) vo fotkách, videách a fotkách pre Home Assistant (`cam stamp on|off`, políčko na stránke `/camera`).
 0.118: v mikroskope kláves `w` = režim kamery: 1920x1080 stred / 2592x1944 celý snímač (ostrý, ~15 snímok/s) / 1296x972 celý (rýchly); fotky až v plnom 2592x1944; `cam mode full`.
 0.117: správca súborov na webe: `/files` a `/microscope` (zobraziť, stiahnuť, zmazať fotky a videá na karte).
 
@@ -923,6 +924,7 @@ cam flip h|v|hv|off     zrkadlenie obrazu
 cam quality 85          kvalita JPEG 10 .. 100
 cam sharpness 30        doostrenie 0 .. 200 % (0.110, predvolene 30)
 cam denoise on|off      odšumenie (0.115): malé rozdiely oproti susedom sa vyhladia, hrany ostanú
+cam stamp on|off        dátum + čas v rohu fotiek a videí (0.119, predvolene zapnuté; treba hodiny: NTP / time set)
 cam flicker 50          frekvencia siete pre lampy 50|60|off: expozícia v celých 10 ms krokoch, nikdy kratšia = nebliká (0.110/0.113)
 cam defaults            všetko späť na predvolené
 ```
