@@ -57,7 +57,22 @@ static int W = 1296, H = 972;                          /* 0.99: the Linux 1296x9
 static int streaming, cur_buf;
 static int web_stream;                                   /* 0.104: started by a web request */
 static int fake;                                         /* 0.104: `cam test on` = a made-up picture (QEMU, no camera) */
+/* 0.106: IR light (LEDs / IR lamp through a transistor or relay) on a GPIO: off, on, photo (while the camera
+ * runs), auto (while the camera runs AND it is dark: exposure at its limit and gain >= 8x; off again when
+ * bright even with the light: exposure < 1/4 of the limit at gain 1x; 20 s between changes) */
+static int ir_pin, ir_mode, ir_low, ir_now = -1, ir_dark;
+static u64 ir_changed;
+static void ir_apply(void)
+{
+    if (!ir_pin) return;
+    int want = ir_mode == 1 || (ir_mode == 2 && streaming) || (ir_mode == 3 && streaming && ir_dark);
+    if (want == ir_now) return;
+    gpio_func(ir_pin, 1);
+    gpio_set(ir_pin, want ^ ir_low);
+    ir_now = want;
+}
 static u32 fake_n;
+static int fake_dark;                                    /* `cam test dark`: a night scene (the IR light makes it 15x brighter) */
 static u32 n_fs, n_fe, sta_or;
 
 static void settle(void)
@@ -366,7 +381,7 @@ static int trace = 0;                                    /* 0.90: print each ste
 static int cam_start(void)
 {
     if (streaming) return 0;
-    if (fake) { streaming = 1; n_fs = n_fe = sta_or = 0; return 0; }
+    if (fake) { streaming = 1; n_fs = n_fe = sta_or = 0; ir_apply(); return 0; }
     if (!sensor && !detect(0)) { kprintf("no camera sensor found ('cam' shows why)\n"); return -1; }
     if (sensor != 1) { kprintf("only the OV5647 can give a picture so far\n"); return -1; }
     /* 0.101: the FIRMWARE domain number of UNICAM1 is 14 (Linux raspberrypi-power: DT index 13 + 1; Circle
@@ -402,19 +417,21 @@ static int cam_start(void)
     }
     n_fs = n_fe = sta_or = 0;
     streaming = 1;
+    ir_apply();
     return 0;
 }
 
 static void cam_stop(void)
 {
     if (!streaming) return;
-    if (fake) { streaming = 0; web_stream = 0; return; }
+    if (fake) { streaming = 0; web_stream = 0; ir_apply(); return; }
     sensor_stream(0);
     unicam_stop();
     cam1_clock(0);
     { u32 pd[2] = { 14, 0 }; mbox_prop(0x00038030, pd, 2); }    /* UNICAM1 power off */
     streaming = 0;
     web_stream = 0;
+    ir_apply();
 }
 
 /* wait for the next complete frame; returns its buffer or 0 (timeout ms) */
@@ -437,6 +454,7 @@ static u16 *fake_frame(void)
             r = r * 6 / 10;                                /* a colour cast for the white balance */
             u32 v = (y & 1) ? ((x & 1) ? g : r) : ((x & 1) ? b : g);   /* GBRG */
             v = (u32)((u64)v * k / (1406u * 64u) / 5);
+            if (fake_dark) v = ir_now > 0 ? v * 3 / 4 : v / 20;
             row[x] = (u16)(v > 1023 ? 1023 : v);
         }
     }
@@ -509,6 +527,8 @@ static void prep(void)
     m_11 = hc * sat >> 8; m_12 = -hs * sat >> 8; m_21 = hs * sat >> 8; m_22 = hc * sat >> 8;
     m_cf = (100 + s_con) * 256 / 100; m_bo = s_bri * 128 / 100;
     plain = !s_bri && !s_con && s_sat == 100 && !s_hue;
+    ir_now = -1;                                           /* the pin may have changed: set it again */
+    ir_apply();
 }
 
 static void sensor_exposure(void)
@@ -558,6 +578,16 @@ static void ae_step(u32 mean)
     if (e < 2) e = 2;
     if (g < 16) g = 16;
     if (g > 255) g = 255;
+    if (ir_mode == 3) {                                    /* IR auto: is it dark? */
+        u64 now = timer_us();
+        int dark = ir_dark;
+        if (!ir_dark && e >= ae_maxl && g >= 128) dark = 1;
+        else if (ir_dark && g <= 16 && e < ae_maxl / 4) dark = 0;
+        if (dark != ir_dark && (!ir_changed || now - ir_changed > 20000000ULL)) {
+            ir_dark = dark; ir_changed = now; ir_apply();
+            ae_ok = 0;
+        }
+    }
     if (e == ae_exp && g == ae_gain) { ae_ok++; return; }   /* at a limit */
     ae_exp = e; ae_gain = g;
     sensor_exposure();
@@ -664,13 +694,16 @@ static int cfg_text(char *b)
     put_s(b, &n, "\ngamma "); put_s(b, &n, s_gamma ? "on" : "off");
     put_s(b, &n, "\nflip "); put_s(b, &n, s_flip == 0 ? "off" : s_flip == 1 ? "h" : s_flip == 2 ? "v" : "hv");
     put_s(b, &n, "\nquality "); put_int(b, &n, s_q);
+    put_s(b, &n, "\nir "); if (ir_pin) put_int(b, &n, ir_pin); else put_s(b, &n, "off");
+    put_s(b, &n, "\nir_mode "); put_s(b, &n, ir_mode == 0 ? "off" : ir_mode == 1 ? "on" : ir_mode == 2 ? "photo" : "auto");
+    put_s(b, &n, "\nir_active "); put_s(b, &n, ir_low ? "low" : "high");
     put_s(b, &n, "\n"); b[n] = 0;
     return n;
 }
 
 static void cfg_save(void)
 {
-    char b[300]; int n = cfg_text(b);
+    char b[400]; int n = cfg_text(b);
     if (!fat_mounted() || fat_write_file("/CAM.TXT", b, (u32)n)) kprintf("(not saved: no SD card or write error)\n");
 }
 
@@ -710,6 +743,11 @@ static int set_one(const char *k, const char *v, const char *v2)
         else if (!strcmp(v, "hv") || !strcmp(v, "vh")) s_flip = 3; else return -1;
         return 0;
     }
+    if (!strcmp(k, "ir")) { if (!strcmp(v, "off")) { if (ir_pin && ir_now > 0) gpio_set(ir_pin, ir_low); ir_pin = 0; return 0; }
+                            if (num_arg(v, 0, &x) || x < 2 || x > 27) return -1; if (ir_pin && ir_pin != x && ir_now > 0) gpio_set(ir_pin, ir_low); ir_pin = x; ir_now = -1; return 0; }
+    if (!strcmp(k, "ir_mode")) { if (!strcmp(v, "off")) ir_mode = 0; else if (!strcmp(v, "on")) ir_mode = 1; else if (!strcmp(v, "photo")) ir_mode = 2;
+                                 else if (!strcmp(v, "auto")) ir_mode = 3; else return -1; ir_dark = 0; ir_changed = 0; return 0; }
+    if (!strcmp(k, "ir_active")) { if (strcmp(v, "high") && strcmp(v, "low")) return -1; ir_low = !strcmp(v, "low"); ir_now = -1; return 0; }
     if (!strcmp(k, "quality")) { if (num_arg(v, 0, &x) || x < 10 || x > 100) return -1; s_q = x; return 0; }
     return -2;
 }
@@ -886,11 +924,12 @@ static int quiet_start(void)
     nocam_until = 0;
     ae_begin();
     web_stream = 1;
-    for (int i = 0; i < 12; i++) {                         /* let the exposure find its level */
+    for (int i = 0; i < 20; i++) {                         /* let the exposure find its level (IR may switch on) */
         u16 *f = next_frame(i ? 200 : 1500);
         if (!f) break;
+        int ir0 = ir_now;
         process_frame(f);
-        if (ae_ok >= 1 && i >= 3) break;
+        if (ae_ok >= 1 && i >= 3 && ir_now == ir0) break;
     }
     web_last = timer_us();
     static int announced;
@@ -1023,7 +1062,7 @@ int camera_web_set(const char *k, const char *v)
 int camera_web_json(char *b, int max)
 {
     char t[300]; int n = 0;
-    if (max < 700) return 0;
+    if (max < 800) return 0;
     #define S(x) put_s(b, &n, x)
     S("\"sensor\":\""); S(fake ? "test picture" : sensor ? sname() : "camera"); S("\"");
     S(",\"streaming\":"); S(streaming ? "true" : "false");
@@ -1040,6 +1079,9 @@ int camera_web_json(char *b, int max)
     S(",\"gamma\":"); S(s_gamma ? "true" : "false");
     S(",\"flip\":\""); S(s_flip == 0 ? "off" : s_flip == 1 ? "h" : s_flip == 2 ? "v" : "hv"); S("\"");
     S(",\"quality\":"); put_int(b, &n, s_q);
+    S(",\"ir_pin\":"); put_int(b, &n, ir_pin);
+    S(",\"ir_mode\":\""); S(ir_mode == 0 ? "off" : ir_mode == 1 ? "on" : ir_mode == 2 ? "photo" : "auto"); S("\"");
+    S(",\"ir_on\":"); S(ir_now > 0 ? "true" : "false");
     S(",\"now_exposure_ms\":"); put_d10(b, &n, ae_exp * LINE_US10 / 1000);
     S(",\"now_gain\":"); put_d10(b, &n, ae_gain * 10 / 16);
     S(",\"fps\":"); put_d10(b, &n, (int)fps_x10);
@@ -1177,7 +1219,8 @@ void camera_cmd(int argc, char **argv)
     if (!strcmp(a, "off")) { cam_stop(); power(0); sensor = 0; kprintf("camera power off\n"); return; }
     if (!strcmp(a, "test")) {
         if (streaming) cam_stop();
-        fake = argc > 2 && !strcmp(argv[2], "on");
+        fake = argc > 2 && (!strcmp(argv[2], "on") || !strcmp(argv[2], "dark"));
+        fake_dark = argc > 2 && !strcmp(argv[2], "dark");
         nocam_until = 0;
         kprintf("test picture %s\n", fake ? "ON: made-up colour bars instead of the camera (until reboot or 'cam test off')" : "off");
         return;
@@ -1222,12 +1265,13 @@ void camera_cmd(int argc, char **argv)
     if (!strcmp(a, "view")) { test_pattern = 0; show(0, 0, 0); return; }
     if (!strcmp(a, "set") || !strcmp(a, "settings")) {
         cfg_load();
-        char b[300]; cfg_text(b);
+        char b[400]; cfg_text(b);
         kprintf("camera settings (/CAM.TXT):\n");
         for (char *l = b; *l; ) { char *e = l; while (*e && *e != '\n') e++; char sv = *e; *e = 0; kprintf("  %s\n", l); *e = sv; l = *e ? e + 1 : e; }
         kprintf("change: cam exposure auto|<ms>, gain auto|<x>, ev <-3..3>, wb auto|lock|<r%%> <b%%>,\n"
                 "        brightness|contrast <-100..100>, saturation <0..300>, hue <-180..180>,\n"
-                "        gamma on|off, flip off|h|v|hv, quality <10..100>; cam defaults\n");
+                "        gamma on|off, flip off|h|v|hv, quality <10..100>; cam defaults\n"
+                "IR light: cam ir <gpio>|off, cam ir_mode off|on|photo|auto, cam ir_active high|low\n");
         return;
     }
     if (!strcmp(a, "defaults")) {
@@ -1244,7 +1288,7 @@ void camera_cmd(int argc, char **argv)
         if (r == 0) {
             if (!strcmp(a, "wb") && s_wb == 2) { gr_cur = (u32)s_wbr * 256 / 100; gb_cur = (u32)s_wbb * 256 / 100; }
             prep(); cfg_save();
-            char b[300]; cfg_text(b);
+            char b[400]; cfg_text(b);
             for (char *l = b; *l; ) { char *e = l; while (*e && *e != '\n') e++; char sv = *e; *e = 0;
                 if (!strncmp(l, a, strlen(a)) && l[strlen(a)] == ' ') kprintf("%s (saved in /CAM.TXT)\n", l);
                 *e = sv; l = *e ? e + 1 : e; }
@@ -1292,6 +1336,7 @@ void camera_cmd(int argc, char **argv)
             "                           saturation, hue, gamma, flip, quality (saved in /CAM.TXT)\n"
             "       cam <setting> <value>  e.g. cam saturation 130, cam exposure 10, cam wb auto\n"
             "       cam defaults        settings back to the defaults\n"
+            "       cam ir <gpio>|off   IR light on a pin; cam ir_mode off|on|photo|auto (auto = only in the dark)\n"
             "       cam bars            the sensor's test colour bars (checks the link without the lens)\n"
             "       cam dump            receiver registers while streaming (compare with Linux: tools/camdump.py)\n"
             "       cam mode 1296|fw|640 sensor mode (default 1296 = the Linux 1296x972 mode)\n"

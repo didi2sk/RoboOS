@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.105**
+Aktuálna verzia: **0.106**
 
 ## Podporované dosky
 
@@ -485,6 +485,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.103: fotky z kamery ako JPEG (`cam snap [súbor]`, s / medzera v `cam live`; vlastný kodér `src/jpeg.c`) + nastavenia obrazu v /CAM.TXT: expozícia, zisk, ev, vyváženie bielej, jas, kontrast, sýtosť, odtieň, gama, zrkadlenie, kvalita JPEG (`cam set`).
 0.104: webová stránka kamery `/camera`: živý náhľad + posuvníky pre každé nastavenie + uloženie fotky; API `GET|POST /api/camera`, `GET /api/camera.jpg`; `cam test on` = skúšobný obraz bez kamery.
 0.105: videozvonček (`doorbell`: tlačidlo na GPIO -> fotka na kartu + do Home Assistanta cez MQTT, gong / WAV, udalosť zvonenia) a radar pri dverách (fotka, keď niekto príde); MQTT kamera, tlačidlo Take photo, udalosť zvončeka, senzor radaru cez discovery; `cam send`.
+0.106: IR prisvietenie kamery na GPIO (`cam ir <pin>`, `cam ir_mode off|on|photo|auto`; auto = len v tme), aj na stránke /camera.
 
 ### Dátum a čas (NTP)
 
@@ -927,6 +928,12 @@ curl -H "Authorization: Bearer <heslo>" http://<doska>/api/camera.jpg -o foto.jp
 ```
 
 `cam test on` dá namiesto kamery vymyslený obraz s farebnými pruhmi (na vyskúšanie stránky bez kamery).
+
+**IR prisvietenie (0.106):** IR LED alebo IR lampa spínaná cez GPIO (cez tranzistor / MOSFET / relé - nie priamo
+z pinu): `cam ir 22` (pin, `cam ir off` = žiadne), `cam ir_mode off|on|photo|auto` (photo = svieti, keď kamera beží,
+auto = keď kamera beží a je tma: expozícia je na maxime a zisk aspoň 8x; zhasne, keď je svetlo aj bez neho;
+medzi zmenami aspoň 20 s), `cam ir_active low`, ak spínač zapína nízkou úrovňou. Dá sa to aj na stránke `/camera`
+(keď je pin nastavený). Aby kamera v tme videla, musí vidieť IR: kamera NoIR alebo bez IR filtra.
 
 ### Videozvonček + radar pri dverách (0.105)
 
