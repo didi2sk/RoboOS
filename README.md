@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.110**
+Current version: **0.111**
 
 ## Supported boards
 
@@ -494,6 +494,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.108: `microscope` - full-screen live camera with zoom 1-5x (sensor pixels), arrows, photo (space) and MJPEG AVI video (v).
 0.109: microscope in full resolution and full screen: sensor mode 1920x1080 (`cam mode 1080` too), every screen pixel drawn from the sensor pixels on 3 cores, `f` = fill / fit, photos up to 1920x1080.
 0.110: camera sharpness (slider + `cam sharpness`), less flicker: a frame being drawn is never overwritten by the next one, exposure in whole mains periods (`cam flicker 50|60|off`), calmer auto exposure and white balance.
+0.111: microscope without smears in motion: drawn on the hidden screen page and shown whole (double buffering); `k` / `cam cores 1-3` = how many cores draw.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -951,6 +952,7 @@ the lowest delay (made for soldering under the camera), keyboard only:
 |---|---|
 | `1` ... `5` | zoom 1x ... 5x (`+` / `-` in steps of 0.5) |
 | `f` | fill the whole screen (default) / fit the whole picture |
+| `k` | cores that draw: 3 / 1 / 2 (also `cam cores 1-3` and on the `/camera` page) |
 | arrows | move the zoomed area, `c` = back to the centre |
 | space (or `p`) | photo (JPEG to `/CAM/<date>/`) |
 | `v` | video start / stop (MJPEG AVI, `/CAM/<date>/<time>.AVI`; VLC, Windows and phones play it) |

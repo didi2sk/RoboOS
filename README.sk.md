@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.110**
+Aktuálna verzia: **0.111**
 
 ## Podporované dosky
 
@@ -490,6 +490,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.108: `microscope` - kamera na celú obrazovku so zoomom 1-5x (body snímača), šípky, fotka (medzera) a video MJPEG AVI (v).
 0.109: mikroskop v plnom rozlíšení na celú obrazovku: režim snímača 1920x1080 (aj `cam mode 1080`), každý bod obrazovky z bodov snímača na 3 jadrách, `f` = celá obrazovka / celý obraz, fotky do 1920x1080.
 0.110: ostrosť kamery (posuvník + `cam sharpness`), menej kmitania: kreslená snímka sa už neprepisuje ďalšou, expozícia v celých periódach siete (`cam flicker 50|60|off`), pokojnejšia automatika expozície a vyváženia bielej.
+0.111: mikroskop bez šmúh v pohybe: kreslí sa do skrytej stránky obrazovky a zobrazí sa celá naraz (dvojitý buffer); `k` / `cam cores 1-3` = počet jadier na kreslenie.
 
 ### Dátum a čas (NTP)
 
@@ -942,6 +943,7 @@ oneskorením (na spájkovanie pod kamerou), ovládanie len klávesnicou:
 |---|---|
 | `1` ... `5` | zoom 1x ... 5x (`+` / `-` po 0,5) |
 | `f` | celá obrazovka (predvolené) / celý obraz |
+| `k` | počet jadier na kreslenie: 3 / 1 / 2 (aj `cam cores 1-3` a na stránke `/camera`) |
 | šípky | posun priblíženej časti, `c` = späť do stredu |
 | medzera (alebo `p`) | fotka (JPEG do `/CAM/<dátum>/`) |
 | `v` | video štart / stop (MJPEG AVI, `/CAM/<dátum>/<čas>.AVI`; prehrá VLC, Windows aj mobil) |
