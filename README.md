@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.111**
+Current version: **0.112**
 
 ## Supported boards
 
@@ -495,6 +495,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.109: microscope in full resolution and full screen: sensor mode 1920x1080 (`cam mode 1080` too), every screen pixel drawn from the sensor pixels on 3 cores, `f` = fill / fit, photos up to 1920x1080.
 0.110: camera sharpness (slider + `cam sharpness`), less flicker: a frame being drawn is never overwritten by the next one, exposure in whole mains periods (`cam flicker 50|60|off`), calmer auto exposure and white balance.
 0.111: microscope without smears in motion: drawn on the hidden screen page and shown whole (double buffering); `k` / `cam cores 1-3` = how many cores draw.
+0.112: microscope zoom in finer steps up to 2.5x: 1, 1.2, 1.5, 1.8, 2, 2.2, 2.5 (`+` / `-`, keys 1-7).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -950,7 +951,7 @@ the lowest delay (made for soldering under the camera), keyboard only:
 
 | Key | |
 |---|---|
-| `1` ... `5` | zoom 1x ... 5x (`+` / `-` in steps of 0.5) |
+| `+` / `-` | zoom 1 - 1.2 - 1.5 - 1.8 - 2 - 2.2 - 2.5x (0.112; keys `1` ... `7` jump to a step) |
 | `f` | fill the whole screen (default) / fit the whole picture |
 | `k` | cores that draw: 3 / 1 / 2 (also `cam cores 1-3` and on the `/camera` page) |
 | arrows | move the zoomed area, `c` = back to the centre |
