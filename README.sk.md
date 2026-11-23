@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.112**
+Aktuálna verzia: **0.113**
 
 ## Podporované dosky
 
@@ -492,6 +492,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.110: ostrosť kamery (posuvník + `cam sharpness`), menej kmitania: kreslená snímka sa už neprepisuje ďalšou, expozícia v celých periódach siete (`cam flicker 50|60|off`), pokojnejšia automatika expozície a vyváženia bielej.
 0.111: mikroskop bez šmúh v pohybe: kreslí sa do skrytej stránky obrazovky a zobrazí sa celá naraz (dvojitý buffer); `k` / `cam cores 1-3` = počet jadier na kreslenie.
 0.112: zoom mikroskopu v jemnejších krokoch do 2,5x: 1; 1,2; 1,5; 1,8; 2; 2,2; 2,5 (`+` / `-`, klávesy 1-7).
+0.113: s `cam flicker 50|60` automatická expozícia nikdy nejde pod jednu periódu siete (10 / 8,3 ms) - pri veľkom svetle radšej zníži zisk (blikanie lampy zmizne).
 
 ### Dátum a čas (NTP)
 
@@ -916,7 +917,7 @@ cam gamma on|off        gama 2 (off = lineárne, vzhľad z 0.102)
 cam flip h|v|hv|off     zrkadlenie obrazu
 cam quality 85          kvalita JPEG 10 .. 100
 cam sharpness 30        doostrenie 0 .. 200 % (0.110, predvolene 30)
-cam flicker 50          frekvencia siete pre lampy 50|60|off: expozícia v celých 10 ms krokoch = nebliká (0.110)
+cam flicker 50          frekvencia siete pre lampy 50|60|off: expozícia v celých 10 ms krokoch, nikdy kratšia = nebliká (0.110/0.113)
 cam defaults            všetko späť na predvolené
 ```
 

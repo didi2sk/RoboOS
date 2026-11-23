@@ -607,7 +607,10 @@ static void ae_step(u32 mean)
     if (e < 2) e = 2;
     if (s_flicker && !s_exp10 && !s_gain10) {                           /* lamps on 50/60 Hz mains flicker at 100/120 Hz: exposure */
         int step = (s_flicker == 60 ? 83333 : 100000) / LINE_US10;   /* in whole 10 / 8.3 ms steps = no beat */
-        if (e >= step && step > 0) { int e2 = e / step * step; if (e2 >= step) { g = (int)((u64)g * e / e2); e = e2; } }
+        if (step > 0 && step <= ae_maxl) {
+            int e2 = e < step ? step : e / step * step;     /* 0.113: never shorter than one period (owner: fixed 10 ms */
+            g = (int)((u64)g * e / e2); e = e2;              /* stopped the blinking) - a bright scene lowers the gain */
+        }
     }
     if (g < 16) g = 16;
     if (g > 255) g = 255;
