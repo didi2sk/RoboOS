@@ -469,6 +469,7 @@ static u16 *fake_frame(void)
             u32 v = (y & 1) ? ((x & 1) ? g : r) : ((x & 1) ? b : g);   /* GBRG */
             v = (u32)((u64)v * k / (1406u * 64u) / 5);
             if (fake_dark) v = ir_now > 0 ? v * 3 / 4 : v / 20;
+            { static u32 rs = 12345; rs = rs * 1103515245u + 12345u; v += (rs >> 16) % 41; if (v >= 20) v -= 20; }   /* sensor-like noise */
             row[x] = (u16)(v > 1023 ? 1023 : v);
         }
     }
@@ -525,7 +526,7 @@ static u16 *next_frame(u32 ms)
 #define LINE_US10 (vga_mode == 3 ? 276 : vga_mode == 1 ? 318 : 232)   /* one sensor line in 0.1 us: HTS / pixel rate (Linux modes) */
 static int s_exp10, s_gain10, s_ev, s_wb, s_wbr = 100, s_wbb = 100;   /* exposure ms x10 / gain x10 (0 = auto); wb 0 auto 1 lock 2 manual */
 static int s_bri, s_con, s_sat = 100, s_hue, s_gamma = 1, s_flip, s_q = 85;
-static int s_sharp = 30, s_flicker = 50, s_cores = 3;   /* 0.111: s_cores = cores that draw (1-3) */                   /* 0.110: sharpness 0-100 %, mains Hz for the exposure (0 = off) */
+static int s_sharp = 30, s_flicker = 50, s_cores = 3, s_denoise;   /* 0.115: s_denoise 0/1 */   /* 0.111: s_cores = cores that draw (1-3) */                   /* 0.110: sharpness 0-100 %, mains Hz for the exposure (0 = off) */
 static int cfg_loaded;
 static u32 gr_cur = 256, gb_cur = 256;                    /* white balance gains x256 */
 static int ae_exp = 1406, ae_gain = 64, ae_maxl = 1534, ae_skip, ae_ok;   /* lines, gain x16 */
@@ -648,13 +649,26 @@ static inline u32 px_out(u32 R, u32 G, u32 B)
 /* 0.110: one output pixel from the 2x2 window at q (offsets o: B, G1, G2, R) + sharpening: the green of the
  * window minus the mean green of the 4 windows 2 sensor pixels away (same colour layout) = detail, added to
  * all three colours (k = strength x256; 0 = off). q must have 2 pixels of room on every side when k > 0. */
-static inline u32 px_win(const u16 *q, const int *o, int sh, u32 grc, u32 gbc, int k)
+static inline u32 px_win(const u16 *q, const int *o, int sh, u32 grc, u32 gbc, int k, int dn)
 {
     int B = q[o[0]] >> sh, G = ((int)q[o[1]] + q[o[2]]) >> (sh + 1), R = q[o[3]] >> sh;
-    if (k) {
-        int c = q[o[1]] + q[o[2]], a1 = o[1] - 2, a2 = o[2] - 2, b1 = o[1] + 2, b2 = o[2] + 2;
-        int n = q[a1] + q[a2] + q[b1] + q[b2] + q[o[1] - 2 * W] + q[o[2] - 2 * W] + q[o[1] + 2 * W] + q[o[2] + 2 * W];
-        int d = ((4 * c - n) >> (sh + 1)) * k >> 10;       /* /4 neighbours, /2 two greens -> 10-bit detail */
+    if (!k && !dn) return px_out((u32)R * grc >> 8, (u32)G, (u32)B * gbc >> 8);
+    /* the 4 windows 2 sensor pixels left / right / up / down have the same colour layout */
+    const int nb[4] = { -2, 2, -2 * W, 2 * W };
+    int sb = 0, sg = 0, sr = 0;
+    for (int i = 0; i < 4; i++) { const u16 *p = q + nb[i]; sb += p[o[0]]; sg += p[o[1]] + p[o[2]]; sr += p[o[3]]; }
+    int mb = sb >> (sh + 2), mg = sg >> (sh + 3), mr = sr >> (sh + 2);   /* their means, 10 bit */
+    int d = G - mg;                                        /* detail (green) */
+    if (dn) {
+        /* 0.115 noise reduction: a colour that differs from its neighbours' mean by less than the noise of
+         * its brightness (a few counts + 1/16) is pulled half way to them; real edges (bigger) stay sharp */
+        int tb = 12 + (B >> 4), tg = 12 + (G >> 4), tr = 12 + (R >> 4);
+        if (B - mb < tb && mb - B < tb) B = (B + mb) >> 1;
+        if (R - mr < tr && mr - R < tr) R = (R + mr) >> 1;
+        if (d < tg && -d < tg) { G = (G + mg) >> 1; d = 0; }   /* and no sharpening of noise ("coring") */
+    }
+    if (k && d) {
+        d = d * k >> 8;
         R += d; G += d; B += d;
         if (R < 0) R = 0; if (G < 0) G = 0; if (B < 0) B = 0;
     }
@@ -741,10 +755,10 @@ static void process_frame(const u16 *f)
         const u16 *a = f + (2 * y) * W;
         int dy = (s_flip & 2) ? oh - 1 - y : y;
         u32 *row = out + dy * ow;
-        int ky = (y >= 1 && y < oh - 2) ? k : 0;
+        int ky = (y >= 1 && y < oh - 2) ? k : 0, dy2 = (y >= 1 && y < oh - 2) ? s_denoise : 0;
         for (int x = 0; x < ow; x++) {
             const u16 *q = a + 2 * x;
-            row[(s_flip & 1) ? ow - 1 - x : x] = px_win(q, ko, sh, grc, gbc, (x >= 1 && x < ow - 2) ? ky : 0);
+            row[(s_flip & 1) ? ow - 1 - x : x] = px_win(q, ko, sh, grc, gbc, (x >= 1 && x < ow - 2) ? ky : 0, (x >= 1 && x < ow - 2) ? dy2 : 0);
         }
     }
 }
@@ -787,10 +801,10 @@ static void r_rows(void *arg)
         const u16 *a = j->f + ry * W;
         u32 *row = j->dst + (long)y * j->stride;
         const int (*oo)[4] = r_off + (ry & 1) * 2;
-        int ky = (ry >= 2 && ry < H - 4) ? k : 0;
+        int ky = (ry >= 2 && ry < H - 4) ? k : 0, dy2 = (ry >= 2 && ry < H - 4) ? s_denoise : 0;
         for (int x = 0; x < j->dw; x++) {
             int rx = r_xm[x];
-            row[x] = px_win(a + rx, oo[rx & 1], sh, grc, gbc, (rx >= 2 && rx < W - 4) ? ky : 0);
+            row[x] = px_win(a + rx, oo[rx & 1], sh, grc, gbc, (rx >= 2 && rx < W - 4) ? ky : 0, (rx >= 2 && rx < W - 4) ? dy2 : 0);
         }
     }
 }
@@ -871,6 +885,7 @@ static int cfg_text(char *b)
     put_s(b, &n, "\nquality "); put_int(b, &n, s_q);
     put_s(b, &n, "\nsharpness "); put_int(b, &n, s_sharp);
     put_s(b, &n, "\ncores "); put_int(b, &n, s_cores);
+    put_s(b, &n, "\ndenoise "); put_s(b, &n, s_denoise ? "on" : "off");
     put_s(b, &n, "\nflicker "); if (s_flicker) put_int(b, &n, s_flicker); else put_s(b, &n, "off");
     put_s(b, &n, "\nir "); if (ir_pin) put_int(b, &n, ir_pin); else put_s(b, &n, "off");
     put_s(b, &n, "\nir_mode "); put_s(b, &n, ir_mode == 0 ? "off" : ir_mode == 1 ? "on" : ir_mode == 2 ? "photo" : "auto");
@@ -926,6 +941,7 @@ static int set_one(const char *k, const char *v, const char *v2)
     if (!strcmp(k, "ir_mode")) { if (!strcmp(v, "off")) ir_mode = 0; else if (!strcmp(v, "on")) ir_mode = 1; else if (!strcmp(v, "photo")) ir_mode = 2;
                                  else if (!strcmp(v, "auto")) ir_mode = 3; else return -1; ir_dark = 0; ir_changed = 0; return 0; }
     if (!strcmp(k, "ir_active")) { if (strcmp(v, "high") && strcmp(v, "low")) return -1; ir_low = !strcmp(v, "low"); ir_now = -1; return 0; }
+    if (!strcmp(k, "denoise")) { if (strcmp(v, "on") && strcmp(v, "off")) return -1; s_denoise = !strcmp(v, "on"); return 0; }
     if (!strcmp(k, "cores")) { if (num_arg(v, 0, &x) || x < 1 || x > 3) return -1; s_cores = x; return 0; }
     if (!strcmp(k, "sharpness")) { if (num_arg(v, 0, &x) || x < 0 || x > 200) return -1; s_sharp = x; return 0; }
     if (!strcmp(k, "flicker")) { if (!strcmp(v, "off")) { s_flicker = 0; return 0; } if (num_arg(v, 0, &x) || (x != 50 && x != 60)) return -1; s_flicker = x; return 0; }
@@ -1093,7 +1109,7 @@ static void web_fail(int code)
 static void web_defaults_now(void)
 {
     s_exp10 = s_gain10 = s_ev = s_wb = s_bri = s_con = s_hue = s_flip = 0;
-    s_wbr = s_wbb = s_sat = 100; s_gamma = 1; s_q = 85; gr_cur = gb_cur = 256; s_sharp = 30; s_flicker = 50; s_cores = 3;
+    s_wbr = s_wbb = s_sat = 100; s_gamma = 1; s_q = 85; gr_cur = gb_cur = 256; s_sharp = 30; s_flicker = 50; s_cores = 3; s_denoise = 0;
 }
 
 /* core 0: start the camera for the web / MQTT / doorbell (quiet), let the exposure settle; 0 = ok */
@@ -1265,6 +1281,7 @@ int camera_web_json(char *b, int max)
     S(",\"quality\":"); put_int(b, &n, s_q);
     S(",\"sharpness\":"); put_int(b, &n, s_sharp);
     S(",\"cores\":"); put_int(b, &n, s_cores);
+    S(",\"denoise\":"); S(s_denoise ? "true" : "false");
     S(",\"flicker\":"); put_int(b, &n, s_flicker);
     S(",\"ir_pin\":"); put_int(b, &n, ir_pin);
     S(",\"ir_mode\":\""); S(ir_mode == 0 ? "off" : ir_mode == 1 ? "on" : ir_mode == 2 ? "photo" : "auto"); S("\"");
@@ -1466,11 +1483,12 @@ void camera_microscope(void)
             put_s(l, &n, "  zoom "); put_d10(l, &n, zm10); put_s(l, &n, fill ? "x fill  " : "x fit  ");
             put_d10(l, &n, (int)fps); put_s(l, &n, " fps "); put_int(l, &n, (int)ms_frame); put_s(l, &n, " ms ");
             put_int(l, &n, s_cores); put_s(l, &n, s_cores > 1 ? " cores  " : " core  ");
+            put_s(l, &n, "sharp "); put_int(l, &n, s_sharp); put_s(l, &n, s_denoise ? "% denoise  " : "%  ");
             if (rec) { u32 s2 = (u32)((now - rec_t0) / 1000000); put_s(l, &n, "REC "); put_int(l, &n, (int)(s2 / 60)); put_s(l, &n, s2 % 60 < 10 ? ":0" : ":"); put_int(l, &n, (int)(s2 % 60));
                        put_s(l, &n, " "); put_int(l, &n, (int)(rec_len >> 20)); put_s(l, &n, " MB  "); }
             if (now < msg_until && nm[0]) { put_s(l, &n, nm); put_s(l, &n, "  "); }
             else if (now < msg_until && msg[0]) { put_s(l, &n, msg); put_s(l, &n, "  "); }
-            put_s(l, &n, "+- zoom (1-7), arrows, c centre, f fill/fit, k cores, space photo, v video start/stop, q quit");
+            put_s(l, &n, "+- zoom (1-7), arrows, c centre, f fill/fit, , . sharp, d denoise, k cores, space photo, v video start/stop, q quit");
             int maxc = sw / 8 - 2;
             while (n < maxc && n < 210) l[n++] = ' ';
             if (n > maxc) n = maxc;
@@ -1494,6 +1512,9 @@ void camera_microscope(void)
         else if (k == 'c' || k == 'C') { pan_x = W / 2; pan_y = H / 2; }
         else if (k == 'f' || k == 'F') { fill = !fill; for (int pg = 0; pg < npg; pg++) for (u32 y = 0; y < (u32)shh; y++) { u32 *rw = fb_page_row(pg, (int)y); for (int x = 0; x < sw; x++) rw[x] = 0; } }
         else if (k == 'k' || k == 'K') { s_cores = s_cores >= 3 ? 1 : s_cores + 1; web_save_at = timer_us() + 2000000; }
+        else if (k == 'd' || k == 'D') { s_denoise = !s_denoise; web_save_at = timer_us() + 2000000; }      /* 0.115 */
+        else if (k == '.' || k == '>') { if (s_sharp < 200) s_sharp += 10; web_save_at = timer_us() + 2000000; }
+        else if (k == ',' || k == '<') { if (s_sharp > 0) s_sharp -= 10; web_save_at = timer_us() + 2000000; }
         else if (k == ' ' || k == 'p' || k == 'P' || k == 's' || k == 'S') {
             /* the photo: what is on the screen, at the sensor's own resolution (up to 1920x1080) */
             int pw = vcw, ph = vch;
@@ -1708,7 +1729,7 @@ void camera_cmd(int argc, char **argv)
         for (char *l = b; *l; ) { char *e = l; while (*e && *e != '\n') e++; char sv = *e; *e = 0; kprintf("  %s\n", l); *e = sv; l = *e ? e + 1 : e; }
         kprintf("change: cam exposure auto|<ms>, gain auto|<x>, ev <-3..3>, wb auto|lock|<r%%> <b%%>,\n"
                 "        brightness|contrast <-100..100>, saturation <0..300>, hue <-180..180>,\n"
-                "        gamma on|off, flip off|h|v|hv, quality <10..100>, sharpness <0..200>, flicker 50|60|off, cores 1-3; cam defaults\n"
+                "        gamma on|off, flip off|h|v|hv, quality <10..100>, sharpness <0..200>, flicker 50|60|off, cores 1-3, denoise on|off; cam defaults\n"
                 "IR light: cam ir <gpio>|off, cam ir_mode off|on|photo|auto, cam ir_active high|low\n");
         return;
     }
