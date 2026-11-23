@@ -506,6 +506,7 @@ static int cfg_loaded;
 static u32 gr_cur = 256, gb_cur = 256;                    /* white balance gains x256 */
 static int ae_exp = 1406, ae_gain = 64, ae_maxl = 1534, ae_skip, ae_ok;   /* lines, gain x16 */
 static int ow, oh;                                        /* processed picture size */
+static int zm10 = 10, pan_x, pan_y;                       /* 0.108 microscope: zoom x10 (10 = none), crop centre in sensor pixels */
 static u8 glut[1024];
 static int m_cf, m_bo, m_11, m_12, m_21, m_22, plain;     /* colour matrix x256 */
 
@@ -594,6 +595,21 @@ static void ae_step(u32 mean)
     ae_skip = 2;
 }
 
+/* 10-bit R G B (white balance applied) -> 0x00RRGGBB with gamma + the colour settings */
+static inline u32 px_out(u32 R, u32 G, u32 B)
+{
+    if (R > 1023) R = 1023; if (G > 1023) G = 1023; if (B > 1023) B = 1023;
+    int r = glut[R], g = glut[G], b = glut[B];
+    if (!plain) {
+        int Y = (77 * r + 150 * g + 29 * b) >> 8, cb = (-43 * r - 85 * g + 128 * b) >> 8, cr = (128 * r - 107 * g - 21 * b) >> 8;
+        Y = (((Y - 128) * m_cf) >> 8) + 128 + m_bo;
+        int cb2 = (cb * m_11 + cr * m_12) >> 8, cr2 = (cb * m_21 + cr * m_22) >> 8;
+        r = Y + ((359 * cr2) >> 8); g = Y - ((88 * cb2 + 183 * cr2) >> 8); b = Y + ((454 * cb2) >> 8);
+        if (r < 0) r = 0; if (r > 255) r = 255; if (g < 0) g = 0; if (g > 255) g = 255; if (b < 0) b = 0; if (b > 255) b = 255;
+    }
+    return ((u32)r << 16) | ((u32)g << 8) | (u32)b;
+}
+
 /* raw frame -> RGB_BUF (ow x oh), white balance + exposure updated from it */
 static void process_frame(const u16 *f)
 {
@@ -623,6 +639,42 @@ static void process_frame(const u16 *f)
     ow = W / 2; oh = H / 2;
     u32 *out = (u32 *)RGB_BUF;
     u32 grc = gr_cur, gbc = gb_cur;
+    if (zm10 > 10) {                                       /* zoom: a sliding 2x2 window over the sensor pixels = full detail */
+        int cw = W * 10 / zm10, ch = H * 10 / zm10;
+        int x0 = pan_x - cw / 2, y0 = pan_y - ch / 2;
+        if (x0 > W - cw - 2) x0 = W - cw - 2;
+        if (y0 > H - ch - 2) y0 = H - ch - 2;
+        if (x0 < 0) x0 = 0;
+        if (y0 < 0) y0 = 0;
+        pan_x = x0 + cw / 2; pan_y = y0 + ch / 2;
+        int off[4][4];                                     /* [parity y*2+x][B, G1, G2, R] offsets inside the window */
+        int typ[4];                                        /* colour of the 4 cells of an even window: 0 B, 1 G, 2 R */
+        int e[4] = { ob, og1, og2, orr };
+        for (int k = 0; k < 4; k++) { int pos = e[k] == 0 ? 0 : e[k] == 1 ? 1 : e[k] == W ? 2 : 3; typ[pos] = k == 0 ? 0 : k == 3 ? 2 : 1; }
+        for (int py = 0; py < 2; py++) for (int px = 0; px < 2; px++) {
+            int g = 0, *o = off[py * 2 + px];
+            for (int dy = 0; dy < 2; dy++) for (int dx = 0; dx < 2; dx++) {
+                int t = typ[((py + dy) & 1) * 2 + ((px + dx) & 1)], a = dy * W + dx;
+                if (t == 0) o[0] = a; else if (t == 2) o[3] = a; else o[1 + g++] = a;
+            }
+        }
+        static int xm[1024];
+        for (int x = 0; x < ow && x < 1024; x++) xm[x] = x0 + x * cw / ow;
+        for (int y = 0; y < oh; y++) {
+            int ry = y0 + y * ch / oh;
+            const u16 *a = f + ry * W;
+            int dy = (s_flip & 2) ? oh - 1 - y : y;
+            u32 *row = out + dy * ow;
+            for (int x = 0; x < ow; x++) {
+                int rx = xm[x];
+                const u16 *q = a + rx;
+                const int *o = off[(ry & 1) * 2 + (rx & 1)];
+                u32 B = (u32)q[o[0]] >> sh, G = ((u32)q[o[1]] + q[o[2]]) >> (sh + 1), R = (u32)q[o[3]] >> sh;
+                row[(s_flip & 1) ? ow - 1 - x : x] = px_out(R * grc >> 8, G, B * gbc >> 8);
+            }
+        }
+        return;
+    }
     for (int y = 0; y < oh; y++) {
         const u16 *a = f + (2 * y) * W;
         int dy = (s_flip & 2) ? oh - 1 - y : y;
@@ -630,17 +682,7 @@ static void process_frame(const u16 *f)
         for (int x = 0; x < ow; x++) {
             const u16 *q = a + 2 * x;
             u32 B = (u32)q[ob] >> sh, G = ((u32)q[og1] + q[og2]) >> (sh + 1), R = (u32)q[orr] >> sh;
-            R = R * grc >> 8; B = B * gbc >> 8;
-            if (R > 1023) R = 1023; if (G > 1023) G = 1023; if (B > 1023) B = 1023;
-            int r = glut[R], g = glut[G], b = glut[B];
-            if (!plain) {
-                int Y = (77 * r + 150 * g + 29 * b) >> 8, cb = (-43 * r - 85 * g + 128 * b) >> 8, cr = (128 * r - 107 * g - 21 * b) >> 8;
-                Y = (((Y - 128) * m_cf) >> 8) + 128 + m_bo;
-                int cb2 = (cb * m_11 + cr * m_12) >> 8, cr2 = (cb * m_21 + cr * m_22) >> 8;
-                r = Y + ((359 * cr2) >> 8); g = Y - ((88 * cb2 + 183 * cr2) >> 8); b = Y + ((454 * cb2) >> 8);
-                if (r < 0) r = 0; if (r > 255) r = 255; if (g < 0) g = 0; if (g > 255) g = 255; if (b < 0) b = 0; if (b > 255) b = 255;
-            }
-            row[(s_flip & 1) ? ow - 1 - x : x] = ((u32)r << 16) | ((u32)g << 8) | (u32)b;
+            row[(s_flip & 1) ? ow - 1 - x : x] = px_out(R * grc >> 8, G, B * gbc >> 8);
         }
     }
 }
@@ -786,7 +828,7 @@ static void cfg_load(void)
 static int exists(const char *p) { struct fat_file f; return !fat_open(p, &f); }
 
 /* auto name: /CAM/YYYYMMDD/HHMMSS.JPG with the clock, else /CAM/IMG00001.JPG */
-static int auto_name(char *p)
+static int auto_name_x(char *p, const char *ext, const char *pre)
 {
     fat_mkdir("/CAM");
     u64 t = clock_now();
@@ -801,21 +843,24 @@ static int auto_name(char *p)
             p[m++] = '/';
             for (int i = 11; i < 19; i++) if (d[i] != ':') p[m++] = d[i];
             if (k) { p[m++] = '_'; p[m++] = (char)('0' + k); }
-            const char *x = ".JPG"; while (*x) p[m++] = *x++;
+            const char *x = ext; while (*x) p[m++] = *x++;
             p[m] = 0;
             if (!exists(p)) return 0;
         }
         return -1;
     }
     for (int k = 1; k < 100000; k++) {
-        const char *b = "/CAM/IMG"; int m = 0; while (*b) p[m++] = *b++;
+        const char *b = "/CAM/"; int m = 0; while (*b) p[m++] = *b++;
+        b = pre; while (*b) p[m++] = *b++;
         int v = k; for (int i = 4; i >= 0; i--) { p[m + i] = (char)('0' + v % 10); v /= 10; }
-        m += 5; const char *x = ".JPG"; while (*x) p[m++] = *x++;
+        m += 5; const char *x = ext; while (*x) p[m++] = *x++;
         p[m] = 0;
         if (!exists(p)) return 0;
     }
     return -1;
 }
+
+static int auto_name(char *p) { return auto_name_x(p, ".JPG", "IMG"); }
 
 /* the processed picture as JPEG to `path` (0 = auto name); prints the result, returns the size or < 0 */
 static int save_jpeg(const char *path, char *name_out)
@@ -1094,6 +1139,200 @@ int camera_web_json(char *b, int max)
     return n;
 }
 
+
+/* ---- 0.108: microscope - full-screen live picture with zoom, photo and MJPEG AVI video ----
+ * Zoom 1-5x (keys 1-5, + / -) crops the SENSOR picture (1296x972) and demosaics it with a sliding 2x2
+ * window, so 2x is real detail, not a blown-up picture; arrows move the crop, c centres it. The picture
+ * is drawn as big as the screen allows (keeping 4:3). Space / p = photo (JPEG, /CAM/<date>/), v = video
+ * start / stop: every shown frame is JPEG-encoded into RAM (REC_BUF, 192 MB) as an MJPEG AVI, written to
+ * the card when stopped (fat_write_file has no append). q / Enter = quit. Low delay first: nothing waits
+ * for the card while the picture runs. */
+#define REC_BUF  0x04000000UL                             /* the picture heap - nothing else uses it meanwhile */
+#define REC_MAX  (0x0C000000UL - 0x100000UL)
+#define REC_IDX  ((u32 *)0x03800000UL)                     /* 2 words per frame: offset, size (8 MB) */
+#define REC_HDR  224                                      /* RIFF + hdrl + LIST movi headers */
+static u32 rec_len, rec_frames;
+static u64 rec_t0;
+
+static void w32(u8 *p, u32 v) { p[0] = (u8)v; p[1] = (u8)(v >> 8); p[2] = (u8)(v >> 16); p[3] = (u8)(v >> 24); }
+static void w16(u8 *p, u32 v) { p[0] = (u8)v; p[1] = (u8)(v >> 8); }
+static void w4c(u8 *p, const char *c) { p[0] = (u8)c[0]; p[1] = (u8)c[1]; p[2] = (u8)c[2]; p[3] = (u8)c[3]; }
+
+static void rec_start(void) { rec_len = REC_HDR; rec_frames = 0; rec_t0 = timer_us(); }
+
+/* the picture in RGB_BUF as one more frame; 0 = ok, -1 = full */
+static int rec_frame(void)
+{
+    u8 *b = (u8 *)REC_BUF;
+    if (rec_len + 8 + 2 * 1024 * 1024 + 16 * (rec_frames + 2) > REC_MAX || rec_frames >= 500000) return -1;
+    int n = jpeg_encode((const u32 *)RGB_BUF, ow, oh, ow, s_q, b + rec_len + 8, 2 * 1024 * 1024);
+    if (n <= 0) return 0;
+    w4c(b + rec_len, "00dc"); w32(b + rec_len + 4, (u32)n);
+    REC_IDX[rec_frames * 2] = rec_len - (REC_HDR - 4);   /* from the 'movi' fourcc */
+    REC_IDX[rec_frames * 2 + 1] = (u32)n;
+    rec_len += 8 + (u32)n;
+    if (n & 1) b[rec_len++] = 0;
+    rec_frames++;
+    return 0;
+}
+
+/* finish the AVI (headers + idx1) and write it; prints the result */
+static void rec_save(char *name_out)
+{
+    u8 *b = (u8 *)REC_BUF;
+    u32 ms = (u32)((timer_us() - rec_t0) / 1000);
+    if (!rec_frames) { kprintf("video: no frames\n"); return; }
+    if (!ms) ms = 1;
+    u32 movi_len = rec_len - (REC_HDR - 12) - 8;          /* LIST size counts from 'movi' */
+    u32 idx = rec_len;
+    w4c(b + idx, "idx1"); w32(b + idx + 4, rec_frames * 16);
+    for (u32 i = 0; i < rec_frames; i++) {
+        u8 *e = b + idx + 8 + i * 16;
+        w4c(e, "00dc"); w32(e + 4, 0x10); w32(e + 8, REC_IDX[i * 2]); w32(e + 12, REC_IDX[i * 2 + 1]);
+    }
+    u32 total = idx + 8 + rec_frames * 16;
+    u32 rate = (u32)((u64)rec_frames * 1000000ULL / ms);  /* frames per 1000 s */
+    if (!rate) rate = 1;
+    u32 maxf = 0; for (u32 i = 0; i < rec_frames; i++) if (REC_IDX[i * 2 + 1] > maxf) maxf = REC_IDX[i * 2 + 1];
+    for (int i = 0; i < REC_HDR; i++) b[i] = 0;
+    w4c(b, "RIFF"); w32(b + 4, total - 8); w4c(b + 8, "AVI ");
+    w4c(b + 12, "LIST"); w32(b + 16, 192); w4c(b + 20, "hdrl");
+    w4c(b + 24, "avih"); w32(b + 28, 56);
+    w32(b + 32, (u32)((u64)ms * 1000 / rec_frames));     /* us per frame */
+    w32(b + 36, (u32)((u64)(total / ms) * 1000)); w32(b + 44, 0x10); w32(b + 48, rec_frames);
+    w32(b + 56, 1); w32(b + 60, maxf + 8); w32(b + 64, (u32)ow); w32(b + 68, (u32)oh);
+    w4c(b + 88, "LIST"); w32(b + 92, 116); w4c(b + 96, "strl");
+    w4c(b + 100, "strh"); w32(b + 104, 56);
+    w4c(b + 108, "vids"); w4c(b + 112, "MJPG");
+    w32(b + 128, 1000); w32(b + 132, rate); w32(b + 140, rec_frames); w32(b + 144, maxf + 8); w32(b + 148, 0xFFFFFFFF);
+    w16(b + 160, (u32)ow); w16(b + 162, (u32)oh);
+    w4c(b + 164, "strf"); w32(b + 168, 40);
+    w32(b + 172, 40); w32(b + 176, (u32)ow); w32(b + 180, (u32)oh); w16(b + 184, 1); w16(b + 186, 24);
+    w4c(b + 188, "MJPG"); w32(b + 192, (u32)(ow * oh * 3));
+    w4c(b + 212, "LIST"); w32(b + 216, movi_len); w4c(b + 220, "movi");
+    char p[64];
+    if (!fat_mounted() || auto_name_x(p, ".AVI", "VID")) { kprintf("video: no SD card / no free name\n"); return; }
+    u64 t0 = timer_us();
+    if (fat_write_file(p, b, total)) { kprintf("video: could not write %s\n", p); return; }
+    kprintf("video %s: %u frames, %u.%u s, %u.%u fps, %u KB (written in %u ms)\n", p, rec_frames, ms / 1000, ms / 100 % 10,
+            rate / 1000, rate / 100 % 10, (total + 1023) / 1024, (u32)((timer_us() - t0) / 1000));
+    if (name_out) { int i = 0; while (p[i] && i < 63) { name_out[i] = p[i]; i++; } name_out[i] = 0; }
+}
+
+/* the picture as big as the screen (4:3 kept), above a 20 px status line */
+static void blit_fit(void)
+{
+    static int xm[4096];
+    int sw = (int)fb_width(), shh = (int)fb_height() - 20;
+    if (sw > 4096) sw = 4096;
+    int dw = sw, dh = sw * oh / ow;
+    if (dh > shh) { dh = shh; dw = shh * ow / oh; }
+    int x0 = (sw - dw) / 2;
+    for (int x = 0; x < dw; x++) xm[x] = x * ow / dw;
+    const u32 *in = (const u32 *)RGB_BUF;
+    int last = -1;
+    u32 *prev = 0;
+    for (int y = 0; y < dh; y++) {
+        int sy = y * oh / dh;
+        u32 *row = fb_row(y) + x0;
+        if (sy == last && prev) { for (int x = 0; x < dw; x++) row[x] = prev[x]; continue; }
+        const u32 *src = in + sy * ow;
+        for (int x = 0; x < dw; x++) row[x] = src[xm[x]];
+        last = sy; prev = row;
+    }
+}
+
+static int micro_key(void)
+{
+    int c = con_trygetc();
+    if (c != 27) return c;
+    c = con_getc();
+    if (c != '[' && c != 'O') return -1;
+    c = con_getc();
+    return c == 'A' ? K_UP : c == 'B' ? K_DOWN : c == 'C' ? K_RIGHT : c == 'D' ? K_LEFT : -1;
+}
+
+void camera_microscope(void)
+{
+    if (!fb_ready() || fb_width() < 320) { kprintf("the microscope needs the HDMI screen\n"); return; }
+    cfg_load();
+    in_show = 1;
+    test_pattern = 0;
+    int t = trace; trace = 0;
+    int r = cam_start();
+    trace = t;
+    if (r) { in_show = 0; return; }
+    ae_begin();
+    web_stream = 0;
+    zm10 = 10; pan_x = W / 2; pan_y = H / 2;
+    fb_hold(1);
+    for (u32 y = 0; y < fb_height(); y++) { u32 *rw = fb_row((int)y); for (u32 x = 0; x < fb_width(); x++) rw[x] = 0; }
+    int rec = 0, fails = 0;
+    char nm[64] = "", msg[64] = "";
+    u64 last = timer_us(), msg_until = 0;
+    u32 fe0 = n_fe, fps = 0;
+    for (;;) {
+        u16 *f = next_frame(500);
+        if (!f) { if (++fails >= 6) { kprintf("the camera stopped sending pictures\n"); break; } continue; }
+        fails = 0;
+        process_frame(f);
+        blit_fit();
+        web_publish();
+        if (rec && rec_frame()) { rec = 0; fb_text_px(8, (int)fb_height() - 18, "memory full - saving video...                    ", 0xFFFF00, 0); rec_save(nm); msg_until = timer_us() + 5000000; }
+        u64 now = timer_us();
+        if (now - last >= 1000000) { fps = (n_fe - fe0) * 10000000 / (u32)(now - last); fe0 = n_fe; last = now; }
+        {   /* status line */
+            char l[200]; int n = 0;
+            put_s(l, &n, "zoom "); put_d10(l, &n, zm10); put_s(l, &n, "x  ");
+            put_d10(l, &n, (int)fps); put_s(l, &n, " fps  ");
+            if (rec) { u32 s = (u32)((now - rec_t0) / 1000000); put_s(l, &n, "REC "); put_int(l, &n, (int)(s / 60)); put_s(l, &n, s % 60 < 10 ? ":0" : ":"); put_int(l, &n, (int)(s % 60));
+                       put_s(l, &n, " "); put_int(l, &n, (int)(rec_len >> 20)); put_s(l, &n, " MB  "); }
+            if (now < msg_until && nm[0]) { put_s(l, &n, nm); put_s(l, &n, "  "); }
+            else if (now < msg_until && msg[0]) { put_s(l, &n, msg); put_s(l, &n, "  "); }
+            put_s(l, &n, "1-5 +- zoom, arrows move, c centre, space photo, v video, q quit");
+            int maxc = (int)fb_width() / 8 - 2;
+            while (n < maxc && n < 190) l[n++] = ' ';
+            if (n > maxc) n = maxc;
+            l[n] = 0;
+            fb_text_px(8, (int)fb_height() - 18, l, rec ? 0xFF6060 : 0xFFFFFF, 0);
+        }
+        int k = micro_key();
+        if (k < 0) continue;
+        int step = (W * 10 / zm10) / 8;
+        if (k >= '1' && k <= '5') zm10 = (k - '0') * 10;
+        else if (k == '+' || k == '=') { if (zm10 < 50) zm10 += 5; }
+        else if (k == '-') { if (zm10 > 10) zm10 -= 5; }
+        else if (k == K_LEFT) pan_x += (s_flip & 1) ? step : -step;
+        else if (k == K_RIGHT) pan_x += (s_flip & 1) ? -step : step;
+        else if (k == K_UP) pan_y += (s_flip & 2) ? step : -step;
+        else if (k == K_DOWN) pan_y += (s_flip & 2) ? -step : step;
+        else if (k == 'c' || k == 'C') { pan_x = W / 2; pan_y = H / 2; }
+        else if (k == ' ' || k == 'p' || k == 'P' || k == 's' || k == 'S') {
+            if (save_jpeg(0, nm) <= 0) { const char *x = "photo NOT saved"; int i = 0; while (x[i]) { msg[i] = x[i]; i++; } msg[i] = 0; nm[0] = 0; }
+            msg_until = timer_us() + 3000000;
+        }
+        else if (k == 'v' || k == 'V' || k == 'r' || k == 'R') {
+            if (!rec) { rec_start(); rec = 1; nm[0] = 0; }
+            else {
+                rec = 0;
+                fb_text_px(8, (int)fb_height() - 18, "saving video to the card...                       ", 0xFFFF00, 0);
+                rec_save(nm);
+                msg_until = timer_us() + 5000000;
+            }
+        }
+        else if (k == 'q' || k == 'Q' || k == '\r' || k == '\n' || k == 3) break;
+        if (pan_x < 0) pan_x = 0;
+        if (pan_x > W) pan_x = W;
+        if (pan_y < 0) pan_y = 0;
+        if (pan_y > H) pan_y = H;
+    }
+    if (rec) { fb_text_px(8, (int)fb_height() - 18, "saving video to the card...                       ", 0xFFFF00, 0); rec_save(0); }
+    zm10 = 10;
+    cam_stop();
+    fb_hold(0); fb_redraw();
+    in_show = 0;
+}
+
 /* live: picture until a key (s / space = save a JPEG); else one picture (after the exposure settled),
  * saved as JPEG when save (file 0 = auto name), shown until a key */
 static void show_(int live, int save, const char *file);
@@ -1257,6 +1496,7 @@ void camera_cmd(int argc, char **argv)
     }
     if (!strcmp(a, "live")) { test_pattern = 0; show(1, 0, 0); return; }
     if (!strcmp(a, "snap")) { test_pattern = 0; show(0, 1, argc > 2 ? argv[2] : 0); return; }
+    if (!strcmp(a, "micro") || !strcmp(a, "microscope")) { camera_microscope(); return; }
     if (!strcmp(a, "send")) {
         int r = camera_take(argc > 2 && !strcmp(argv[2], "save"), 1, 0);
         if (r) kprintf("not sent: %s\n", camera_take_error(r));
@@ -1331,6 +1571,7 @@ void camera_cmd(int argc, char **argv)
             "       cam live            live picture on HDMI, s / space saves a JPEG, other keys stop\n"
             "       cam snap [file]     one picture saved as JPEG (default /CAM/<date>/<time>.JPG)\n"
             "       cam view            one picture on HDMI only, any key\n"
+            "       microscope          full screen, zoom 1-5x, photo + video (also 'cam micro')\n"
             "       cam send [save]     one photo to MQTT <base>/camera (Home Assistant camera), save = also to the card\n"
             "       cam set             picture settings: exposure, gain, ev, wb, brightness, contrast,\n"
             "                           saturation, hue, gamma, flip, quality (saved in /CAM.TXT)\n"

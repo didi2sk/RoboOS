@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.107**
+Current version: **0.108**
 
 ## Supported boards
 
@@ -491,6 +491,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.105: video doorbell (`doorbell`: GPIO button -> photo on the card + to Home Assistant over MQTT, gong / WAV, ring event) and door radar (photo when someone comes); MQTT camera, Take photo button, doorbell event, radar sensor via discovery; `cam send`.
 0.106: IR light on a GPIO for the camera (`cam ir <pin>`, `cam ir_mode off|on|photo|auto`; auto = only in the dark), also on the /camera page.
 0.107: HC-SR04 distance sensor for the door (`doorbell distance <trig> <echo> [cm]`): a photo only when someone is nearer than the limit (with a radar: both).
+0.108: `microscope` - full-screen live camera with zoom 1-5x (sensor pixels), arrows, photo (space) and MJPEG AVI video (v).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -938,6 +939,24 @@ curl -H "Authorization: Bearer <secret>" http://<board>/api/camera.jpg -o foto.j
 ```
 
 `cam test on` gives a made-up colour-bar picture instead of the camera (to try the page without one).
+
+**Microscope (0.108):** `microscope` (or `cam micro`) = the live camera picture over the whole HDMI screen with
+the lowest delay (made for soldering under the camera), keyboard only:
+
+| Key | |
+|---|---|
+| `1` ... `5` | zoom 1x ... 5x (`+` / `-` in steps of 0.5) |
+| arrows | move the zoomed area, `c` = back to the centre |
+| space (or `p`) | photo (JPEG to `/CAM/<date>/`) |
+| `v` | video start / stop (MJPEG AVI, `/CAM/<date>/<time>.AVI`; VLC, Windows and phones play it) |
+| `q` / Enter | quit |
+
+Zoom takes the sensor's own pixels (1296x972), so 2x shows real detail, not a blown-up picture; above ~2.5x it
+only gets bigger. The video is kept in RAM while recording (up to ~190 MB, a few minutes) and written to the card
+when stopped - during recording the picture is a little slower (every frame is JPEG-encoded). The settings of
+`cam set` / the `/camera` page (exposure, white balance, flip...) apply here too. For a real microscope use a
+macro / microscope lens on the camera (e.g. the Waveshare or Arducam microscope lenses for the Pi camera, or an
+M12 / C-mount lens on a camera board with that mount) - the zoom here is digital.
 
 **IR light (0.106):** IR LEDs or an IR lamp switched by a GPIO (through a transistor / MOSFET / relay - not
 straight from the pin): `cam ir 22` (the pin, `cam ir off` = none), `cam ir_mode off|on|photo|auto`

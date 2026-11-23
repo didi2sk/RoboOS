@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.107**
+Aktuálna verzia: **0.108**
 
 ## Podporované dosky
 
@@ -487,6 +487,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.105: videozvonček (`doorbell`: tlačidlo na GPIO -> fotka na kartu + do Home Assistanta cez MQTT, gong / WAV, udalosť zvonenia) a radar pri dverách (fotka, keď niekto príde); MQTT kamera, tlačidlo Take photo, udalosť zvončeka, senzor radaru cez discovery; `cam send`.
 0.106: IR prisvietenie kamery na GPIO (`cam ir <pin>`, `cam ir_mode off|on|photo|auto`; auto = len v tme), aj na stránke /camera.
 0.107: ultrazvukový senzor HC-SR04 pri dverách (`doorbell distance <trig> <echo> [cm]`): fotka len keď je niekto bližšie ako hranica (s radarom: oba).
+0.108: `microscope` - kamera na celú obrazovku so zoomom 1-5x (body snímača), šípky, fotka (medzera) a video MJPEG AVI (v).
 
 ### Dátum a čas (NTP)
 
@@ -929,6 +930,24 @@ curl -H "Authorization: Bearer <heslo>" http://<doska>/api/camera.jpg -o foto.jp
 ```
 
 `cam test on` dá namiesto kamery vymyslený obraz s farebnými pruhmi (na vyskúšanie stránky bez kamery).
+
+**Mikroskop (0.108):** `microscope` (alebo `cam micro`) = živý obraz z kamery na celú HDMI obrazovku s čo najmenším
+oneskorením (na spájkovanie pod kamerou), ovládanie len klávesnicou:
+
+| Kláves | |
+|---|---|
+| `1` ... `5` | zoom 1x ... 5x (`+` / `-` po 0,5) |
+| šípky | posun priblíženej časti, `c` = späť do stredu |
+| medzera (alebo `p`) | fotka (JPEG do `/CAM/<dátum>/`) |
+| `v` | video štart / stop (MJPEG AVI, `/CAM/<dátum>/<čas>.AVI`; prehrá VLC, Windows aj mobil) |
+| `q` / Enter | koniec |
+
+Zoom berie vlastné body snímača (1296x972), takže 2x ukáže naozaj viac detailov, nie len zväčšený obraz; nad ~2,5x
+sa už len zväčšuje. Video sa počas nahrávania drží v RAM (do ~190 MB, pár minút) a na kartu sa zapíše po zastavení -
+počas nahrávania je obraz trochu pomalší (každá snímka sa kóduje do JPEG). Platia nastavenia z `cam set` / stránky
+`/camera` (expozícia, vyváženie bielej, zrkadlenie...). Na skutočný mikroskop daj na kameru makro / mikroskopový
+objektív (napr. mikroskopové objektívy Waveshare alebo Arducam pre kameru k Pi, alebo objektív M12 / C-mount na
+kamere s takým uchytením) - zoom tu je digitálny.
 
 **IR prisvietenie (0.106):** IR LED alebo IR lampa spínaná cez GPIO (cez tranzistor / MOSFET / relé - nie priamo
 z pinu): `cam ir 22` (pin, `cam ir off` = žiadne), `cam ir_mode off|on|photo|auto` (photo = svieti, keď kamera beží,
