@@ -16,6 +16,12 @@
  * a photo: on the card (/CAM/<date>/, radar_photo) and / or to MQTT <base>/camera (radar_mqtt); MQTT
  * <base>/radar = ON / OFF (Home Assistant motion sensor). /DOORBELL.TXT: radar <pin>|off, radar_active high|low,
  * radar_photo on|off, radar_mqtt on|off.
+ *
+ * Distance sensor HC-SR04 (0.107, optional): TRIG + ECHO pins (ECHO is 5 V - through a divider, e.g. 1k / 2k).
+ * Measured every 200 ms (10 us TRIG pulse, the ECHO pulse width / 58 = cm; the wait ends at 2x the limit, so
+ * at most ~15 ms for 1 m). Near = 2 readings in a row below dist_cm, away = 3 above. "Someone at the door" =
+ * near (and, with a radar too, the radar active as well) - so passers-by further away are not photographed.
+ * /DOORBELL.TXT: dist_trig, dist_echo, dist_cm.
  */
 #include "kernel.h"
 #include "sd.h"
@@ -30,12 +36,17 @@ static int radar_pin, radar_high = 1, radar_photo = 1, radar_mqtt, rcnt, rstate;
 static u64 rhold_until;
 static u32 visits;
 static char rlast_when[32], rlast_photo[64];
+static int dist_trig, dist_echo, dist_cm = 100, near, ncnt, fcnt, last_cm = -1;
+static u32 echo_missing;
+static u64 next_dist;
 
 static void scopy(char *d, const char *s, int max) { int i = 0; for (; s[i] && i < max - 1; i++) d[i] = s[i]; d[i] = 0; }
 
 static void setup_pin(void)
 {
-    if (radar_pin) { gpio_func(radar_pin, 0); gpio_pull(radar_pin, radar_high ? 1 : 2); rcnt = 0; rstate = -1; rhold_until = timer_us() + 2000000; }
+    if (radar_pin) { gpio_func(radar_pin, 0); gpio_pull(radar_pin, radar_high ? 1 : 2); }
+    if (dist_trig) { gpio_func(dist_trig, 1); gpio_set(dist_trig, 0); gpio_func(dist_echo, 0); gpio_pull(dist_echo, 1); near = 0; ncnt = fcnt = 0; }
+    rcnt = 0; rstate = -1; rhold_until = timer_us() + 2000000;
     if (!on) return;
     gpio_func(pin, 0);
     gpio_pull(pin, active_low ? 2 : 1);
@@ -45,7 +56,7 @@ static void setup_pin(void)
 
 static void save(void)
 {
-    char b[200]; int n = 0;
+    char b[320]; int n = 0;
     #define PUT(s) do { const char *s_ = (s); while (*s_ && n < (int)sizeof(b) - 1) b[n++] = *s_++; } while (0)
     PUT("state "); PUT(on ? "on" : "off");
     PUT("\npin "); { char t[4]; int k = 0; int v = pin; if (v >= 10) t[k++] = (char)('0' + v / 10); t[k++] = (char)('0' + v % 10); t[k] = 0; PUT(t); }
@@ -57,6 +68,10 @@ static void save(void)
     PUT("\nradar_active "); PUT(radar_high ? "high" : "low");
     PUT("\nradar_photo "); PUT(radar_photo ? "on" : "off");
     PUT("\nradar_mqtt "); PUT(radar_mqtt ? "on" : "off");
+    #define NUM(v) do { char t_[8]; int k_ = 0, v_ = (v); do t_[k_++] = (char)('0' + v_ % 10); while ((v_ /= 10)); while (k_) b[n++] = t_[--k_]; } while (0)
+    if (dist_trig) { PUT("\ndist_trig "); NUM(dist_trig); PUT("\ndist_echo "); NUM(dist_echo); }
+    PUT("\ndist_cm "); NUM(dist_cm);
+    #undef NUM
     PUT("\n");
     #undef PUT
     if (!fat_mounted() || fat_write_file("/DOORBELL.TXT", b, (u32)n)) kprintf("(not saved: no SD card or write error)\n");
@@ -85,13 +100,31 @@ static void load(void)
         else if (!strcmp(l, "radar_active")) radar_high = strcmp(v, "low") != 0;
         else if (!strcmp(l, "radar_photo")) radar_photo = strcmp(v, "off") != 0;
         else if (!strcmp(l, "radar_mqtt")) radar_mqtt = !strcmp(v, "on");
+        else if (!strcmp(l, "dist_trig") || !strcmp(l, "dist_echo") || !strcmp(l, "dist_cm")) {
+            int p = 0; while (*v >= '0' && *v <= '9') p = p * 10 + (*v++ - '0');
+            if (l[5] == 't') dist_trig = (p >= 2 && p <= 27) ? p : 0;
+            else if (l[5] == 'e') dist_echo = (p >= 2 && p <= 27) ? p : 0;
+            else if (p >= 10 && p <= 400) dist_cm = p;
+        }
         *e = sv; l = *e ? e + 1 : e; while (*l == '\n' || *l == '\r') l++;
     }
 }
 
-void doorbell_boot(void) { load(); setup_pin(); }
+void doorbell_boot(void) { load(); if (!dist_echo || dist_echo == dist_trig) dist_trig = 0; setup_pin(); }
 int doorbell_enabled(void) { return on; }
-int doorbell_radar(void) { return radar_pin; }
+int doorbell_radar(void) { return radar_pin || dist_trig; }
+
+/* one HC-SR04 reading: cm, -2 = further than 2x the limit (or nothing), -1 = no echo at all (wiring / no 5 V) */
+static int measure_cm(void)
+{
+    if (gpio_get(dist_echo)) return -1;                    /* still high from before / stuck */
+    gpio_set(dist_trig, 1); delay_us(12); gpio_set(dist_trig, 0);
+    u64 t0 = timer_us();
+    while (!gpio_get(dist_echo)) if (timer_us() - t0 > 5000) return -1;
+    u64 s0 = timer_us(), lim = (u64)(dist_cm * 2 + 20) * 58;
+    while (gpio_get(dist_echo)) if (timer_us() - s0 > lim) return -2;
+    return (int)((timer_us() - s0) / 58);
+}
 
 static void radar_mqtt_state(int present)
 {
@@ -105,7 +138,10 @@ static void visit(void)
     rlast_photo[0] = 0;
     u64 now = clock_now();
     if (now) clock_format(rlast_when, now, 0); else scopy(rlast_when, "(no clock)", sizeof(rlast_when));
-    con_color(COL_CYAN); kprintf("\n[RADAR] someone at the door %s\n", rlast_when); con_color(COL_DEFAULT);
+    con_color(COL_CYAN);
+    if (dist_trig && last_cm >= 0) kprintf("\n[DOOR] someone at the door, %d cm, %s\n", last_cm, rlast_when);
+    else kprintf("\n[DOOR] someone at the door %s\n", rlast_when);
+    con_color(COL_DEFAULT);
     radar_mqtt_state(1);
     int send = radar_mqtt && mqtt_connected();
     if (radar_photo || send) {
@@ -157,12 +193,20 @@ static void ring(void)
 /* core 0, from con_trygetc: every 10 ms */
 void doorbell_poll(void)
 {
-    if ((!on && !radar_pin) || busy || io_held()) return;
+    if ((!on && !radar_pin && !dist_trig) || busy || io_held()) return;
     u64 t = timer_us();
     if (t < next_poll) return;
     next_poll = t + 10000;
-    if (radar_pin) {                                       /* 200 ms the same level = a change */
-        int lv = gpio_get(radar_pin) ? radar_high : !radar_high;
+    if (dist_trig && t >= next_dist) {                     /* HC-SR04 every 200 ms */
+        next_dist = t + 200000;
+        int c = measure_cm();
+        if (c == -1) echo_missing++;
+        last_cm = c;
+        if (c >= 0 && c <= dist_cm) { fcnt = 0; if (++ncnt >= 2) near = 1; }
+        else { ncnt = 0; if (++fcnt >= 3) near = 0; }
+    }
+    if (radar_pin || dist_trig) {                          /* 200 ms the same level = a change */
+        int lv = (!radar_pin || (gpio_get(radar_pin) ? radar_high : !radar_high)) && (!dist_trig || near);
         if (lv != rstate) { if (++rcnt >= 20) { int old = rstate; rstate = lv; rcnt = 0;
             if (lv && old == 0 && t >= rhold_until) { visit(); return; }
             if (!lv && old == 1) radar_mqtt_state(0); } }
@@ -204,6 +248,18 @@ void doorbell_cmd(int argc, char **argv)
     } else if (!strcmp(a, "photo") && argc > 2) { photo = !strcmp(argv[2], "on"); changed = 1; }
     else if (!strcmp(a, "mqtt") && argc > 2) { use_mqtt = !strcmp(argv[2], "on"); changed = 1; }
     else if (!strcmp(a, "test") || !strcmp(a, "ring")) { ring(); return; }
+    else if (!strcmp(a, "distance") && argc > 2) {
+        int x[3] = { 0, 0, 0 }, nx = 0;
+        if (!strcmp(argv[2], "off")) dist_trig = dist_echo = 0;
+        else {
+            for (int i = 2; i < argc && nx < 3; i++) { int p = 0; const char *v = argv[i]; while (*v >= '0' && *v <= '9') p = p * 10 + (*v++ - '0'); if (*v || v == argv[i]) nx = 9; else x[nx++] = p; }
+            if (nx == 1 && x[0] >= 10 && x[0] <= 400) dist_cm = x[0];
+            else if ((nx == 2 || nx == 3) && x[0] >= 2 && x[0] <= 27 && x[1] >= 2 && x[1] <= 27 && x[0] != x[1] && (nx == 2 || (x[2] >= 10 && x[2] <= 400))) {
+                dist_trig = x[0]; dist_echo = x[1]; if (nx == 3) dist_cm = x[2];
+            } else { kprintf("doorbell distance <trig> <echo> [cm] | <cm 10-400> | off   (HC-SR04; ECHO through a 5 V -> 3.3 V divider)\n"); return; }
+        }
+        changed = 1;
+    }
     else if (!strcmp(a, "radar") && argc > 2) {
         const char *v = argv[2];
         if (!strcmp(v, "off")) radar_pin = 0;
@@ -229,7 +285,9 @@ void doorbell_cmd(int argc, char **argv)
                 "       doorbell radar <pin>|off radar / PIR output (high = someone there): photo when someone comes\n"
                 "       doorbell radar photo on|off   that photo on the card (/CAM/<date>/)\n"
                 "       doorbell radar mqtt on|off    that photo to Home Assistant too\n"
-                "       doorbell radar active high|low, doorbell radar test\n");
+                "       doorbell radar active high|low, doorbell radar test\n"
+                "       doorbell distance <trig> <echo> [cm]  HC-SR04: someone only when nearer than cm (default 100)\n"
+                "       doorbell distance <cm> | off          (with a radar too, both must agree; ECHO via a 5 V divider!)\n");
         return;
     }
     if (changed) { save(); setup_pin(); mqtt_rediscover(); }
@@ -243,5 +301,14 @@ void doorbell_cmd(int argc, char **argv)
                 (gpio_get(radar_pin) ? radar_high : !radar_high) ? "SOMEONE THERE" : "nobody", radar_photo ? "on" : "off", radar_mqtt ? "on" : "off", visits);
         if (visits) kprintf("  last visit %s%s%s\n", rlast_when, rlast_photo[0] ? ", photo " : "", rlast_photo);
     } else kprintf("radar off ('doorbell radar <pin>')\n");
+    if (dist_trig) {
+        int c = measure_cm();
+        kprintf("distance HC-SR04 TRIG GPIO%d ECHO GPIO%d: now ", dist_trig, dist_echo);
+        if (c >= 0) kprintf("%d cm", c); else kprintf(c == -2 ? "further than %d cm" : "NO ECHO (wiring? 5 V? divider?)", dist_cm * 2);
+        kprintf(", someone = nearer than %d cm%s%s\n", dist_cm, radar_pin ? " AND the radar" : "", near ? " - SOMEONE THERE" : "");
+        if (echo_missing) kprintf("  readings without an echo: %u\n", echo_missing);
+        if (!radar_pin) kprintf("  photo on card %s, to MQTT %s ('doorbell radar photo|mqtt on|off'), visits %u\n", radar_photo ? "on" : "off", radar_mqtt ? "on" : "off", visits);
+        if (!radar_pin && visits) kprintf("  last visit %s%s%s\n", rlast_when, rlast_photo[0] ? ", photo " : "", rlast_photo);
+    } else kprintf("distance sensor off ('doorbell distance <trig> <echo> [cm]')\n");
     if (changed) kprintf("(saved in /DOORBELL.TXT)\n");
 }
