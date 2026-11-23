@@ -1318,6 +1318,20 @@ static int rec_frame(void)
     return 0;
 }
 
+static int prog_page = -1;
+static u64 prog_t0;
+static void rec_progress(u32 done, u32 len)                  /* 0.114: "saving video 45 %" while it is written */
+{
+    if (prog_page < 0) return;
+    char l[96]; int n = 0;
+    u32 ms = (u32)((timer_us() - prog_t0) / 1000);
+    put_s(l, &n, "saving video to the card: "); put_int(l, &n, (int)((u64)done * 100 / len)); put_s(l, &n, " %  (");
+    put_int(l, &n, (int)(done >> 20)); put_s(l, &n, " / "); put_int(l, &n, (int)(len >> 20)); put_s(l, &n, " MB");
+    if (done && ms > 2000) { u32 left = (u32)((u64)(len - done) * ms / done / 1000); put_s(l, &n, ", "); put_int(l, &n, (int)left); put_s(l, &n, " s left"); }
+    put_s(l, &n, ")          "); l[n] = 0;
+    fb_text_page(prog_page, 8, (int)fb_height() - 18, l, 0xFFFF00, 0);
+}
+
 /* finish the AVI (headers + idx1) and write it; prints the result */
 static void rec_save(char *name_out)
 {
@@ -1355,7 +1369,11 @@ static void rec_save(char *name_out)
     char p[64];
     if (!fat_mounted() || auto_name_x(p, ".AVI", "VID")) { kprintf("video: no SD card / no free name\n"); return; }
     u64 t0 = timer_us();
-    if (fat_write_file(p, b, total)) { kprintf("video: could not write %s\n", p); return; }
+    prog_t0 = t0;
+    fat_write_progress = rec_progress;
+    int wr = fat_write_file(p, b, total);
+    fat_write_progress = 0;
+    if (wr) { kprintf("video: could not write %s\n", p); return; }
     kprintf("video %s: %u frames, %u.%u s, %u.%u fps, %u KB (written in %u ms)\n", p, rec_frames, ms / 1000, ms / 100 % 10,
             rate / 1000, rate / 100 % 10, (total + 1023) / 1024, (u32)((timer_us() - t0) / 1000));
     if (name_out) { int i = 0; while (p[i] && i < 63) { name_out[i] = p[i]; i++; } name_out[i] = 0; }
@@ -1436,7 +1454,7 @@ void camera_microscope(void)
             render_par(f, (u32 *)RGB_BUF, vw, vw, vh, x0, y0, vcw, vch);
             ow = vw; oh = vh;
             web_publish();
-            if (rec && rec_frame()) { rec = 0; fb_text_page(bk ^ (npg > 1), 8, (int)fb_height() - 18, "memory full - saving video...                    ", 0xFFFF00, 0); rec_save(nm); msg_until = timer_us() + 5000000; }
+            if (rec && rec_frame()) { rec = 0; fb_text_page(bk ^ (npg > 1), 8, (int)fb_height() - 18, "memory full - saving video...                    ", 0xFFFF00, 0); prog_page = bk ^ (npg > 1); rec_save(nm); prog_page = -1; msg_until = timer_us() + 5000000; }
         }
         u16 *fphoto = f;
         f = 0;
@@ -1452,7 +1470,7 @@ void camera_microscope(void)
                        put_s(l, &n, " "); put_int(l, &n, (int)(rec_len >> 20)); put_s(l, &n, " MB  "); }
             if (now < msg_until && nm[0]) { put_s(l, &n, nm); put_s(l, &n, "  "); }
             else if (now < msg_until && msg[0]) { put_s(l, &n, msg); put_s(l, &n, "  "); }
-            put_s(l, &n, "+- zoom (1-7), arrows, c centre, f fill/fit, k cores, space photo, v video, q quit");
+            put_s(l, &n, "+- zoom (1-7), arrows, c centre, f fill/fit, k cores, space photo, v video start/stop, q quit");
             int maxc = sw / 8 - 2;
             while (n < maxc && n < 210) l[n++] = ' ';
             if (n > maxc) n = maxc;
@@ -1485,23 +1503,26 @@ void camera_microscope(void)
             if (save_jpeg(0, nm) <= 0) { const char *x = "photo NOT saved"; int i = 0; while (x[i]) { msg[i] = x[i]; i++; } msg[i] = 0; nm[0] = 0; }
             msg_until = timer_us() + 3000000;
         }
-        else if (k == 'v' || k == 'V' || k == 'r' || k == 'R') {
+        else if ((k == '\r' || k == '\n') && rec) k = 'v';     /* 0.114: Enter while recording = stop the video, not quit */
+        if (k == 'v' || k == 'V' || k == 'r' || k == 'R') {
             if (!rec) { rec_start(); rec = 1; nm[0] = 0; }
             else {
                 rec = 0;
                 ow = vw; oh = vh;
                 fb_text_page(bk ^ (npg > 1), 8, (int)fb_height() - 18, "saving video to the card...                       ", 0xFFFF00, 0);
+                prog_page = bk ^ (npg > 1);
                 rec_save(nm);
+                prog_page = -1;
                 msg_until = timer_us() + 5000000;
             }
         }
-        else if (k == 'q' || k == 'Q' || k == '\r' || k == '\n' || k == 3) break;
+        else if (k == 'q' || k == 'Q' || k == 3) break;     /* 0.114: only q / Ctrl+C quit (Enter quit by mistake) */
         if (pan_x < 0) pan_x = 0;
         if (pan_x > W) pan_x = W;
         if (pan_y < 0) pan_y = 0;
         if (pan_y > H) pan_y = H;
     }
-    if (rec) { ow = vw; oh = vh; fb_text_page(bk ^ (npg > 1), 8, (int)fb_height() - 18, "saving video to the card...                       ", 0xFFFF00, 0); rec_save(0); }
+    if (rec) { ow = vw; oh = vh; fb_text_page(bk ^ (npg > 1), 8, (int)fb_height() - 18, "saving video to the card...                       ", 0xFFFF00, 0); prog_page = bk ^ (npg > 1); rec_save(0); prog_page = -1; }
     if (npg > 1) fb_show_page(0);
     zm10 = 10;
     cam_stop();

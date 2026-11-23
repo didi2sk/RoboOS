@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.113**
+Aktuálna verzia: **0.114**
 
 ## Podporované dosky
 
@@ -493,6 +493,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.111: mikroskop bez šmúh v pohybe: kreslí sa do skrytej stránky obrazovky a zobrazí sa celá naraz (dvojitý buffer); `k` / `cam cores 1-3` = počet jadier na kreslenie.
 0.112: zoom mikroskopu v jemnejších krokoch do 2,5x: 1; 1,2; 1,5; 1,8; 2; 2,2; 2,5 (`+` / `-`, klávesy 1-7).
 0.113: s `cam flicker 50|60` automatická expozícia nikdy nejde pod jednu periódu siete (10 / 8,3 ms) - pri veľkom svetle radšej zníži zisk (blikanie lampy zmizne).
+0.114: mikroskop: Enter zastaví video namiesto ukončenia (koniec len `q`), ukladanie ukazuje priebeh (%, MB, zostávajúce sekundy).
 
 ### Dátum a čas (NTP)
 
@@ -948,8 +949,8 @@ oneskorením (na spájkovanie pod kamerou), ovládanie len klávesnicou:
 | `k` | počet jadier na kreslenie: 3 / 1 / 2 (aj `cam cores 1-3` a na stránke `/camera`) |
 | šípky | posun priblíženej časti, `c` = späť do stredu |
 | medzera (alebo `p`) | fotka (JPEG do `/CAM/<dátum>/`) |
-| `v` | video štart / stop (MJPEG AVI, `/CAM/<dátum>/<čas>.AVI`; prehrá VLC, Windows aj mobil) |
-| `q` / Enter | koniec |
+| `v` | video štart / stop (MJPEG AVI, `/CAM/<dátum>/<čas>.AVI`; prehrá VLC, Windows aj mobil); zastaví ho aj Enter |
+| `q` | koniec (0.114: Enter už mikroskop neukončí) |
 
 Od 0.109 beží snímač v mikroskope v režime 1920x1080 (stred snímača, bez spájania bodov, 30 snímok/s) a každý bod
 obrazovky sa kreslí priamo z bodov snímača (prácu si delia jadrá 0, 2 a 3), na celú obrazovku; na 1080p obrazovke je
