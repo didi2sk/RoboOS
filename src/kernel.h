@@ -260,6 +260,7 @@ int  camera_jpeg_take(u32 ticket, const u8 **p, u32 *len);   /* 1 got (busy), 0 
 void camera_jpeg_release(const u8 *p);
 int  camera_web_set(const char *key, const char *val);       /* core 1: 0 ok, -1 bad value, -2 unknown, -3 not ready */
 int  camera_web_json(char *b, int max);
+void camera_microscope(void);                  /* full-screen live view, zoom, photo, AVI video (0.108) */
 void camera_mqtt_request(void);               /* core 1: MQTT set/camera -> core 0 sends a photo */
 int  camera_take(int save, int send, char *name_out);   /* core 0: 0 ok, < 0 camera_take_error() */
 const char *camera_take_error(int r);

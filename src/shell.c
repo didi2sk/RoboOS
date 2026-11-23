@@ -690,6 +690,8 @@ static void logout_cmd(int argc, char **argv)
     users_logout();
 }
 
+static void cmd_micro(int argc, char **argv) { (void)argc; (void)argv; camera_microscope(); }
+
 static const struct cmd cmds[] = {
     { "help",   "",                     "list of commands",                cmd_help   },
     { "info",   "",                     "board and system information",    cmd_info   },
@@ -714,6 +716,7 @@ static const struct cmd cmds[] = {
     { "radio",  "[MHz|up|down|scan|vol|off]", "FM radio (RDA5807M module)",  radio_cmd  },
     { "motion", "[watch|zero|threshold mg|alarm on|off]", "tilt, acceleration, shakes (MPU-6050)", motion_cmd },
     { "doorbell", "[on [pin]|off|test|radar <pin>|...]", "video doorbell: button -> photo + gong + Home Assistant; door radar", doorbell_cmd },
+    { "microscope", "", "camera full screen: zoom 1-5x, arrows, space photo, v video, q quit", cmd_micro },
     { "cam", "[reg a [v]|off]", "camera on the CSI cable (OV5647 / IMX219)", camera_cmd },
     { "thermal", "[once|range lo hi|person C]", "8x8 thermal camera (AMG8833)", thermal_cmd },
     { "voice",  "[add id cmd|del id|volume|mute|wake]", "offline voice commands (DF2301Q)", voice_cmd },
