@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.118**
+Current version: **0.119**
 
 ## Supported boards
 
@@ -500,6 +500,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.114: microscope: Enter stops a video instead of quitting (only `q` quits), saving shows progress (% , MB, seconds left).
 0.115: camera noise reduction (`cam denoise on|off`, checkbox on the page, `d` in the microscope); microscope keys `,` `.` = sharpness.
 0.116: every slider of the `/camera` page takes effect on the next frame, also while the microscope / `cam live` run (brightness, contrast, saturation, hue, gamma and a fixed exposure / gain did not).
+0.119: date + time stamp in photos, videos and Home Assistant photos (`cam stamp on|off`, checkbox on the `/camera` page).
 0.118: microscope key `w` = camera mode: 1920x1080 centre / 2592x1944 whole sensor (sharp, ~15 fps) / 1296x972 whole (fast); photos up to the full 2592x1944; `cam mode full`.
 0.117: file manager on the web: `/files` and `/microscope` (view, download, delete photos and videos on the card).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
@@ -932,6 +933,7 @@ cam flip h|v|hv|off     mirror the picture
 cam quality 85          JPEG quality 10 .. 100
 cam sharpness 30        sharpening 0 .. 200 % (0.110, default 30)
 cam denoise on|off      noise reduction (0.115): small differences from the neighbours are smoothed, edges stay
+cam stamp on|off        date + time in the corner of photos and videos (0.119, default on; needs the clock: NTP / time set)
 cam flicker 50          mains frequency of the lamps 50|60|off: exposure in whole 10 ms steps, never shorter = no flicker (0.110/0.113)
 cam defaults            all back to the defaults
 ```
