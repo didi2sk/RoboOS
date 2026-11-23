@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.105**
+Current version: **0.106**
 
 ## Supported boards
 
@@ -489,6 +489,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.103: camera photos as JPEG (`cam snap [file]`, s / space in `cam live`; own encoder `src/jpeg.c`) + picture settings saved in /CAM.TXT: exposure, gain, ev, white balance, brightness, contrast, saturation, hue, gamma, flip, JPEG quality (`cam set`).
 0.104: camera web page `/camera`: live preview + sliders for every setting + save photo; API `GET|POST /api/camera`, `GET /api/camera.jpg`; `cam test on` = test picture without a camera.
 0.105: video doorbell (`doorbell`: GPIO button -> photo on the card + to Home Assistant over MQTT, gong / WAV, ring event) and door radar (photo when someone comes); MQTT camera, Take photo button, doorbell event, radar sensor via discovery; `cam send`.
+0.106: IR light on a GPIO for the camera (`cam ir <pin>`, `cam ir_mode off|on|photo|auto`; auto = only in the dark), also on the /camera page.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -936,6 +937,13 @@ curl -H "Authorization: Bearer <secret>" http://<board>/api/camera.jpg -o foto.j
 ```
 
 `cam test on` gives a made-up colour-bar picture instead of the camera (to try the page without one).
+
+**IR light (0.106):** IR LEDs or an IR lamp switched by a GPIO (through a transistor / MOSFET / relay - not
+straight from the pin): `cam ir 22` (the pin, `cam ir off` = none), `cam ir_mode off|on|photo|auto`
+(photo = on while the camera runs, auto = while the camera runs and it is dark: the exposure is at its limit
+with gain 8x or more; off again when it is bright even with the light; at least 20 s between changes),
+`cam ir_active low` if the switch turns on with a low level. Also on the `/camera` page (once a pin is set).
+For a picture in the dark the camera must see IR: a NoIR camera, or one without the IR filter.
 
 ### Video doorbell + door radar (0.105)
 
