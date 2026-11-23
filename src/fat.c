@@ -576,6 +576,8 @@ int fat_remove(const char *path)
     }
 }
 
+void (*fat_write_progress)(u32 done, u32 len);           /* 0.114: called every 256 KB of a write (big videos) */
+
 int fat_write_file(const char *path, const void *data, u32 len)
 {
     char dirpath[96];
@@ -621,6 +623,7 @@ int fat_write_file(const char *path, const void *data, u32 len)
                 return -7;
             }
             done += n;
+            if (fat_write_progress && !(done & 0x3FFFF)) fat_write_progress(done, len);
         }
     }
 

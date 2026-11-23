@@ -54,6 +54,7 @@ int  fat_open(const char *path, struct fat_file *f);              /* 0 = ok */
 int  fat_read(struct fat_file *f, void *buf, u32 len);            /* bytes read, <0 error */
 /* create or overwrite a file (8.3 name) in an existing directory; 0 = ok */
 int  fat_write_file(const char *path, const void *data, u32 len);
+extern void (*fat_write_progress)(u32 done, u32 len);    /* set while a long write runs (progress on screen) */
 int  fat_mkdir(const char *path);                                /* 8.3 name; 0 = ok */
 int  fat_remove(const char *path);                               /* file or empty dir; 0 = ok */
 const char *fat_write_error(int e);
