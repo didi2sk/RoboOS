@@ -481,22 +481,31 @@ static u16 *next_frame(u32 ms)
 {
     if (fake) return fake_frame();
     u64 end = timer_us() + (u64)ms * 1000;
+    /* 0.110: the buffer being written is found from the write pointer at frame start, and the OTHER one is
+     * queued for the next frame - so a frame we return is never written into while it is drawn (before, a
+     * late poll that saw start + end together handed out a buffer the next frame was already filling = the
+     * picture flickered / tore when drawing was slower than the camera). Start + end seen together = we
+     * missed the boundary: wait for the end of the frame that is coming in now. */
     int started = 0;
+    u64 wbuf = BUF_A;
     while (timer_us() < end) {
         u32 is = ur(0x104), st = ur(0x004);
         if (st) sta_or |= st;
         if (st & 0x1B6FCu) uw(0x004, st & 0x1B6FCu);    /* 0.99: clear only error/event bits - writing SYN/CS back nonstop (polling) reset the lane sync */
         if (is) uw(0x104, is);
-        if (is & 1) {                                    /* frame start: this frame goes to cur_buf, queue the other */
+        int fe = (is & 2) || (st & (1u << 15));          /* frame end (FEI, or PI0 = the FE packet captured, like Linux) */
+        if (is & 1) {                                    /* frame start */
             n_fs++; started = 1;
-            set_buf(cur_buf ? BUF_A : BUF_B);
+            u32 wp = ur(0x11C) & 0x3FFFFFFFu;
+            wbuf = (wp >= (u32)BUF_B && wp < (u32)BUF_B + 0x800000u) ? BUF_B : BUF_A;
+            set_buf(wbuf == BUF_A ? BUF_B : BUF_A);      /* the next frame goes to the other one */
+            if (fe) { delay_us(20); continue; }          /* that end belonged to an older frame */
         }
-        if (((is & 2) || (st & (1u << 15))) && started) {   /* frame end (FEI, or PI0 = the FE packet captured, like Linux) */
+        if (fe && started) {
             n_fe++;
-            u64 done = cur_buf ? BUF_B : BUF_A;
-            cur_buf ^= 1;
-            dcache_clean_inval((void *)done, FRAME_BYTES);
-            return (u16 *)done;
+            cur_buf = wbuf == BUF_B;
+            dcache_clean_inval((void *)wbuf, FRAME_BYTES);
+            return (u16 *)wbuf;
         }
         delay_us(20);                                    /* do not hammer the receiver's registers */
     }
@@ -516,6 +525,7 @@ static u16 *next_frame(u32 ms)
 #define LINE_US10 (vga_mode == 3 ? 276 : vga_mode == 1 ? 318 : 232)   /* one sensor line in 0.1 us: HTS / pixel rate (Linux modes) */
 static int s_exp10, s_gain10, s_ev, s_wb, s_wbr = 100, s_wbb = 100;   /* exposure ms x10 / gain x10 (0 = auto); wb 0 auto 1 lock 2 manual */
 static int s_bri, s_con, s_sat = 100, s_hue, s_gamma = 1, s_flip, s_q = 85;
+static int s_sharp = 30, s_flicker = 50;                   /* 0.110: sharpness 0-100 %, mains Hz for the exposure (0 = off) */
 static int cfg_loaded;
 static u32 gr_cur = 256, gb_cur = 256;                    /* white balance gains x256 */
 static int ae_exp = 1406, ae_gain = 64, ae_maxl = 1534, ae_skip, ae_ok;   /* lines, gain x16 */
@@ -580,10 +590,14 @@ static void ae_step(u32 mean)
     if (target > 900) target = 900;
     if (!mean) mean = 1;
     u32 f = target * 256 / mean;
-    if (f > 236 && f < 278) { ae_ok++; return; }
+    /* 0.110: calmer - once settled, only a change over 20 % moves it (8 % while settling), and each step goes
+     * half the way (geometric) so the picture does not pump */
+    u32 lo = ae_ok >= 3 ? 213 : 236, hi = ae_ok >= 3 ? 320 : 278;
+    if (f > lo && f < hi) { ae_ok++; return; }
     ae_ok = 0;
     if (f > 768) f = 768;
     if (f < 96) f = 96;
+    f = usqrt(f * 256);
     u64 tot = (u64)ae_exp * (u64)ae_gain * f >> 8;
     int e = ae_exp, g = ae_gain;
     if (s_exp10) g = (int)(tot / (u64)e);
@@ -591,6 +605,10 @@ static void ae_step(u32 mean)
     else { e = (int)(tot / 16); if (e > ae_maxl) e = ae_maxl; if (e < 2) e = 2; g = (int)(tot / (u64)e); }
     if (e > ae_maxl) e = ae_maxl;
     if (e < 2) e = 2;
+    if (s_flicker && !s_exp10 && !s_gain10) {                           /* lamps on 50/60 Hz mains flicker at 100/120 Hz: exposure */
+        int step = (s_flicker == 60 ? 83333 : 100000) / LINE_US10;   /* in whole 10 / 8.3 ms steps = no beat */
+        if (e >= step && step > 0) { int e2 = e / step * step; if (e2 >= step) { g = (int)((u64)g * e / e2); e = e2; } }
+    }
     if (g < 16) g = 16;
     if (g > 255) g = 255;
     if (ir_mode == 3) {                                    /* IR auto: is it dark? */
@@ -624,6 +642,22 @@ static inline u32 px_out(u32 R, u32 G, u32 B)
     return ((u32)r << 16) | ((u32)g << 8) | (u32)b;
 }
 
+/* 0.110: one output pixel from the 2x2 window at q (offsets o: B, G1, G2, R) + sharpening: the green of the
+ * window minus the mean green of the 4 windows 2 sensor pixels away (same colour layout) = detail, added to
+ * all three colours (k = strength x256; 0 = off). q must have 2 pixels of room on every side when k > 0. */
+static inline u32 px_win(const u16 *q, const int *o, int sh, u32 grc, u32 gbc, int k)
+{
+    int B = q[o[0]] >> sh, G = ((int)q[o[1]] + q[o[2]]) >> (sh + 1), R = q[o[3]] >> sh;
+    if (k) {
+        int c = q[o[1]] + q[o[2]], a1 = o[1] - 2, a2 = o[2] - 2, b1 = o[1] + 2, b2 = o[2] + 2;
+        int n = q[a1] + q[a2] + q[b1] + q[b2] + q[o[1] - 2 * W] + q[o[2] - 2 * W] + q[o[1] + 2 * W] + q[o[2] + 2 * W];
+        int d = ((4 * c - n) >> (sh + 1)) * k >> 10;       /* /4 neighbours, /2 two greens -> 10-bit detail */
+        R += d; G += d; B += d;
+        if (R < 0) R = 0; if (G < 0) G = 0; if (B < 0) B = 0;
+    }
+    return px_out((u32)R * grc >> 8, (u32)G, (u32)B * gbc >> 8);
+}
+
 /* raw frame -> RGB_BUF (ow x oh), white balance + exposure updated from it */
 static int g_sh, g_ob, g_og1, g_og2, g_orr;             /* from frame_stats: bit shift, Bayer offsets */
 /* white balance + exposure from a raw frame; sets the g_ values the renderers use */
@@ -649,7 +683,7 @@ static void frame_stats(const u16 *f)
     if (s_wb == 0) {
         u32 gr = (u32)(sg * 256 / sr), gb = (u32)(sg * 256 / sb);
         if (gr > 1024) gr = 1024; if (gb > 1024) gb = 1024;
-        gr_cur = (gr_cur * 3 + gr) / 4; gb_cur = (gb_cur * 3 + gb) / 4;
+        gr_cur = (gr_cur * 7 + gr) / 8; gb_cur = (gb_cur * 7 + gb) / 8;   /* 0.110: slower = no colour flicker */
     } else if (s_wb == 2) { gr_cur = (u32)s_wbr * 256 / 100; gb_cur = (u32)s_wbb * 256 / 100; }
     u32 mean = (u32)(((sr * gr_cur >> 8) + 2 * sg + (sb * gb_cur >> 8)) / 4 / cnt) >> sh;
     ae_step(mean);
@@ -699,14 +733,15 @@ static void process_frame(const u16 *f)
         }
         return;
     }
+    int ko[4] = { ob, og1, og2, orr }, k = s_sharp * 256 / 100;
     for (int y = 0; y < oh; y++) {
         const u16 *a = f + (2 * y) * W;
         int dy = (s_flip & 2) ? oh - 1 - y : y;
         u32 *row = out + dy * ow;
+        int ky = (y >= 1 && y < oh - 2) ? k : 0;
         for (int x = 0; x < ow; x++) {
             const u16 *q = a + 2 * x;
-            u32 B = (u32)q[ob] >> sh, G = ((u32)q[og1] + q[og2]) >> (sh + 1), R = (u32)q[orr] >> sh;
-            row[(s_flip & 1) ? ow - 1 - x : x] = px_out(R * grc >> 8, G, B * gbc >> 8);
+            row[(s_flip & 1) ? ow - 1 - x : x] = px_win(q, ko, sh, grc, gbc, (x >= 1 && x < ow - 2) ? ky : 0);
         }
     }
 }
@@ -742,18 +777,17 @@ static void r_rows(void *arg)
     struct rjob *j = arg;
     u32 grc = gr_cur, gbc = gb_cur;
     int sh = g_sh;
+    int k = s_sharp * 256 / 100;
     for (int y = j->yf; y < j->yt; y++) {
         int yy = (s_flip & 2) ? j->dh - 1 - y : y;
         int ry = j->y0 + (int)((long)yy * j->ch / j->dh);
         const u16 *a = j->f + ry * W;
         u32 *row = j->dst + (long)y * j->stride;
         const int (*oo)[4] = r_off + (ry & 1) * 2;
+        int ky = (ry >= 2 && ry < H - 4) ? k : 0;
         for (int x = 0; x < j->dw; x++) {
             int rx = r_xm[x];
-            const u16 *q = a + rx;
-            const int *o = oo[rx & 1];
-            u32 B = (u32)q[o[0]] >> sh, G = ((u32)q[o[1]] + q[o[2]]) >> (sh + 1), R = (u32)q[o[3]] >> sh;
-            row[x] = px_out(R * grc >> 8, G, B * gbc >> 8);
+            row[x] = px_win(a + rx, oo[rx & 1], sh, grc, gbc, (rx >= 2 && rx < W - 4) ? ky : 0);
         }
     }
 }
@@ -830,6 +864,8 @@ static int cfg_text(char *b)
     put_s(b, &n, "\ngamma "); put_s(b, &n, s_gamma ? "on" : "off");
     put_s(b, &n, "\nflip "); put_s(b, &n, s_flip == 0 ? "off" : s_flip == 1 ? "h" : s_flip == 2 ? "v" : "hv");
     put_s(b, &n, "\nquality "); put_int(b, &n, s_q);
+    put_s(b, &n, "\nsharpness "); put_int(b, &n, s_sharp);
+    put_s(b, &n, "\nflicker "); if (s_flicker) put_int(b, &n, s_flicker); else put_s(b, &n, "off");
     put_s(b, &n, "\nir "); if (ir_pin) put_int(b, &n, ir_pin); else put_s(b, &n, "off");
     put_s(b, &n, "\nir_mode "); put_s(b, &n, ir_mode == 0 ? "off" : ir_mode == 1 ? "on" : ir_mode == 2 ? "photo" : "auto");
     put_s(b, &n, "\nir_active "); put_s(b, &n, ir_low ? "low" : "high");
@@ -884,6 +920,8 @@ static int set_one(const char *k, const char *v, const char *v2)
     if (!strcmp(k, "ir_mode")) { if (!strcmp(v, "off")) ir_mode = 0; else if (!strcmp(v, "on")) ir_mode = 1; else if (!strcmp(v, "photo")) ir_mode = 2;
                                  else if (!strcmp(v, "auto")) ir_mode = 3; else return -1; ir_dark = 0; ir_changed = 0; return 0; }
     if (!strcmp(k, "ir_active")) { if (strcmp(v, "high") && strcmp(v, "low")) return -1; ir_low = !strcmp(v, "low"); ir_now = -1; return 0; }
+    if (!strcmp(k, "sharpness")) { if (num_arg(v, 0, &x) || x < 0 || x > 200) return -1; s_sharp = x; return 0; }
+    if (!strcmp(k, "flicker")) { if (!strcmp(v, "off")) { s_flicker = 0; return 0; } if (num_arg(v, 0, &x) || (x != 50 && x != 60)) return -1; s_flicker = x; return 0; }
     if (!strcmp(k, "quality")) { if (num_arg(v, 0, &x) || x < 10 || x > 100) return -1; s_q = x; return 0; }
     return -2;
 }
@@ -1048,7 +1086,7 @@ static void web_fail(int code)
 static void web_defaults_now(void)
 {
     s_exp10 = s_gain10 = s_ev = s_wb = s_bri = s_con = s_hue = s_flip = 0;
-    s_wbr = s_wbb = s_sat = 100; s_gamma = 1; s_q = 85; gr_cur = gb_cur = 256;
+    s_wbr = s_wbb = s_sat = 100; s_gamma = 1; s_q = 85; gr_cur = gb_cur = 256; s_sharp = 30; s_flicker = 50;
 }
 
 /* core 0: start the camera for the web / MQTT / doorbell (quiet), let the exposure settle; 0 = ok */
@@ -1218,6 +1256,8 @@ int camera_web_json(char *b, int max)
     S(",\"gamma\":"); S(s_gamma ? "true" : "false");
     S(",\"flip\":\""); S(s_flip == 0 ? "off" : s_flip == 1 ? "h" : s_flip == 2 ? "v" : "hv"); S("\"");
     S(",\"quality\":"); put_int(b, &n, s_q);
+    S(",\"sharpness\":"); put_int(b, &n, s_sharp);
+    S(",\"flicker\":"); put_int(b, &n, s_flicker);
     S(",\"ir_pin\":"); put_int(b, &n, ir_pin);
     S(",\"ir_mode\":\""); S(ir_mode == 0 ? "off" : ir_mode == 1 ? "on" : ir_mode == 2 ? "photo" : "auto"); S("\"");
     S(",\"ir_on\":"); S(ir_now > 0 ? "true" : "false");
@@ -1629,14 +1669,14 @@ void camera_cmd(int argc, char **argv)
         for (char *l = b; *l; ) { char *e = l; while (*e && *e != '\n') e++; char sv = *e; *e = 0; kprintf("  %s\n", l); *e = sv; l = *e ? e + 1 : e; }
         kprintf("change: cam exposure auto|<ms>, gain auto|<x>, ev <-3..3>, wb auto|lock|<r%%> <b%%>,\n"
                 "        brightness|contrast <-100..100>, saturation <0..300>, hue <-180..180>,\n"
-                "        gamma on|off, flip off|h|v|hv, quality <10..100>; cam defaults\n"
+                "        gamma on|off, flip off|h|v|hv, quality <10..100>, sharpness <0..200>, flicker 50|60|off; cam defaults\n"
                 "IR light: cam ir <gpio>|off, cam ir_mode off|on|photo|auto, cam ir_active high|low\n");
         return;
     }
     if (!strcmp(a, "defaults")) {
         cfg_load();
         s_exp10 = s_gain10 = s_ev = s_wb = s_bri = s_con = s_hue = s_flip = 0;
-        s_wbr = s_wbb = s_sat = 100; s_gamma = 1; s_q = 85; gr_cur = gb_cur = 256;
+        s_wbr = s_wbb = s_sat = 100; s_gamma = 1; s_q = 85; gr_cur = gb_cur = 256; s_sharp = 30; s_flicker = 50;
         prep(); cfg_save();
         kprintf("camera settings back to the defaults\n");
         return;

@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.109**
+Aktuálna verzia: **0.110**
 
 ## Podporované dosky
 
@@ -489,6 +489,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.107: ultrazvukový senzor HC-SR04 pri dverách (`doorbell distance <trig> <echo> [cm]`): fotka len keď je niekto bližšie ako hranica (s radarom: oba).
 0.108: `microscope` - kamera na celú obrazovku so zoomom 1-5x (body snímača), šípky, fotka (medzera) a video MJPEG AVI (v).
 0.109: mikroskop v plnom rozlíšení na celú obrazovku: režim snímača 1920x1080 (aj `cam mode 1080`), každý bod obrazovky z bodov snímača na 3 jadrách, `f` = celá obrazovka / celý obraz, fotky do 1920x1080.
+0.110: ostrosť kamery (posuvník + `cam sharpness`), menej kmitania: kreslená snímka sa už neprepisuje ďalšou, expozícia v celých periódach siete (`cam flicker 50|60|off`), pokojnejšia automatika expozície a vyváženia bielej.
 
 ### Dátum a čas (NTP)
 
@@ -912,6 +913,8 @@ cam hue -10             posun odtieňa v stupňoch, -180 .. 180
 cam gamma on|off        gama 2 (off = lineárne, vzhľad z 0.102)
 cam flip h|v|hv|off     zrkadlenie obrazu
 cam quality 85          kvalita JPEG 10 .. 100
+cam sharpness 30        doostrenie 0 .. 200 % (0.110, predvolene 30)
+cam flicker 50          frekvencia siete pre lampy 50|60|off: expozícia v celých 10 ms krokoch = nebliká (0.110)
 cam defaults            všetko späť na predvolené
 ```
 

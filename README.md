@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.109**
+Current version: **0.110**
 
 ## Supported boards
 
@@ -493,6 +493,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.107: HC-SR04 distance sensor for the door (`doorbell distance <trig> <echo> [cm]`): a photo only when someone is nearer than the limit (with a radar: both).
 0.108: `microscope` - full-screen live camera with zoom 1-5x (sensor pixels), arrows, photo (space) and MJPEG AVI video (v).
 0.109: microscope in full resolution and full screen: sensor mode 1920x1080 (`cam mode 1080` too), every screen pixel drawn from the sensor pixels on 3 cores, `f` = fill / fit, photos up to 1920x1080.
+0.110: camera sharpness (slider + `cam sharpness`), less flicker: a frame being drawn is never overwritten by the next one, exposure in whole mains periods (`cam flicker 50|60|off`), calmer auto exposure and white balance.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -921,6 +922,8 @@ cam hue -10             colour turn in degrees, -180 .. 180
 cam gamma on|off        gamma 2 (off = linear, the 0.102 look)
 cam flip h|v|hv|off     mirror the picture
 cam quality 85          JPEG quality 10 .. 100
+cam sharpness 30        sharpening 0 .. 200 % (0.110, default 30)
+cam flicker 50          mains frequency of the lamps 50|60|off: exposure in whole 10 ms steps = no flicker (0.110)
 cam defaults            all back to the defaults
 ```
 
