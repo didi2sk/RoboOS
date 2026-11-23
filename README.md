@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.108**
+Current version: **0.109**
 
 ## Supported boards
 
@@ -492,6 +492,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.106: IR light on a GPIO for the camera (`cam ir <pin>`, `cam ir_mode off|on|photo|auto`; auto = only in the dark), also on the /camera page.
 0.107: HC-SR04 distance sensor for the door (`doorbell distance <trig> <echo> [cm]`): a photo only when someone is nearer than the limit (with a radar: both).
 0.108: `microscope` - full-screen live camera with zoom 1-5x (sensor pixels), arrows, photo (space) and MJPEG AVI video (v).
+0.109: microscope in full resolution and full screen: sensor mode 1920x1080 (`cam mode 1080` too), every screen pixel drawn from the sensor pixels on 3 cores, `f` = fill / fit, photos up to 1920x1080.
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -946,13 +947,17 @@ the lowest delay (made for soldering under the camera), keyboard only:
 | Key | |
 |---|---|
 | `1` ... `5` | zoom 1x ... 5x (`+` / `-` in steps of 0.5) |
+| `f` | fill the whole screen (default) / fit the whole picture |
 | arrows | move the zoomed area, `c` = back to the centre |
 | space (or `p`) | photo (JPEG to `/CAM/<date>/`) |
 | `v` | video start / stop (MJPEG AVI, `/CAM/<date>/<time>.AVI`; VLC, Windows and phones play it) |
 | `q` / Enter | quit |
 
-Zoom takes the sensor's own pixels (1296x972), so 2x shows real detail, not a blown-up picture; above ~2.5x it
-only gets bigger. The video is kept in RAM while recording (up to ~190 MB, a few minutes) and written to the card
+Since 0.109 the microscope runs the sensor in its 1920x1080 mode (the centre of the sensor, no binning, 30 fps) and
+draws every screen pixel straight from the sensor pixels (cores 0, 2 and 3 share the work), filling the whole screen;
+on a 1080p screen 1x is one sensor pixel per screen pixel, the zoom shows real detail. Photos are saved at the
+sensor's resolution of what is on the screen (up to 1920x1080), videos at 960x540. If the camera gives no picture
+in that mode, it falls back to 1296x972 by itself. The video is kept in RAM while recording (up to ~190 MB, a few minutes) and written to the card
 when stopped - during recording the picture is a little slower (every frame is JPEG-encoded). The settings of
 `cam set` / the `/camera` page (exposure, white balance, flip...) apply here too. For a real microscope use a
 macro / microscope lens on the camera (e.g. the Waveshare or Arducam microscope lenses for the Pi camera, or an
