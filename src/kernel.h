@@ -114,6 +114,7 @@ void fb_hold(int on);                    /* 1 = a picture owns the screen */
 void fb_redraw(void);
 u32 *fb_row(int y);                      /* pixels 0x00RRGGBB */
 void fb_text_px(int x, int y, const char *s, u32 fg, u32 bg);
+void fb_text_page(int page, int x, int y, const char *s, u32 fg, u32 bg);
 void fb_clreol(void);
 int  fb_cols(void);
 int  fb_rows(void);

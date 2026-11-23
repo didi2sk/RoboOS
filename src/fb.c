@@ -215,6 +215,21 @@ void fb_hold(int on)
 u32 *fb_row(int y) { return (u32 *)(fb + (u32)y * pitch); }
 
 /* text straight onto the picture (not part of the console), 8x16 glyphs */
+/* 0.111: text on page 0 or 1 (the microscope draws its status line on the hidden page) */
+void fb_text_page(int page, int x, int y, const char *s, u32 fg, u32 back)
+{
+    if (!fb || page < 0 || page >= (int)pages) return;
+    for (; *s; s++, x += 8) {
+        if (x < 0 || x + 8 > (int)width || y < 0 || y + 16 > (int)height) continue;
+        u8 ch = (u8)*s;
+        const u8 *glyph = (ch >= 32 && ch < 127) ? font8x16[ch - 32] : font8x16[0];
+        for (int gy = 0; gy < 16; gy++) {
+            u32 *px = fb_page_row(page, y + gy) + x;
+            for (int gx = 0; gx < 8; gx++) px[gx] = (glyph[gy] & (0x80 >> gx)) ? fg : back;
+        }
+    }
+}
+
 void fb_text_px(int x, int y, const char *s, u32 fg, u32 back)
 {
     if (!fb) return;

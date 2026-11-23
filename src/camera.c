@@ -525,7 +525,7 @@ static u16 *next_frame(u32 ms)
 #define LINE_US10 (vga_mode == 3 ? 276 : vga_mode == 1 ? 318 : 232)   /* one sensor line in 0.1 us: HTS / pixel rate (Linux modes) */
 static int s_exp10, s_gain10, s_ev, s_wb, s_wbr = 100, s_wbb = 100;   /* exposure ms x10 / gain x10 (0 = auto); wb 0 auto 1 lock 2 manual */
 static int s_bri, s_con, s_sat = 100, s_hue, s_gamma = 1, s_flip, s_q = 85;
-static int s_sharp = 30, s_flicker = 50;                   /* 0.110: sharpness 0-100 %, mains Hz for the exposure (0 = off) */
+static int s_sharp = 30, s_flicker = 50, s_cores = 3;   /* 0.111: s_cores = cores that draw (1-3) */                   /* 0.110: sharpness 0-100 %, mains Hz for the exposure (0 = off) */
 static int cfg_loaded;
 static u32 gr_cur = 256, gb_cur = 256;                    /* white balance gains x256 */
 static int ae_exp = 1406, ae_gain = 64, ae_maxl = 1534, ae_skip, ae_ok;   /* lines, gain x16 */
@@ -810,9 +810,11 @@ static void render_par(const u16 *f, u32 *dst, int stride, int dw, int dh, int x
         jb[k].x0 = x0; jb[k].y0 = y0; jb[k].cw = cw; jb[k].ch = ch;
         jb[k].yf = dh * k / 3; jb[k].yt = dh * (k + 1) / 3;
     }
-    for (int k = 1; k < 3; k++) if (smp_worker_ok(k + 1) && smp_run(k + 1, r_rows, &jb[k]) == 0) used[k] = 1;
+    int nc = s_cores < 1 ? 1 : s_cores > 3 ? 3 : s_cores;
+    for (int k = 0; k < 3; k++) { jb[k].yf = dh * k / nc; jb[k].yt = k < nc ? dh * (k + 1) / nc : jb[k].yf; }
+    for (int k = 1; k < nc; k++) if (smp_worker_ok(k + 1) && smp_run(k + 1, r_rows, &jb[k]) == 0) used[k] = 1;
     r_rows(&jb[0]);
-    for (int k = 1; k < 3; k++) { if (used[k]) { if (smp_wait(k + 1, 500)) r_rows(&jb[k]); } else r_rows(&jb[k]); }
+    for (int k = 1; k < nc; k++) { if (used[k]) { if (smp_wait(k + 1, 500)) r_rows(&jb[k]); } else r_rows(&jb[k]); }
 }
 
 static int ae_exp_f(void) { return ae_exp * ae_gain; }
@@ -865,6 +867,7 @@ static int cfg_text(char *b)
     put_s(b, &n, "\nflip "); put_s(b, &n, s_flip == 0 ? "off" : s_flip == 1 ? "h" : s_flip == 2 ? "v" : "hv");
     put_s(b, &n, "\nquality "); put_int(b, &n, s_q);
     put_s(b, &n, "\nsharpness "); put_int(b, &n, s_sharp);
+    put_s(b, &n, "\ncores "); put_int(b, &n, s_cores);
     put_s(b, &n, "\nflicker "); if (s_flicker) put_int(b, &n, s_flicker); else put_s(b, &n, "off");
     put_s(b, &n, "\nir "); if (ir_pin) put_int(b, &n, ir_pin); else put_s(b, &n, "off");
     put_s(b, &n, "\nir_mode "); put_s(b, &n, ir_mode == 0 ? "off" : ir_mode == 1 ? "on" : ir_mode == 2 ? "photo" : "auto");
@@ -920,6 +923,7 @@ static int set_one(const char *k, const char *v, const char *v2)
     if (!strcmp(k, "ir_mode")) { if (!strcmp(v, "off")) ir_mode = 0; else if (!strcmp(v, "on")) ir_mode = 1; else if (!strcmp(v, "photo")) ir_mode = 2;
                                  else if (!strcmp(v, "auto")) ir_mode = 3; else return -1; ir_dark = 0; ir_changed = 0; return 0; }
     if (!strcmp(k, "ir_active")) { if (strcmp(v, "high") && strcmp(v, "low")) return -1; ir_low = !strcmp(v, "low"); ir_now = -1; return 0; }
+    if (!strcmp(k, "cores")) { if (num_arg(v, 0, &x) || x < 1 || x > 3) return -1; s_cores = x; return 0; }
     if (!strcmp(k, "sharpness")) { if (num_arg(v, 0, &x) || x < 0 || x > 200) return -1; s_sharp = x; return 0; }
     if (!strcmp(k, "flicker")) { if (!strcmp(v, "off")) { s_flicker = 0; return 0; } if (num_arg(v, 0, &x) || (x != 50 && x != 60)) return -1; s_flicker = x; return 0; }
     if (!strcmp(k, "quality")) { if (num_arg(v, 0, &x) || x < 10 || x > 100) return -1; s_q = x; return 0; }
@@ -1086,7 +1090,7 @@ static void web_fail(int code)
 static void web_defaults_now(void)
 {
     s_exp10 = s_gain10 = s_ev = s_wb = s_bri = s_con = s_hue = s_flip = 0;
-    s_wbr = s_wbb = s_sat = 100; s_gamma = 1; s_q = 85; gr_cur = gb_cur = 256; s_sharp = 30; s_flicker = 50;
+    s_wbr = s_wbb = s_sat = 100; s_gamma = 1; s_q = 85; gr_cur = gb_cur = 256; s_sharp = 30; s_flicker = 50; s_cores = 3;
 }
 
 /* core 0: start the camera for the web / MQTT / doorbell (quiet), let the exposure settle; 0 = ok */
@@ -1257,6 +1261,7 @@ int camera_web_json(char *b, int max)
     S(",\"flip\":\""); S(s_flip == 0 ? "off" : s_flip == 1 ? "h" : s_flip == 2 ? "v" : "hv"); S("\"");
     S(",\"quality\":"); put_int(b, &n, s_q);
     S(",\"sharpness\":"); put_int(b, &n, s_sharp);
+    S(",\"cores\":"); put_int(b, &n, s_cores);
     S(",\"flicker\":"); put_int(b, &n, s_flicker);
     S(",\"ir_pin\":"); put_int(b, &n, ir_pin);
     S(",\"ir_mode\":\""); S(ir_mode == 0 ? "off" : ir_mode == 1 ? "on" : ir_mode == 2 ? "photo" : "auto"); S("\"");
@@ -1394,9 +1399,12 @@ void camera_microscope(void)
     zm10 = 10; pan_x = W / 2; pan_y = H / 2;
     fb_hold(1);
     int sw = (int)fb_width(), shh = (int)fb_height() - 20;
-    u32 *fb0 = fb_row(0);
-    int pitch = (int)(fb_row(1) - fb0);
-    for (u32 y = 0; y < fb_height(); y++) { u32 *rw = fb_row((int)y); for (u32 x = 0; x < fb_width(); x++) rw[x] = 0; }
+    /* 0.111: two pages when the screen has them - draw the hidden one, then show it whole (no tearing:
+     * drawing into the shown page in 3 bands at once left smears in motion) */
+    int npg = fb_pages() > 1 ? 2 : 1, bk = npg > 1 ? 1 : 0;
+    int pitch = (int)(fb_row(1) - fb_row(0));
+    for (int pg = 0; pg < npg; pg++)
+        for (u32 y = 0; y < fb_height(); y++) { u32 *rw = fb_page_row(pg, (int)y); for (u32 x = 0; x < fb_width(); x++) rw[x] = 0; }
     int rec = 0, fails = 0, fill = 1, vw = W / 2, vh = H / 2;
     char nm[64] = "", msg[64] = "";
     u64 last = timer_us(), msg_until = 0;
@@ -1419,13 +1427,13 @@ void camera_microscope(void)
         if (y0 < 0) y0 = 0;
         pan_x = x0 + vcw / 2; pan_y = y0 + vch / 2;
         int ox = (sw - dw) / 2, oy = (shh - dh) / 2;
-        render_par(f, fb0 + (long)oy * pitch + ox, pitch, dw, dh, x0, y0, vcw, vch);
+        render_par(f, fb_page_row(bk, oy) + ox, pitch, dw, dh, x0, y0, vcw, vch);
         ms_frame = (u32)((timer_us() - tf) / 1000);
         if (rec || __atomic_load_n(&web_req, __ATOMIC_ACQUIRE) != web_done) {   /* video / web: a fixed-size copy */
             render_par(f, (u32 *)RGB_BUF, vw, vw, vh, x0, y0, vcw, vch);
             ow = vw; oh = vh;
             web_publish();
-            if (rec && rec_frame()) { rec = 0; fb_text_px(8, (int)fb_height() - 18, "memory full - saving video...                    ", 0xFFFF00, 0); rec_save(nm); msg_until = timer_us() + 5000000; }
+            if (rec && rec_frame()) { rec = 0; fb_text_page(bk ^ (npg > 1), 8, (int)fb_height() - 18, "memory full - saving video...                    ", 0xFFFF00, 0); rec_save(nm); msg_until = timer_us() + 5000000; }
         }
         u16 *fphoto = f;
         f = 0;
@@ -1435,18 +1443,20 @@ void camera_microscope(void)
             char l[220]; int n = 0;
             put_int(l, &n, W); put_s(l, &n, "x"); put_int(l, &n, H);
             put_s(l, &n, "  zoom "); put_d10(l, &n, zm10); put_s(l, &n, fill ? "x fill  " : "x fit  ");
-            put_d10(l, &n, (int)fps); put_s(l, &n, " fps "); put_int(l, &n, (int)ms_frame); put_s(l, &n, " ms  ");
+            put_d10(l, &n, (int)fps); put_s(l, &n, " fps "); put_int(l, &n, (int)ms_frame); put_s(l, &n, " ms ");
+            put_int(l, &n, s_cores); put_s(l, &n, s_cores > 1 ? " cores  " : " core  ");
             if (rec) { u32 s2 = (u32)((now - rec_t0) / 1000000); put_s(l, &n, "REC "); put_int(l, &n, (int)(s2 / 60)); put_s(l, &n, s2 % 60 < 10 ? ":0" : ":"); put_int(l, &n, (int)(s2 % 60));
                        put_s(l, &n, " "); put_int(l, &n, (int)(rec_len >> 20)); put_s(l, &n, " MB  "); }
             if (now < msg_until && nm[0]) { put_s(l, &n, nm); put_s(l, &n, "  "); }
             else if (now < msg_until && msg[0]) { put_s(l, &n, msg); put_s(l, &n, "  "); }
-            put_s(l, &n, "1-5 +- zoom, arrows, c centre, f fill/fit, space photo, v video, q quit");
+            put_s(l, &n, "1-5 +- zoom, arrows, c centre, f fill/fit, k cores, space photo, v video, q quit");
             int maxc = sw / 8 - 2;
             while (n < maxc && n < 210) l[n++] = ' ';
             if (n > maxc) n = maxc;
             l[n] = 0;
-            fb_text_px(8, (int)fb_height() - 18, l, rec ? 0xFF6060 : 0xFFFFFF, 0);
+            fb_text_page(bk, 8, (int)fb_height() - 18, l, rec ? 0xFF6060 : 0xFFFFFF, 0);
         }
+        if (npg > 1) { fb_show_page(bk); bk ^= 1; }      /* the finished picture at once */
         int k = micro_key();
         if (k < 0) continue;
         int step = (W * 10 / zm10) / 8;
@@ -1458,7 +1468,8 @@ void camera_microscope(void)
         else if (k == K_UP) pan_y += (s_flip & 2) ? step : -step;
         else if (k == K_DOWN) pan_y += (s_flip & 2) ? -step : step;
         else if (k == 'c' || k == 'C') { pan_x = W / 2; pan_y = H / 2; }
-        else if (k == 'f' || k == 'F') { fill = !fill; for (u32 y = 0; y < (u32)shh; y++) { u32 *rw = fb_row((int)y); for (int x = 0; x < sw; x++) rw[x] = 0; } }
+        else if (k == 'f' || k == 'F') { fill = !fill; for (int pg = 0; pg < npg; pg++) for (u32 y = 0; y < (u32)shh; y++) { u32 *rw = fb_page_row(pg, (int)y); for (int x = 0; x < sw; x++) rw[x] = 0; } }
+        else if (k == 'k' || k == 'K') { s_cores = s_cores >= 3 ? 1 : s_cores + 1; web_save_at = timer_us() + 2000000; }
         else if (k == ' ' || k == 'p' || k == 'P' || k == 's' || k == 'S') {
             /* the photo: what is on the screen, at the sensor's own resolution (up to 1920x1080) */
             int pw = vcw, ph = vch;
@@ -1473,7 +1484,7 @@ void camera_microscope(void)
             else {
                 rec = 0;
                 ow = vw; oh = vh;
-                fb_text_px(8, (int)fb_height() - 18, "saving video to the card...                       ", 0xFFFF00, 0);
+                fb_text_page(bk ^ (npg > 1), 8, (int)fb_height() - 18, "saving video to the card...                       ", 0xFFFF00, 0);
                 rec_save(nm);
                 msg_until = timer_us() + 5000000;
             }
@@ -1484,7 +1495,8 @@ void camera_microscope(void)
         if (pan_y < 0) pan_y = 0;
         if (pan_y > H) pan_y = H;
     }
-    if (rec) { ow = vw; oh = vh; fb_text_px(8, (int)fb_height() - 18, "saving video to the card...                       ", 0xFFFF00, 0); rec_save(0); }
+    if (rec) { ow = vw; oh = vh; fb_text_page(bk ^ (npg > 1), 8, (int)fb_height() - 18, "saving video to the card...                       ", 0xFFFF00, 0); rec_save(0); }
+    if (npg > 1) fb_show_page(0);
     zm10 = 10;
     cam_stop();
     vga_mode = old_mode; W = oldW; H = oldH;
@@ -1669,7 +1681,7 @@ void camera_cmd(int argc, char **argv)
         for (char *l = b; *l; ) { char *e = l; while (*e && *e != '\n') e++; char sv = *e; *e = 0; kprintf("  %s\n", l); *e = sv; l = *e ? e + 1 : e; }
         kprintf("change: cam exposure auto|<ms>, gain auto|<x>, ev <-3..3>, wb auto|lock|<r%%> <b%%>,\n"
                 "        brightness|contrast <-100..100>, saturation <0..300>, hue <-180..180>,\n"
-                "        gamma on|off, flip off|h|v|hv, quality <10..100>, sharpness <0..200>, flicker 50|60|off; cam defaults\n"
+                "        gamma on|off, flip off|h|v|hv, quality <10..100>, sharpness <0..200>, flicker 50|60|off, cores 1-3; cam defaults\n"
                 "IR light: cam ir <gpio>|off, cam ir_mode off|on|photo|auto, cam ir_active high|low\n");
         return;
     }
