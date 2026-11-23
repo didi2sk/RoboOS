@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.117**
+Aktuálna verzia: **0.118**
 
 ## Podporované dosky
 
@@ -496,6 +496,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.114: mikroskop: Enter zastaví video namiesto ukončenia (koniec len `q`), ukladanie ukazuje priebeh (%, MB, zostávajúce sekundy).
 0.115: odšumenie kamery (`cam denoise on|off`, políčko na stránke, `d` v mikroskope); v mikroskope klávesy `,` `.` = ostrosť.
 0.116: každý posuvník stránky `/camera` sa prejaví na ďalšej snímke, aj počas mikroskopu / `cam live` (jas, kontrast, sýtosť, odtieň, gama a pevná expozícia / zisk predtým nie).
+0.118: v mikroskope kláves `w` = režim kamery: 1920x1080 stred / 2592x1944 celý snímač (ostrý, ~15 snímok/s) / 1296x972 celý (rýchly); fotky až v plnom 2592x1944; `cam mode full`.
 0.117: správca súborov na webe: `/files` a `/microscope` (zobraziť, stiahnuť, zmazať fotky a videá na karte).
 
 ### Dátum a čas (NTP)
@@ -953,6 +954,7 @@ oneskorením (na spájkovanie pod kamerou), ovládanie len klávesnicou:
 | `k` | počet jadier na kreslenie: 3 / 1 / 2 (aj `cam cores 1-3` a na stránke `/camera`) |
 | `,` / `.` | ostrosť - / + 10 % (0.115) |
 | `d` | odšumenie zapnúť / vypnúť (0.115) |
+| `w` | režim kamery (0.118): **1080** = stred snímača, ostrý, 30 snímok/s -> **full** = celý snímač 2592x1944, väčšia plocha a ostrý, ~15 snímok/s -> **1296** = celý snímač so spájaním bodov, 30 snímok/s (zapamätá sa ako `micro_mode`) |
 | šípky | posun priblíženej časti, `c` = späť do stredu |
 | medzera (alebo `p`) | fotka (JPEG do `/CAM/<dátum>/`) |
 | `v` | video štart / stop (MJPEG AVI, `/CAM/<dátum>/<čas>.AVI`; prehrá VLC, Windows aj mobil); zastaví ho aj Enter |
