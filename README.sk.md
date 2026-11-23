@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.106**
+Aktuálna verzia: **0.107**
 
 ## Podporované dosky
 
@@ -486,6 +486,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.104: webová stránka kamery `/camera`: živý náhľad + posuvníky pre každé nastavenie + uloženie fotky; API `GET|POST /api/camera`, `GET /api/camera.jpg`; `cam test on` = skúšobný obraz bez kamery.
 0.105: videozvonček (`doorbell`: tlačidlo na GPIO -> fotka na kartu + do Home Assistanta cez MQTT, gong / WAV, udalosť zvonenia) a radar pri dverách (fotka, keď niekto príde); MQTT kamera, tlačidlo Take photo, udalosť zvončeka, senzor radaru cez discovery; `cam send`.
 0.106: IR prisvietenie kamery na GPIO (`cam ir <pin>`, `cam ir_mode off|on|photo|auto`; auto = len v tme), aj na stránke /camera.
+0.107: ultrazvukový senzor HC-SR04 pri dverách (`doorbell distance <trig> <echo> [cm]`): fotka len keď je niekto bližšie ako hranica (s radarom: oba).
 
 ### Dátum a čas (NTP)
 
@@ -952,9 +953,15 @@ doorbell test               zazvoní hneď
 doorbell radar 17           výstup radaru na GPIO17 (doorbell radar off = bez radaru)
 doorbell radar photo on     fotka z radaru na kartu
 doorbell radar mqtt on      fotka z radaru aj do Home Assistanta (predvolene vypnuté)
+doorbell distance 23 24 100 HC-SR04 (TRIG GPIO23, ECHO GPIO24): niekto len bližšie ako 100 cm
 doorbell                    stav, posledné zvonenie / návšteva
 cam send                    jedna fotka do Home Assistanta hneď
 ```
+
+Radar vidí ďaleko (aj cez steny). Aby fotilo len človeka priamo pri dverách, pridaj ultrazvukový senzor
+HC-SR04 (0.107): `doorbell distance <trig> <echo> [cm]` (`doorbell distance 80` zmení len hranicu, `off` ho
+odstráni). Jeho pin ECHO dáva 5 V - zapoj ho cez delič (napr. 1 kOhm od ECHO, 2 kOhm na GND, stred na GPIO),
+VCC na 5 V. Ak je zapojený aj radar, musia súhlasiť oba. `doorbell` ukáže aktuálnu vzdialenosť.
 
 Nastavenia v `/DOORBELL.TXT`. So zapnutým MQTT (`mqtt broker ...`, discovery on) dostane Home Assistant sám:
 **kameru** (`<base>/camera`, posledná fotka, retained), tlačidlo **Take photo** (`<base>/set/camera`), udalosť

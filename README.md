@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.106**
+Current version: **0.107**
 
 ## Supported boards
 
@@ -490,6 +490,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.104: camera web page `/camera`: live preview + sliders for every setting + save photo; API `GET|POST /api/camera`, `GET /api/camera.jpg`; `cam test on` = test picture without a camera.
 0.105: video doorbell (`doorbell`: GPIO button -> photo on the card + to Home Assistant over MQTT, gong / WAV, ring event) and door radar (photo when someone comes); MQTT camera, Take photo button, doorbell event, radar sensor via discovery; `cam send`.
 0.106: IR light on a GPIO for the camera (`cam ir <pin>`, `cam ir_mode off|on|photo|auto`; auto = only in the dark), also on the /camera page.
+0.107: HC-SR04 distance sensor for the door (`doorbell distance <trig> <echo> [cm]`): a photo only when someone is nearer than the limit (with a radar: both).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
 
 ### Date and time (NTP)
@@ -962,9 +963,15 @@ doorbell test               ring now
 doorbell radar 17           radar output on GPIO17 (doorbell radar off = none)
 doorbell radar photo on     radar photo on the card
 doorbell radar mqtt on      radar photo to Home Assistant too (default off)
+doorbell distance 23 24 100 HC-SR04 (TRIG GPIO23, ECHO GPIO24): someone only nearer than 100 cm
 doorbell                    status, last ring / visit
 cam send                    one photo to Home Assistant now
 ```
+
+A radar sees far (and through walls). To photograph only someone right at the door, add an HC-SR04
+distance sensor (0.107): `doorbell distance <trig> <echo> [cm]` (`doorbell distance 80` changes only the limit,
+`off` removes it). Its ECHO pin gives 5 V - connect it through a divider (e.g. 1 kOhm from ECHO, 2 kOhm to GND,
+the middle to the GPIO), VCC to 5 V. With a radar as well, both must agree. `doorbell` shows the distance now.
 
 Settings in `/DOORBELL.TXT`. With MQTT on (`mqtt broker ...`, discovery on), Home Assistant gets by itself:
 a **camera** (`<base>/camera`, the last photo, retained), a **Take photo** button (`<base>/set/camera`), a
