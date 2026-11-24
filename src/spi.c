@@ -46,3 +46,22 @@ int spi_write(const void *buf, int n)
     mmio_write(SPI_CS, CS_CLEAR);                     /* TA off = CE0 high */
     return 0;
 }
+
+/* 0.121: full duplex (the RC522 card reader): n bytes out, n bytes in; 0 = ok, -2 = timeout */
+int spi_xfer(const void *tx, void *rx, int n)
+{
+    const u8 *t = tx; u8 *r = rx;
+    if (!ready) spi_init(0);
+    mmio_write(SPI_CS, CS_CLEAR | CS_TA);
+    u64 end = timer_us() + 20000 + (u64)n * 10;
+    int i = 0, j = 0;
+    while (j < n) {
+        u32 s = mmio_read(SPI_CS);
+        if (i < n && (s & CS_TXD) && i - j < 16) mmio_write(SPI_FIFO, t[i++]);
+        while (j < n && (mmio_read(SPI_CS) & CS_RXD)) r[j++] = (u8)mmio_read(SPI_FIFO);
+        if (timer_us() > end) { mmio_write(SPI_CS, CS_CLEAR); return -2; }
+    }
+    while (!(mmio_read(SPI_CS) & CS_DONE)) if (timer_us() > end) { mmio_write(SPI_CS, CS_CLEAR); return -2; }
+    mmio_write(SPI_CS, CS_CLEAR);
+    return 0;
+}

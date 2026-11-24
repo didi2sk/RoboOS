@@ -279,7 +279,7 @@ void alarm_boot(void);
 void alarm_poll(void);                         /* core 0, con_trygetc */
 void alarm_cmd(int argc, char **argv);
 int  alarm_enabled(void);                      /* on + MQTT on */
-int  alarm_web_json(char *b, int max);         /* any core: status + zones + log + settings (no code) */
+int  alarm_web_json(char *b, int max, int admin);   /* any core: status + zones + log + settings (no code; cards for admins) */
 int  alarm_web_cmd(const char *cmd, const char *mode, const char *code, const char *who, char *msg, int mmax);
 int  alarm_web_config(const char *text, int len);   /* core 1: 0 queued, -1 busy, -2 armed */
 void alarm_mqtt_cmd(const char *p, int pl);    /* core 1: set/alarm */
@@ -287,6 +287,17 @@ void alarm_mqtt_resend(void);
 int  alarm_mqtt_next(char *sub, int smax, char *pl, int pmax, int *retain);
 int  alarm_zone_info(int i, int *type, char *name, int nmax);
 extern const char alarm_page[];
+int  alarm_is_on(void);                           /* 0.121 */
+int  alarm_display(char l[4][40], int cols);   /* the display's alarm screen: rows */
+void display_poke(void);                       /* redraw the alarm screen now */
+/* access.c - keypads + card readers for the alarm (0.121) */
+int  access_set(int n, char **w);              /* "keypad ..." / "rfid ..." words; 0 ok */
+int  access_text(char *b, int max);
+void access_setup(void);
+int  access_active(void);
+int  access_poll(char *key, char *uid, int umax);   /* core 0: 1 key, 2 card, 0 none */
+void access_core1_poll(void);                  /* core 1: Wiegand bits */
+void access_info(void);
 int  camera_clip_start(int seconds, char *name_out);   /* core 0: alarm video, recorded from camera_poll */
 int  camera_clip_busy(void);
 extern const char camera_page[];
@@ -322,6 +333,7 @@ int  display_cols(void);
 void display_cmd(int argc, char **argv);
 void spi_init(u32 div);              /* spi.c - SPI0 on GPIO8-11 */
 int  spi_write(const void *buf, int n);
+int  spi_xfer(const void *tx, void *rx, int n);   /* 0.121: full duplex (RC522) */
 /* voice.c - DFRobot DF2301Q offline voice module (I2C 0x64) */
 void voice_boot(void);
 void voice_poll(void);               /* core 0, con_trygetc: reads the last command id */

@@ -622,7 +622,7 @@ logged_in:;
         return -5;
     }
     if (!strcmp(path, "/api/alarm")) {                    /* 0.120: the burglar alarm (alarm.c) */
-        if (get) return -6;                               /* ip.c streams alarm_web_json (bigger than this buffer) */
+        if (get) return role >= 2 ? -6 : -7;              /* ip.c streams alarm_web_json (bigger than this buffer) */
         if (!post) return fail(405, "use GET or POST");
         static char cfg[6144];
         char key[16], cmd[16] = "", mode[8] = "", code[20] = "", sv[24];
@@ -643,7 +643,7 @@ logged_in:;
             if (!strcmp(key, "cmd")) scopy(cmd, sv, sizeof(cmd));
             else if (!strcmp(key, "mode")) scopy(mode, sv, sizeof(mode));
             else if (!strcmp(key, "code")) scopy(code, sv, sizeof(code));
-            else if (strcmp(key, "config")) return fail(400, "keys: cmd (arm|disarm|panic|test), mode (away|home), code, config");
+            else if (strcmp(key, "config")) return fail(400, "keys: cmd (arm|disarm|panic|test|learn), mode (away|home), code, config");
         } while (eat(','));
         if (!eat('}')) return fail(400, "expected ',' or '}'");
         if (has_cfg) {

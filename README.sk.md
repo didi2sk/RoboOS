@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.120**
+Aktuálna verzia: **0.121**
 
 ## Podporované dosky
 
@@ -500,6 +500,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.116: každý posuvník stránky `/camera` sa prejaví na ďalšej snímke, aj počas mikroskopu / `cam live` (jas, kontrast, sýtosť, odtieň, gama a pevná expozícia / zisk predtým nie).
 0.119: časová značka (dátum + čas) vo fotkách, videách a fotkách pre Home Assistant (`cam stamp on|off`, políčko na stránke `/camera`).
 0.120: zabezpečovací systém v jadre (`alarm`, webová stránka `/alarm`, v Home Assistant alarm panel + senzory zón + udalosti cez MQTT): zóny instant / delay / interior / 24h, away / home, relé sirény + tón + hlas, fotky + video pri poplachu, fotka pri príchode, záznam udalostí /ALARM.LOG, po výpadku prúdu znova zakódovaný; `alarm shield` pre piny IoT shieldu.
+0.121: klávesnice a čítačky kariet pre alarm: klávesnica 4x3 / 4x4 na GPIO alebo na PCF8574 (I2C), RFID čítačka RC522 (SPI), Wiegand čítačky / klávesnice; `alarm card learn|add|del`, kód + # na klávesnici, režim displeja `alarm` (stav, hviezdičky, zostávajúce sekundy).
 0.118: v mikroskope kláves `w` = režim kamery: 1920x1080 stred / 2592x1944 celý snímač (ostrý, ~15 snímok/s) / 1296x972 celý (rýchly); fotky až v plnom 2592x1944; `cam mode full`.
 0.117: správca súborov na webe: `/files` a `/microscope` (zobraziť, stiahnuť, zmazať fotky a videá na karte).
 
@@ -1147,6 +1148,32 @@ Zápis dlhšieho videa na kartu trvá pár sekúnd (relé sirény ostáva zapnut
 zastaví); odkódovanie z webu / Home Assistant funguje hneď aj vtedy. Ukážkový program nižšie stále
 existuje (`run alarm`) - nespúšťaj oba, používajú rovnaké piny.
 
+**Klávesnica a čítačky kariet (0.121)** - kód / karta pri dverách (naraz jedna klávesnica a jedna čítačka):
+
+```
+alarm keypad gpio 13 19 26 21 20 7 18    fóliová klávesnica 4x3: 4 piny riadkov, potom 3 (alebo 4) piny stĺpcov
+alarm keypad i2c 0x20                    klávesnica 4x4 na doske s PCF8574 (P0-P3 riadky, P4-P7 stĺpce; 'swap' = naopak)
+alarm rfid rc522                         čítačka RC522 13,56 MHz na SPI0: SDA/CS GPIO8, MISO 9, MOSI 10, SCK 11,
+                                         3,3 V (NIE 5 V), RST na 3,3 V (alebo 'alarm rfid rc522 <gpio>')
+alarm rfid wiegand 20 21                 Wiegand čítačka / vonkajšia klávesnica (D0, D1): karty EM 125 kHz, 26 / 34 bitov;
+                                         jej D0/D1 majú 5 V - cez delič (napr. 1k / 2k) alebo prevodník úrovní
+alarm card learn                         potom do 30 s ukáž novú kartu (uloží sa sama)
+alarm card add 1a2b3c4d Maria            / alarm card del Maria / alarm card (zoznam)
+alarm keypad off, alarm rfid off
+```
+
+Na klávesnici: kód + `#` = zakódovať (keď je odkódovaný) alebo odkódovať, kód + `A` = zakódovať (odchod),
+`B` = zakódovať (doma), `D` = odkódovať, `*` = zmazať (10 s bez klávesu zmaže tiež); každý kláves pípne na jacku.
+Známa karta zakóduje (keď je odkódovaný) alebo odkóduje; neznáma karta sa počíta ako zlý kód. Displej
+(`display alarm`, aj v cykle KEY1 na OLED HAT) ukazuje stav, zostávajúce sekundy, kód ako hviezdičky a poslednú
+odpoveď. Webová stránka má tie isté riadky v časti „Keypad, card reader, cards“ a tlačidlo „Learn a new card“
+(čísla kariet vidí len admin).
+
+Voľné piny popri IoT shielde (ten používa 17 27 22 5 vstupy, 24 25 12 16 výstupy, 23 LED, 6 tlačidlo, 2/3 I2C,
+4 1-Wire): 7, 13, 18, 19, 20, 21, 26 (+ 8-11 pre SPI, 14/15 = UART). Klávesnica 4x3 na 13 19 26 21 / 20 7 18 zaberie
+všetky (na Zero 2 W je GPIO18/19 zvuk) - s Wiegand čítačkou použi I2C klávesnicu. Waveshare OLED HAT tiež používa
+SPI0 + GPIO24/25 - nie spolu s RC522 / shieldom.
+
 ### IoT shield (návrh dosky)
 
 `hardware/iot-shield/` obsahuje návrh dosky v KiCade, ktorá sa nasadí na 40-pinový konektor:
@@ -1277,7 +1304,7 @@ Systém komunikuje po anglicky.
 | `ai <otázka>\|@príkaz ..\|key\|model` | otázka pre Claude (vlastný API kľúč Anthropic) |
 | `radio [MHz\|up\|down\|scan\|vol n\|off]` | FM rádio (modul RDA5807M na I2C) |
 | `motion [watch\|zero\|threshold mg\|alarm on\|off]` | náklon, zrýchlenie, otrasy (MPU-6050 / GY-521) |
-| `alarm [on\|off\|arm\|home\|disarm <kód>\|zone\|set\|shield\|log\|test]` | zabezpečovací systém v jadre: zóny, siréna, fotky + video, stránka /alarm, Home Assistant |
+| `alarm [on\|off\|arm\|home\|disarm <kód>\|zone\|set\|shield\|keypad\|rfid\|card\|log\|test]` | zabezpečovací systém v jadre: zóny, siréna, klávesnica + RFID / Wiegand karty, fotky + video, stránka /alarm, Home Assistant |
 | `cam [live\|snap\|bars\|reg a [v]\|off]` | kamera na plochom kábli: nájde senzor, obraz naživo na HDMI |
 | `thermal [once\|range lo hi\|person C]` | termokamera 8x8 (AMG8833), tepelná mapa naživo |
 | `voice [add id cmd\|del id\|volume\|mute\|wake]` | hlasové príkazy offline (DFRobot DF2301Q) |
