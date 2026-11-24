@@ -1174,6 +1174,32 @@ Voľné piny popri IoT shielde (ten používa 17 27 22 5 vstupy, 24 25 12 16 vý
 všetky (na Zero 2 W je GPIO18/19 zvuk) - s Wiegand čítačkou použi I2C klávesnicu. Waveshare OLED HAT tiež používa
 SPI0 + GPIO24/25 - nie spolu s RC522 / shieldom.
 
+**Wiegand na dlhom kábli (do ~100-150 m)**: Wiegand dosiahne ďaleko (tienený kábel, 22 AWG / 0,34 mm2), ale dlhý
+kábel - hlavne vonku - prináša statiku a prepätia z búrok; GPIO pin znesie najviac 3,3 V a samotný delič ho
+neochráni. Čítačku oddeľ optočlenom na každej linke (ako vstupy IoT shieldu):
+
+```
+ strana čítačky (vonku, vlastný 12 V zdroj)          strana Pi
+ +12V --[ 2k2 ]--+--> LED PC817 --+               3V3 --[ 4k7 ]--+-- GPIO20 (D0)
+                 |                |                              |
+             TVS 15 V             D0 <-- z čítačky             kolektor PC817
+             (SMBJ15A)                                           emitor -- GND Pi
+                 |
+ GND čítačky
+```
+
+- Čítačka stiahne D0 k zemi -> LED sa rozsvieti -> GPIO20 ide do nuly: rovnaká polarita ako pri priamom zapojení,
+  v RoboOS netreba nič meniť. To isté ešte raz pre D1 (GPIO21).
+- GND čítačky a GND Pi **nespájaj**: čítačka má vlastný 12 V adaptér, prepätie z kábla sa zastaví na optočlene
+  (izolácia ~5 kV). TVS dióda zvedie špičky, aby nezničili LED.
+- Wiegand impulzy trvajú 50-100 us; PC817 sa zopne za pár us a RoboOS chytá padajúcu hranu, takže stačí. Pre
+  čítačku s impulzmi kratšími ako ~20 us použi rýchly optočlen (6N137).
+- Tienený kábel, tienenie uzemnené len na JEDNOM konci (čítačka / jej zdroj); čítačku napájaj z vlastného 12 V
+  adaptéra, nie z Pi; vonku ešte PTC poistka + TVS na 12 V vedení.
+- Na porovnanie: klávesnica na GPIO ~2-3 m kábla, I2C ~1 m (desiatky metrov s extenderom P82B715), RC522 na SPI
+  len ~10-20 cm (nech je pri Pi). Keď je Pi vnútri a čítačka pri bráne, vonkajšia Wiegand klávesnica s čítačkou
+  kariet 125 kHz v jednom (12 V, IP65) posiela klávesy AJ karty po tých istých dvoch drôtoch.
+
 ### IoT shield (návrh dosky)
 
 `hardware/iot-shield/` obsahuje návrh dosky v KiCade, ktorá sa nasadí na 40-pinový konektor:
