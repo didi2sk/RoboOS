@@ -1187,6 +1187,32 @@ Free pins next to the IoT shield (it uses 17 27 22 5 in, 24 25 12 16 out, 23 LED
 (on the Zero 2 W GPIO18/19 is the sound) - with a Wiegand reader take the I2C keypad. The Waveshare OLED HAT also
 uses SPI0 + GPIO24/25 - not together with the RC522 / the shield.
 
+**Wiegand on a long cable (to ~100-150 m)**: Wiegand carries far (shielded cable, 22 AWG / 0.34 mm2), but a long
+cable - outdoors especially - brings static and surges from storms; a GPIO pin takes 3.3 V at most and a divider
+alone does not protect it. Separate the reader with an optocoupler on each line (like the inputs of the IoT shield):
+
+```
+ reader side (outside, own 12 V supply)               Pi side
+ +12V --[ 2k2 ]--+--> LED of a PC817 --+          3V3 --[ 4k7 ]--+-- GPIO20 (D0)
+                 |                      |                         |
+             TVS 15 V                   D0 <-- from the reader  collector of the PC817
+             (SMBJ15A)                                            emitter -- GND of the Pi
+                 |
+ GND of the reader
+```
+
+- The reader pulls D0 low -> the LED lights -> GPIO20 goes low: the same polarity as a direct connection, nothing
+  to change in RoboOS. The same once more for D1 (GPIO21).
+- Do **not** join the reader's GND with the Pi's GND: the reader has its own 12 V adapter, a surge on the cable
+  stops at the optocoupler (~5 kV isolation). The TVS diode takes the spikes so they do not kill the LED.
+- Wiegand pulses are 50-100 us; a PC817 switches on in a few us and RoboOS catches the falling edge, so it is fast
+  enough. For a reader with pulses shorter than ~20 us use a fast optocoupler (6N137).
+- Shielded cable with the shield grounded at ONE end only (the reader / its supply); power the reader from its
+  own 12 V adapter, not from the Pi; outdoors also a PTC fuse + TVS on the 12 V line.
+- For comparison: a GPIO matrix keypad ~2-3 m of cable, I2C ~1 m (tens of metres with a P82B715 extender), the
+  RC522 on SPI only ~10-20 cm (keep it next to the Pi). With the Pi inside and the reader at the gate, an outdoor
+  Wiegand keypad + 125 kHz card reader in one (12 V, IP65) sends keys AND cards over the same two wires.
+
 ### IoT shield (hardware design)
 
 `hardware/iot-shield/` has a KiCad design of a board that sits on the 40-pin header:
