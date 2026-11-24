@@ -140,7 +140,7 @@ static int publish(const char *sub, const char *payload, int retain)
 
 /* ---------------- JSON state ---------------- */
 
-static char js[512];
+static char js[1024];
 static int jn;
 static void ja(const char *s) { while (*s && jn < (int)sizeof(js) - 1) js[jn++] = *s++; js[jn] = 0; }
 static void jnum(long v) { char d[24]; int k = 0; if (v < 0) { ja("-"); v = -v; } do d[k++] = (char)('0' + v % 10); while (v /= 10); while (k) { char c[2] = { d[--k], 0 }; ja(c); } }
@@ -259,10 +259,67 @@ static void ha_camera(void)
     }
 }
 
+/* 0.120: the alarm - alarm_control_panel (arm away / home, disarm, trigger with the code), an event entity
+ * (alarm / entry, with the photo name) and one binary_sensor per zone (door / window / motion / tamper) */
+static int ha_al;                                         /* 0 idle, 1.. the next discovery message */
+static void ha_alarm(void) { ha_al = 1; }
+static void ha_alarm_step(void)
+{
+    char t[128], node[40], nm[24];
+    int n = 0;
+    for (const char *s = net_name(); *s && n < 39; s++) node[n++] = (*s == '-' || *s == '.') ? '_' : *s;
+    node[n] = 0;
+    int want = alarm_enabled();
+    static u32 had, now;                                  /* zone pins announced before / now */
+    static char names[28][24];
+    static int types[28];
+    if (ha_al <= 2) {
+        int k = ha_al - 1;
+        jn = 0; ja("homeassistant/"); ja(k ? "event/" : "alarm_control_panel/"); ja(node); ja(k ? "/alarm_event/config" : "/alarm/config");
+        memcpy(t, js, (size_t)jn + 1);
+        jn = 0;
+        if (want && !k) {
+            ja("{\"name\":\"Alarm\",\"state_topic\":\""); ja(base); ja("/alarm\",\"command_topic\":\""); ja(base);
+            ja("/set/alarm\",\"command_template\":\"{\\\"action\\\":\\\"{{action}}\\\",\\\"code\\\":\\\"{{code}}\\\"}\",");
+            ja("\"code\":\"REMOTE_CODE\",\"code_arm_required\":true,\"code_disarm_required\":true,\"code_trigger_required\":false,");
+            ja("\"supported_features\":[\"arm_home\",\"arm_away\",\"trigger\"],\"json_attributes_topic\":\""); ja(base);
+            ja("/alarm/attr\",\"unique_id\":\""); ja(node); ja("_alarm\"");
+            ha_dev(node);
+        } else if (want) {
+            ja("{\"name\":\"Alarm event\",\"state_topic\":\""); ja(base); ja("/alarm/event\",\"event_types\":[\"alarm\",\"entry\"],\"icon\":\"mdi:shield-alert\",\"unique_id\":\""); ja(node); ja("_alarm_event\"");
+            ha_dev(node);
+        }
+        publish_raw(t, js, jn, 1);
+        if (++ha_al == 3) {                               /* the zones as they are now */
+            now = 0;
+            for (int i = 0; i < 16; i++) { int ty = 0, p = alarm_zone_info(i, &ty, nm, sizeof(nm)); if (p < 2 || p > 27) continue;
+                                           now |= 1u << p; types[p] = ty; memcpy(names[p], nm, sizeof(nm)); }
+        }
+        return;
+    }
+    int p = ha_al - 1;                                    /* ha_al 3..28 = GPIO 2..27 */
+    while (p <= 27 && !((now | had) & (1u << p))) p++;
+    if (p > 27) { had = now; ha_al = 0; return; }
+    ha_al = p + 2;
+    char ps[3] = { 0 }; if (p >= 10) { ps[0] = (char)('0' + p / 10); ps[1] = (char)('0' + p % 10); } else ps[0] = (char)('0' + p);
+    jn = 0; ja("homeassistant/binary_sensor/"); ja(node); ja("/alarm_zone"); ja(ps); ja("/config");
+    memcpy(t, js, (size_t)jn + 1);
+    jn = 0;
+    if (now & (1u << p)) {
+        static const char *const cls[4] = { "window", "door", "motion", "tamper" };
+        ja("{\"name\":\""); ja(names[p]); ja("\",\"state_topic\":\""); ja(base); ja("/alarm/zone/"); ja(ps);
+        ja("\",\"device_class\":\""); ja(cls[types[p] & 3]); ja("\",\"unique_id\":\""); ja(node); ja("_zone"); ja(ps); ja("\"");
+        ha_dev(node);
+    }
+    publish_raw(t, js, jn, 1);
+}
+
 static void ha_discovery(void)
 {
     int h = sensors_have();
     ha_camera();
+    ha_alarm();
+    alarm_mqtt_resend();
     ha_one("cpu", "CPU temperature", "\\u00b0C", "temperature");
     if (h & 1) ha_one("temp", "Temperature", "\\u00b0C", "temperature");
     if (h & 2) ha_one("hum", "Humidity", "%", "humidity");
@@ -307,7 +364,8 @@ static void incoming(const char *t, int tl, const char *p, int pl)
         return;
     }
     if (!strcmp(sub, "set/publish")) { publish_state(); return; }
-    if (!strcmp(sub, "set/camera")) { camera_mqtt_request(); return; }            /* core 0 takes the photo */
+    if (!strcmp(sub, "set/camera")) { camera_mqtt_request(); return; }
+    if (!strcmp(sub, "set/alarm")) { alarm_mqtt_cmd(p, pl); return; }             /* Home Assistant alarm panel */            /* core 0 takes the photo */
     if (!strcmp(sub, "set/radio")) { radio_net(p, pl); return; }                  /* 104.4 / up / down / off / vol 8 */
     if (!strcmp(sub, "set/display")) { display_net(-1, p, pl); return; }        /* the whole screen, \n = next row */
     if (!strncmp(sub, "set/display/", 12)) {                                     /* one row: set/display/<1..10> */
@@ -490,10 +548,15 @@ void mqtt_poll(int have_ip)
     case M_UP:
         if (now - last_rx > (KEEPALIVE + KEEPALIVE / 2) * 1000000ULL) { drop("broker silent (keep-alive)", 1); return; }
         if (big_on) { big_pump(); return; }               /* the photo first */
-        if (rediscover) { rediscover = 0; if (discovery) ha_camera(); }
+        if (rediscover) { rediscover = 0; if (discovery) { ha_camera(); ha_alarm(); } alarm_mqtt_resend(); }
         if (now - last_tx > (KEEPALIVE / 2) * 1000000ULL) { txn = 5; send_packet(0xC0); }   /* PINGREQ */
         if (interval > 0 && now >= next_state) { publish_state(); next_state = now + (u64)interval * 1000000; }
         { struct ble_th b; if (bt_ble_next(&b)) ble_publish(&b); }   /* Bluetooth thermometers, one per poll */
+        if (pcb && tcp_sndbuf(pcb) > 1500) {                            /* the alarm: discovery, state, zones, events */
+            if (ha_al) ha_alarm_step();
+            else { static char ap[600]; char as[32]; int rt = 0;
+                   if (alarm_mqtt_next(as, sizeof(as), ap, sizeof(ap), &rt)) publish(as, ap, rt); }
+        }
         return;
     }
 }

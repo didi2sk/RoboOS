@@ -133,6 +133,7 @@ static int raw_trygetc(void)
     motion_poll();                              /* MPU-6050: shake detection */
     camera_poll();                              /* camera pictures for the web page (0.104) */
     doorbell_poll();
+    alarm_poll();                               /* burglar alarm (0.120) */
     files_poll();                               /* web file manager: list / read / delete on the card (0.117) */                            /* doorbell button + door radar (0.105) */
     thermal_poll();                             /* AMG8833: presence */
     sensors_log_poll();                         /* sensor values -> /LOG/YYYYMMDD.CSV every N minutes */

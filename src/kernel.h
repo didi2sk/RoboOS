@@ -274,6 +274,21 @@ void doorbell_poll(void);                      /* core 0, con_trygetc */
 int  doorbell_enabled(void);
 int  doorbell_radar(void);                     /* the radar GPIO, 0 = none */
 void doorbell_cmd(int argc, char **argv);
+/* alarm.c - burglar alarm in the kernel (0.120): zones, siren, voice, photos + video, web page, MQTT / HA */
+void alarm_boot(void);
+void alarm_poll(void);                         /* core 0, con_trygetc */
+void alarm_cmd(int argc, char **argv);
+int  alarm_enabled(void);                      /* on + MQTT on */
+int  alarm_web_json(char *b, int max);         /* any core: status + zones + log + settings (no code) */
+int  alarm_web_cmd(const char *cmd, const char *mode, const char *code, const char *who, char *msg, int mmax);
+int  alarm_web_config(const char *text, int len);   /* core 1: 0 queued, -1 busy, -2 armed */
+void alarm_mqtt_cmd(const char *p, int pl);    /* core 1: set/alarm */
+void alarm_mqtt_resend(void);
+int  alarm_mqtt_next(char *sub, int smax, char *pl, int pmax, int *retain);
+int  alarm_zone_info(int i, int *type, char *name, int nmax);
+extern const char alarm_page[];
+int  camera_clip_start(int seconds, char *name_out);   /* core 0: alarm video, recorded from camera_poll */
+int  camera_clip_busy(void);
 extern const char camera_page[];
 extern const char files_page[];                /* filespage.c: GET /files, /microscope (0.117) */
 int  files_request(int type, const char *path); /* core 1: 1 list, 2 read, 3 delete; 0 ok, -1 busy, -2 bad path */

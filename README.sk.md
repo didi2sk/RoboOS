@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.119**
+Aktuálna verzia: **0.120**
 
 ## Podporované dosky
 
@@ -143,6 +143,8 @@ Ukážky: `hello`, `blink`, `button`, `knight`, `chat`, `tcpserv` (TCP server), 
 
 ### Ukážka: alarm (`alarm`)
 
+Od 0.120 je alarm aj v jadre (príkaz `alarm`, webová stránka, Home Assistant - pozri
+„Zabezpečovací systém v jadre“); tento program ostáva ako príklad programovania.
 `run alarm` spustí malý zabezpečovací systém (`sdk/examples/alarm.c`); skopíruj ho do `/RUN`, aby
 štartoval sám. Nastavenia sú v `/ALARM.TXT` (pri prvom štarte sa vytvorí s predvolenými):
 
@@ -497,6 +499,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.115: odšumenie kamery (`cam denoise on|off`, políčko na stránke, `d` v mikroskope); v mikroskope klávesy `,` `.` = ostrosť.
 0.116: každý posuvník stránky `/camera` sa prejaví na ďalšej snímke, aj počas mikroskopu / `cam live` (jas, kontrast, sýtosť, odtieň, gama a pevná expozícia / zisk predtým nie).
 0.119: časová značka (dátum + čas) vo fotkách, videách a fotkách pre Home Assistant (`cam stamp on|off`, políčko na stránke `/camera`).
+0.120: zabezpečovací systém v jadre (`alarm`, webová stránka `/alarm`, v Home Assistant alarm panel + senzory zón + udalosti cez MQTT): zóny instant / delay / interior / 24h, away / home, relé sirény + tón + hlas, fotky + video pri poplachu, fotka pri príchode, záznam udalostí /ALARM.LOG, po výpadku prúdu znova zakódovaný; `alarm shield` pre piny IoT shieldu.
 0.118: v mikroskope kláves `w` = režim kamery: 1920x1080 stred / 2592x1944 celý snímač (ostrý, ~15 snímok/s) / 1296x972 celý (rýchly); fotky až v plnom 2592x1944; `cam mode full`.
 0.117: správca súborov na webe: `/files` a `/microscope` (zobraziť, stiahnuť, zmazať fotky a videá na karte).
 
@@ -1085,6 +1088,65 @@ príklad `/APPS/mqtt.bas`. C (API 10): `sensorRead(n)`, `mqttPublish(téma, text
 `mqttReceive(téma, tmax, správa, pmax)` (správy na `cmd/...`), `mqttConnected()`;
 príklad `iotnode` (posiela JSON so senzormi, LED na GPIO23 cez `cmd/led` on / off / blink).
 
+### Zabezpečovací systém v jadre (0.120)
+
+Príkaz `alarm` (a webová stránka `/alarm`) je celý zabezpečovací systém, ktorý beží na pozadí ako
+zvonček - nemusí bežať žiadny program. Číta `/ALARM.TXT` (formát ukážky, pozri nižšie, plus pár nových
+kľúčov) a je **vypnutý**, kým nedáš `alarm on`.
+
+```
+alarm shield                 zóny + siréna pre RoboOS IoT shield (obe verzie):
+                             IN1 GPIO17 dvere (delay), IN2 GPIO27 okno (instant), IN3 GPIO22 PIR (interior,
+                             normálne otvorený), IN4 GPIO5 sabotáž (24h); siréna = relé K1 / OUT1 GPIO24, LED GPIO23
+alarm zone 17 delay nc Vchod           pridá / zmení zónu: <gpio> <instant|delay|interior|24h> <nc|no> <meno>
+alarm zone del 22                      odstráni zónu
+alarm code 1234 5678         zmena kódu (predvolený 1234 - zmeň ho!)
+alarm on                     zapne (alarm off len keď je odkódovaný)
+alarm arm 5678               zakóduje (odchod): odchodový čas, potom zakódované
+alarm home 5678              zakóduje, ale zóny 'interior' sú vypnuté (si doma)
+alarm disarm 5678
+alarm panic                  poplach hneď
+alarm test                   relé sirény + tón na 2 s
+alarm set video 10           kľúče: exit entry siren (sekundy), siren_pin armed_pin (GPIO|none), sound on|off,
+                             volume, voice <priečinok>|none, photo on|off, photos 1-10, video <s>, entry_photo on|off, mqtt on|off
+alarm                        stav, zóny (OPEN / ok), posledná fotka + video
+alarm log                    posledných 48 udalostí (aj v /ALARM.LOG na karte, prežije reštart)
+```
+
+Typy zón: `instant` poplach hneď (okno), `delay` spustí príchodový čas (dvere, ktorými prichádzaš),
+`interior` PIR vnútri: počas odchodového / príchodového času čaká a pri `home` je vypnutý, `24h` vždy
+(sabotáž, tiesňové tlačidlo; spustí sa pri otvorení). Kontakty sa zapájajú medzi GPIO a GND (vnútorný
+pull-up); na IoT shielde sa vstupy cez optočleny správajú rovnako (vstup pod napätím = zavretý).
+`nc` = normálne zavretý (dverový kontakt), `no` = normálne otvorený (relé PIR).
+
+Čo sa stane pri poplachu: relé sirény + stúpajúci / klesajúci tón na jacku, hlasové súbory z `/ALARM`
+(ako ukážka), **fotky** (`photos`, 1 s po sebe, do `/CAM/<dátum>/`; prvá aj do Home Assistant), potom
+**video** dlhé `video` sekúnd (MJPEG AVI v `/CAM/<dátum>/`), udalosť cez MQTT. S `entry_photo on` sa
+odfotí aj začiatok príchodového času (kto vošiel). Po `siren` sekundách siréna stíchne a alarm sa sám
+znova zakóduje (zóny, ktoré ostali otvorené, sa preskočia, kým sa nezavrú); príčina ostáva ako „pamäť
+poplachu“ do ďalšieho zakódovania. Zakódovaný stav je v `/ALARM.ST`: po výpadku prúdu sa doska vráti
+**zakódovaná**. 5 zlých kódov zablokuje kód na 60 s. Kód napísaný v shelli sa neukladá do histórie; pre
+skutočnú bezpečnosť zapni `users console on` (klávesnica potom pýta prihlásenie) - inak ktokoľvek pri
+klávesnici môže v odkódovanom stave meniť nastavenia.
+
+**Webová stránka** `http(s)://<doska>/alarm` (token alebo prihlásenie ako `/camera`): stav veľkým
+písmom, kód + Arm (away) / Arm (home) / Disarm / Panic / Test siren, zóny naživo, posledná fotka a video
+z poplachu, zoznam udalostí a všetky nastavenia s editorom zón (tlačidlo „IoT shield“ vyplní vstupy
+shieldu). JSON API: `GET /api/alarm`, `POST /api/alarm` `{"cmd":"arm","mode":"home","code":"1234"}`
+(cmd arm, disarm, panic, test) alebo `{"config":"<riadky /ALARM.TXT>"}` (kód sa takto nemení).
+
+**Home Assistant** (MQTT so zapnutým discovery): **Alarm panel** (`alarm_control_panel`: zakódovať
+home / away, odkódovať, poplach - HA si vypýta kód a pošle ho doske, kontroluje ho doska), **binárny
+senzor pre každú zónu** (dvere / okno / pohyb / sabotáž), **Alarm event** (typy `alarm`, `entry`, so
+zónou a menom fotky), fotka v existujúcej entite **Camera**. Topiky: `<base>/alarm` (disarmed / arming /
+armed_away / armed_home / pending / triggered), `<base>/alarm/attr` (JSON: príčina, pamäť poplachu,
+otvorené zóny, posledná fotka), `<base>/alarm/zone/<gpio>` ON/OFF, `<base>/alarm/event`, príkazy do
+`<base>/set/alarm` (`{"action":"DISARM","code":"1234"}` alebo `DISARM 1234`).
+
+Zápis dlhšieho videa na kartu trvá pár sekúnd (relé sirény ostáva zapnuté, tón na jacku sa na chvíľu
+zastaví); odkódovanie z webu / Home Assistant funguje hneď aj vtedy. Ukážkový program nižšie stále
+existuje (`run alarm`) - nespúšťaj oba, používajú rovnaké piny.
+
 ### IoT shield (návrh dosky)
 
 `hardware/iot-shield/` obsahuje návrh dosky v KiCade, ktorá sa nasadí na 40-pinový konektor:
@@ -1215,6 +1277,7 @@ Systém komunikuje po anglicky.
 | `ai <otázka>\|@príkaz ..\|key\|model` | otázka pre Claude (vlastný API kľúč Anthropic) |
 | `radio [MHz\|up\|down\|scan\|vol n\|off]` | FM rádio (modul RDA5807M na I2C) |
 | `motion [watch\|zero\|threshold mg\|alarm on\|off]` | náklon, zrýchlenie, otrasy (MPU-6050 / GY-521) |
+| `alarm [on\|off\|arm\|home\|disarm <kód>\|zone\|set\|shield\|log\|test]` | zabezpečovací systém v jadre: zóny, siréna, fotky + video, stránka /alarm, Home Assistant |
 | `cam [live\|snap\|bars\|reg a [v]\|off]` | kamera na plochom kábli: nájde senzor, obraz naživo na HDMI |
 | `thermal [once\|range lo hi\|person C]` | termokamera 8x8 (AMG8833), tepelná mapa naživo |
 | `voice [add id cmd\|del id\|volume\|mute\|wake]` | hlasové príkazy offline (DFRobot DF2301Q) |

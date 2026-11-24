@@ -1250,6 +1250,53 @@ const char *camera_take_error(int r)
            r == -5 ? "MQTT is not connected ('mqtt' shows why)" : r == -6 ? "the last photo is still being sent" : "?";
 }
 
+/* 0.120: a video clip for the alarm, recorded frame by frame from camera_poll (the alarm keeps running) */
+static void rec_start(void);
+static int rec_frame(void);
+static void rec_save(char *name_out);
+static int prog_page;
+static volatile int clip_on;
+static int clip_secs;
+static u64 clip_end;
+static char *clip_name;
+
+int camera_clip_start(int seconds, char *name_out)
+{
+    if (in_show || clip_on) return -4;
+    if (seconds < 1) return -2;
+    if (seconds > 120) seconds = 120;
+    clip_secs = seconds;
+    clip_name = name_out;
+    if (name_out) name_out[0] = 0;
+    clip_on = 1;
+    return 0;
+}
+int camera_clip_busy(void) { return clip_on; }
+
+static void clip_step(void)
+{
+    if (clip_on == 1) {
+        if (!streaming && quiet_start()) { clip_on = 0; kprintf("\n[CAM] video: no camera\n"); return; }
+        rec_start();
+        clip_end = timer_us() + (u64)clip_secs * 1000000ULL;
+        clip_on = 2;
+        kprintf("\n[CAM] recording a %d s video\n", clip_secs);
+    }
+    u16 *f = next_frame(300);
+    if (f) {
+        process_frame(f);
+        web_last = timer_us();
+        if (rec_frame()) clip_end = 0;                     /* full */
+        if (__atomic_load_n(&web_req, __ATOMIC_ACQUIRE) != web_done) web_publish();
+    }
+    if (timer_us() >= clip_end) {
+        prog_page = -1;
+        con_color(COL_CYAN); kprintf("\n[CAM] "); con_color(COL_DEFAULT);
+        rec_save(clip_name);
+        clip_on = 0;
+    }
+}
+
 /* core 0, from con_trygetc */
 void camera_poll(void)
 {
@@ -1261,6 +1308,7 @@ void camera_poll(void)
     if (in_show || in_poll || io_held()) return;
     in_poll = 1;
     if (!cfg_loaded) cfg_load();
+    if (clip_on) { clip_step(); in_poll = 0; return; }
     if (web_defaults) { web_save_at = timer_us() + 100000; }
     apply_pending();
     if (web_save_at && timer_us() >= web_save_at) { web_save_at = 0; cfg_save(); }
@@ -1507,6 +1555,7 @@ static u16 *micro_mode_start(int mm, int *err)
 void camera_microscope(void)
 {
     if (!fb_ready() || fb_width() < 320) { kprintf("the microscope needs the HDMI screen\n"); return; }
+    if (clip_on) { kprintf("the camera is recording an alarm video - try again in a moment\n"); return; }
     cfg_load();
     if (streaming) cam_stop();                             /* the web view may run in another mode */
     int old_mode = vga_mode, oldW = W, oldH = H;
@@ -1667,6 +1716,7 @@ static void show(int live, int save, const char *file)
 static void show_(int live, int save, const char *file)
 {
     cfg_load();
+    if (clip_on) { kprintf("the camera is recording an alarm video - try again in a moment\n"); return; }
     if (cam_start()) return;
     web_stream = 0;
     ae_begin();

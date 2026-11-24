@@ -109,7 +109,7 @@ static int value(long *num, char *str, int smax)
         jp++;
         while (jp < jend && *jp != '"') {
             char ch = *jp++;
-            if (ch == '\\' && jp < jend) { ch = *jp++; if (ch == 'n') ch = '\n'; else if (ch == 't') ch = ' '; }
+            if (ch == '\\' && jp < jend) { ch = *jp++; if (ch == 'n') ch = '\n'; else if (ch == 't') ch = ' '; else if (ch == 'r') ch = '\r'; }
             if (n < smax - 1) str[n++] = ch;
         }
         if (jp >= jend) { jerr = "unfinished string"; return J_NONE; }
@@ -621,6 +621,48 @@ logged_in:;
         if (!get) return fail(405, "use GET ?path=/DIR/FILE (POST uploads)");
         return -5;
     }
+    if (!strcmp(path, "/api/alarm")) {                    /* 0.120: the burglar alarm (alarm.c) */
+        if (get) return -6;                               /* ip.c streams alarm_web_json (bigger than this buffer) */
+        if (!post) return fail(405, "use GET or POST");
+        static char cfg[6144];
+        char key[16], cmd[16] = "", mode[8] = "", code[20] = "", sv[24];
+        int has_cfg = 0;
+        long n = 0;
+        jp = body; jend = body + blen; jerr = 0;
+        if (!eat('{')) return fail(400, "expected {\"cmd\":\"arm\",\"code\":\"1234\"} or {\"config\":\"...\"}");
+        if (peek() != '}') do {
+            if (value(&n, key, sizeof(key)) != J_STR) return fail(400, jerr ? jerr : "expected a key");
+            if (!eat(':')) return fail(400, "expected ':'");
+            int k;
+            if (!strcmp(key, "config")) { k = value(&n, cfg, sizeof(cfg)); has_cfg = 1; }
+            else k = value(&n, sv, sizeof(sv));
+            if (k == J_NONE) return fail(400, jerr);
+            if (k == J_NUM && !strcmp(key, "code")) { char t[16]; int tl = 0, z = 0; long x = n < 0 ? -n : n;
+                do t[tl++] = (char)('0' + x % 10); while ((x /= 10)); while (tl) sv[z++] = t[--tl]; sv[z] = 0; k = J_STR; }
+            if (k != J_STR) return fail(400, "values are strings");
+            if (!strcmp(key, "cmd")) scopy(cmd, sv, sizeof(cmd));
+            else if (!strcmp(key, "mode")) scopy(mode, sv, sizeof(mode));
+            else if (!strcmp(key, "code")) scopy(code, sv, sizeof(code));
+            else if (strcmp(key, "config")) return fail(400, "keys: cmd (arm|disarm|panic|test), mode (away|home), code, config");
+        } while (eat(','));
+        if (!eat('}')) return fail(400, "expected ',' or '}'");
+        if (has_cfg) {
+            int l = 0; while (cfg[l]) l++;
+            int r = alarm_web_config(cfg, l);
+            if (r == -2) return fail(409, "disarm first - the settings cannot change while armed");
+            if (r) return fail(503, "busy, try again");
+            head(202);
+            put("{\"ok\":true,\"message\":\"settings saved\"}\n");
+            return olen;
+        }
+        if (!cmd[0]) return fail(400, "give cmd or config");
+        char msg[80], who[48] = "web ";
+        scopy(who + 4, from, (int)sizeof(who) - 4);
+        int ok = alarm_web_cmd(cmd, mode, code, who, msg, sizeof(msg));
+        head(ok ? 200 : 403);
+        put("{\"ok\":"); put(ok ? "true" : "false"); put(",\"message\":"); put_str(msg); put("}\n");
+        return olen;
+    }
     if (!strcmp(path, "/api/camera.jpg")) {               /* 0.104: ip.c sends the picture, camera.c takes it on core 0 */
         if (!get) return fail(405, "use GET");
         return -2;
@@ -662,5 +704,5 @@ logged_in:;
         put("{\"ok\":true,\"rebooting\":true}\n");
         return olen;
     }
-    return fail(404, "unknown: GET /api/status, GET|POST /api/gpio, GET /api/gpio/<pin>, GET|POST /api/sound, GET|POST /api/display, GET|POST /api/radio, GET /api/sensors, GET|POST /api/camera, GET /api/camera.jpg, POST /api/reboot");
+    return fail(404, "unknown: GET /api/status, GET|POST /api/gpio, GET /api/gpio/<pin>, GET|POST /api/sound, GET|POST /api/display, GET|POST /api/radio, GET /api/sensors, GET|POST /api/camera, GET /api/camera.jpg, GET|POST /api/alarm, GET|POST /api/files, GET /api/file, POST /api/reboot");
 }
