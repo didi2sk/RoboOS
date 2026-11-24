@@ -513,6 +513,7 @@ static void build_page(void)
     add("<tr><td>JSON API</td><td>"); add(api_token()[0] ? "on (/api/..., Bearer token)" : "off"); add("</td></tr>");
     add("<tr><td>HTTPS</td><td>"); add(https_pcb ? "on" : "off"); add("</td></tr>");
     add("<tr><td>camera</td><td><a style=\"color:#8cf\" href=\"/camera\">/camera</a></td></tr>");
+    add("<tr><td>alarm</td><td><a style=\"color:#8cf\" href=\"/alarm\">/alarm</a></td></tr>");
     add("<tr><td>files</td><td><a style=\"color:#8cf\" href=\"/files\">/files</a> &nbsp; <a style=\"color:#8cf\" href=\"/microscope\">/microscope</a></td></tr>");
     if (page_user[0]) { add("<tr><td>logged in</td><td>"); add(page_user); add(page_role == 2 ? " (admin)" : " (view)"); add("</td></tr>"); }
     {
@@ -526,7 +527,7 @@ static void build_page(void)
 /* one connection: the request is collected until the headers and Content-Length bytes are in.
  * With TLS (port 443) the bytes go through BearSSL first (tls.c), the answer back the same way. */
 #define HTTP_CONNS 8
-#define HTTP_REQ   2048
+#define HTTP_REQ   8192                 /* 0.120: 8 KB (the alarm settings come as one POST; GET /api/alarm is built here) */
 struct http_conn {
     int used, len, done, closing;
     int upload;                    /* the body goes to UPLOAD_BUF (update.c) */
@@ -861,6 +862,12 @@ static int http_try(struct tcp_pcb *pcb, struct http_conn *c)
                 c->cam_since = timer_us();
                 return 2;
             }
+            if (plen == -6) {                            /* 0.120: GET /api/alarm - the request buffer holds the answer */
+                int n = alarm_web_json(c->req, HTTP_REQ);
+                stream_setup(c, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
+                             c->req, (u32)n);
+                return 3;
+            }
             if (plen == -2) {                            /* GET /api/camera.jpg: core 0 takes the picture */
                 c->cam_ticket = camera_jpeg_want();
                 c->cam_wait = 1;
@@ -871,6 +878,10 @@ static int http_try(struct tcp_pcb *pcb, struct http_conn *c)
     } else if (!strcmp(path, "/files") || !strcmp(path, "/microscope")) {   /* 0.117: file manager page */
         stream_setup(c, "HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
                      files_page, (u32)strlen(files_page));
+        return 3;
+    } else if (!strcmp(path, "/alarm")) {                /* 0.120: the alarm page */
+        stream_setup(c, "HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+                     alarm_page, (u32)strlen(alarm_page));
         return 3;
     } else if (!strcmp(path, "/camera")) {
         stream_setup(c, "HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",

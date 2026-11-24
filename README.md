@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.119**
+Current version: **0.120**
 
 ## Supported boards
 
@@ -142,6 +142,8 @@ Examples: `hello`, `blink`, `button`, `knight`, `chat`, `tcpserv` (TCP server), 
 
 ### Demo: alarm (`alarm`)
 
+Since 0.120 the alarm is also in the kernel (the `alarm` command, web page, Home Assistant - see
+"Burglar alarm in the kernel"); this program stays as a programming example.
 `run alarm` starts a small burglar alarm (`sdk/examples/alarm.c`); copy it to `/RUN` to start it
 at boot. Its settings are in `/ALARM.TXT` (made with defaults on the first start):
 
@@ -501,6 +503,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.115: camera noise reduction (`cam denoise on|off`, checkbox on the page, `d` in the microscope); microscope keys `,` `.` = sharpness.
 0.116: every slider of the `/camera` page takes effect on the next frame, also while the microscope / `cam live` run (brightness, contrast, saturation, hue, gamma and a fixed exposure / gain did not).
 0.119: date + time stamp in photos, videos and Home Assistant photos (`cam stamp on|off`, checkbox on the `/camera` page).
+0.120: burglar alarm in the kernel (`alarm`, web page `/alarm`, Home Assistant alarm panel + zone sensors + events over MQTT): zones instant / delay / interior / 24h, away / home, siren relay + tone + voice, photos + video on an alarm, photo at entry, event log /ALARM.LOG, armed again after a power cut; `alarm shield` for the IoT shield pins.
 0.118: microscope key `w` = camera mode: 1920x1080 centre / 2592x1944 whole sensor (sharp, ~15 fps) / 1296x972 whole (fast); photos up to the full 2592x1944; `cam mode full`.
 0.117: file manager on the web: `/files` and `/microscope` (view, download, delete photos and videos on the card).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
@@ -1097,6 +1100,66 @@ example `/APPS/mqtt.bas`. C (API 10): `sensorRead(n)`, `mqttPublish(topic, text,
 `mqttReceive(topic, tmax, payload, pmax)` (messages to `cmd/...`), `mqttConnected()`;
 example `iotnode` (sends sensor JSON, LED on GPIO23 by `cmd/led` on / off / blink).
 
+### Burglar alarm in the kernel (0.120)
+
+The `alarm` command (and the web page `/alarm`) is a complete burglar alarm that runs in the
+background like the doorbell - no program has to run. It reads `/ALARM.TXT` (the demo's format, see
+below, plus a few new keys) and is **off** until `alarm on`.
+
+```
+alarm shield                 zones + siren for the RoboOS IoT shield (both variants):
+                             IN1 GPIO17 door (delay), IN2 GPIO27 window (instant), IN3 GPIO22 PIR (interior,
+                             normally open), IN4 GPIO5 tamper (24h); siren = relay K1 / OUT1 GPIO24, LED GPIO23
+alarm zone 17 delay nc Front door      add / change a zone: <gpio> <instant|delay|interior|24h> <nc|no> <name>
+alarm zone del 22                      remove one
+alarm code 1234 5678         change the code (default 1234 - change it!)
+alarm on                     on (alarm off only while disarmed)
+alarm arm 5678               arm (away): exit time, then armed
+alarm home 5678              arm, but 'interior' zones are bypassed (you are at home)
+alarm disarm 5678
+alarm panic                  alarm now
+alarm test                   siren relay + tone for 2 s
+alarm set video 10           keys: exit entry siren (seconds), siren_pin armed_pin (GPIO|none), sound on|off,
+                             volume, voice <folder>|none, photo on|off, photos 1-10, video <s>, entry_photo on|off, mqtt on|off
+alarm                        state, zones (OPEN / ok), last photo + video
+alarm log                    the last 48 events (also in /ALARM.LOG on the card, kept over a reboot)
+```
+
+Zone types: `instant` alarm at once (window), `delay` starts the entry time (the door you come in
+by), `interior` a PIR inside: waits during the exit / entry time and is off when armed `home`,
+`24h` always (tamper, panic button; it fires on opening). Contacts go between the GPIO and GND
+(internal pull-up); on the IoT shield the optocoupler inputs behave the same way (input powered =
+closed). `nc` = normally closed (door contact), `no` = normally open (PIR relay).
+
+What happens on an alarm: siren relay + a rising / falling tone on the jack, voice files from
+`/ALARM` (as the demo), **photos** (`photos`, 1 s apart, in `/CAM/<date>/`; the first one also to
+Home Assistant), then a **video** of `video` seconds (MJPEG AVI in `/CAM/<date>/`), an MQTT event.
+With `entry_photo on` a photo is also taken when the entry time starts (who came in). After `siren`
+seconds the siren stops and the alarm re-arms by itself (zones left open are skipped until they
+close); the cause stays as "alarm memory" until the next arming. The armed state is kept in
+`/ALARM.ST`: after a power cut the board comes back **armed**. 5 wrong codes block the code for 60 s.
+The code typed in the shell is not kept in the history; for real security turn on `users console on`
+(the keyboard then asks for a login) - otherwise whoever has the keyboard can change the settings while
+disarmed.
+
+**Web page** `http(s)://<board>/alarm` (token or login like `/camera`): the state in big letters,
+code + Arm (away) / Arm (home) / Disarm / Panic / Test siren, zones live, the last alarm photo and video,
+the event log, and all settings with a zone editor (button "IoT shield" fills in the shield's inputs).
+JSON API: `GET /api/alarm`, `POST /api/alarm` `{"cmd":"arm","mode":"home","code":"1234"}` (cmd arm,
+disarm, panic, test) or `{"config":"<lines of /ALARM.TXT>"}` (the code is not changed this way).
+
+**Home Assistant** (MQTT with discovery on): an **Alarm panel** (`alarm_control_panel`: arm home / away,
+disarm, trigger - HA asks for the code and sends it to the board, the board checks it), one
+**binary sensor per zone** (door / window / motion / tamper), an **Alarm event** (event types `alarm`,
+`entry`, with the zone and the photo name), the photo in the existing **Camera** entity. Topics:
+`<base>/alarm` (disarmed / arming / armed_away / armed_home / pending / triggered), `<base>/alarm/attr`
+(JSON: cause, alarm memory, open zones, last photo), `<base>/alarm/zone/<gpio>` ON/OFF,
+`<base>/alarm/event`, commands to `<base>/set/alarm` (`{"action":"DISARM","code":"1234"}` or `DISARM 1234`).
+
+Writing a long video to the card takes a few seconds (the siren relay stays on meanwhile, the jack tone
+pauses); disarming from the web / Home Assistant works at once even then. The demo program below still
+exists (`run alarm`) - do not run both, they use the same pins.
+
 ### IoT shield (hardware design)
 
 `hardware/iot-shield/` has a KiCad design of a board that sits on the 40-pin header:
@@ -1227,6 +1290,7 @@ If you connect after boot, press Enter.
 | `ai <question>\|@cmd ..\|key\|model` | ask Claude (own Anthropic API key) |
 | `radio [MHz\|up\|down\|scan\|vol n\|off]` | FM radio (RDA5807M module on I2C) |
 | `motion [watch\|zero\|threshold mg\|alarm on\|off]` | tilt, acceleration, shakes (MPU-6050 / GY-521) |
+| `alarm [on\|off\|arm\|home\|disarm <code>\|zone\|set\|shield\|log\|test]` | burglar alarm in the kernel: zones, siren, photos + video, web page /alarm, Home Assistant |
 | `cam [live\|snap\|bars\|reg a [v]\|off]` | camera on the CSI ribbon: find the sensor, live picture on HDMI |
 | `thermal [once\|range lo hi\|person C]` | 8x8 thermal camera (AMG8833), live heat map |
 | `voice [add id cmd\|del id\|volume\|mute\|wake]` | offline voice commands (DFRobot DF2301Q) |
