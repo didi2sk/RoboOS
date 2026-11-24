@@ -52,6 +52,8 @@ static int motion_present(void) { return 1; }
 struct thermal_values { int pix[64], min_c100, max_c100, avg_c100, median_c100, therm_c100, warm, present; };
 static int thermal_get(struct thermal_values *t) { memset(t, 0, sizeof(*t)); t->max_c100 = 3412; t->min_c100 = 2100; t->avg_c100 = 2250; t->warm = 3; return 0; }
 static int thermal_present(void) { return 1; }
+static int alarm_is_on(void) { return 0; }
+static int alarm_display(char l[4][40], int cols) { (void)l; (void)cols; return 0; }
 static int radio_on(void) { return 1; }
 static unsigned radio_freq(void) { return 10440; }
 static int radio_rssi(void) { return 40; }

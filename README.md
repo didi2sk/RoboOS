@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.120**
+Current version: **0.121**
 
 ## Supported boards
 
@@ -504,6 +504,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.116: every slider of the `/camera` page takes effect on the next frame, also while the microscope / `cam live` run (brightness, contrast, saturation, hue, gamma and a fixed exposure / gain did not).
 0.119: date + time stamp in photos, videos and Home Assistant photos (`cam stamp on|off`, checkbox on the `/camera` page).
 0.120: burglar alarm in the kernel (`alarm`, web page `/alarm`, Home Assistant alarm panel + zone sensors + events over MQTT): zones instant / delay / interior / 24h, away / home, siren relay + tone + voice, photos + video on an alarm, photo at entry, event log /ALARM.LOG, armed again after a power cut; `alarm shield` for the IoT shield pins.
+0.121: alarm keypads and card readers: 4x3 / 4x4 keypad on GPIO or on a PCF8574 (I2C), RC522 RFID reader (SPI), Wiegand readers / keypads; `alarm card learn|add|del`, code + # on the keypad, display mode `alarm` (state, stars, seconds left).
 0.118: microscope key `w` = camera mode: 1920x1080 centre / 2592x1944 whole sensor (sharp, ~15 fps) / 1296x972 whole (fast); photos up to the full 2592x1944; `cam mode full`.
 0.117: file manager on the web: `/files` and `/microscope` (view, download, delete photos and videos on the card).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
@@ -1160,6 +1161,32 @@ Writing a long video to the card takes a few seconds (the siren relay stays on m
 pauses); disarming from the web / Home Assistant works at once even then. The demo program below still
 exists (`run alarm`) - do not run both, they use the same pins.
 
+**Keypad and card readers (0.121)** - a code / card at the door (one keypad and one reader at a time):
+
+```
+alarm keypad gpio 13 19 26 21 20 7 18    4x3 membrane keypad: 4 row pins, then 3 (or 4) column pins
+alarm keypad i2c 0x20                    4x4 keypad on a PCF8574 board (P0-P3 rows, P4-P7 columns; 'swap' = reversed)
+alarm rfid rc522                         RC522 13.56 MHz reader on SPI0: SDA/CS GPIO8, MISO 9, MOSI 10, SCK 11,
+                                         3.3 V (NOT 5 V), RST to 3.3 V (or 'alarm rfid rc522 <gpio>')
+alarm rfid wiegand 20 21                 Wiegand reader / outdoor keypad (D0, D1): 125 kHz EM cards, 26 / 34 bit;
+                                         its D0/D1 are 5 V - use a divider (e.g. 1k / 2k) or a level shifter
+alarm card learn                         then show a new card within 30 s (saved by itself)
+alarm card add 1a2b3c4d Maria            / alarm card del Maria / alarm card (list)
+alarm keypad off, alarm rfid off
+```
+
+On the keypad: code + `#` = arm (when disarmed) or disarm, code + `A` = arm away, `B` = arm home,
+`D` = disarm, `*` = clear (10 s without a key clears too); every key beeps on the jack. A known card arms
+(disarmed) or disarms; an unknown card counts as a wrong code. The display (`display alarm`, also in the KEY1
+cycle of the OLED HAT) shows the state, the seconds left, the code as stars and the last answer. The web page
+has the same lines in "Keypad, card reader, cards" and a "Learn a new card" button (card numbers are shown only
+to admins).
+
+Free pins next to the IoT shield (it uses 17 27 22 5 in, 24 25 12 16 out, 23 LED, 6 button, 2/3 I2C, 4 1-Wire):
+7, 13, 18, 19, 20, 21, 26 (+ 8-11 for SPI, 14/15 = UART). A 4x3 keypad on 13 19 26 21 / 20 7 18 takes all of them
+(on the Zero 2 W GPIO18/19 is the sound) - with a Wiegand reader take the I2C keypad. The Waveshare OLED HAT also
+uses SPI0 + GPIO24/25 - not together with the RC522 / the shield.
+
 ### IoT shield (hardware design)
 
 `hardware/iot-shield/` has a KiCad design of a board that sits on the 40-pin header:
@@ -1290,7 +1317,7 @@ If you connect after boot, press Enter.
 | `ai <question>\|@cmd ..\|key\|model` | ask Claude (own Anthropic API key) |
 | `radio [MHz\|up\|down\|scan\|vol n\|off]` | FM radio (RDA5807M module on I2C) |
 | `motion [watch\|zero\|threshold mg\|alarm on\|off]` | tilt, acceleration, shakes (MPU-6050 / GY-521) |
-| `alarm [on\|off\|arm\|home\|disarm <code>\|zone\|set\|shield\|log\|test]` | burglar alarm in the kernel: zones, siren, photos + video, web page /alarm, Home Assistant |
+| `alarm [on\|off\|arm\|home\|disarm <code>\|zone\|set\|shield\|keypad\|rfid\|card\|log\|test]` | burglar alarm in the kernel: zones, siren, keypad + RFID / Wiegand cards, photos + video, web page /alarm, Home Assistant |
 | `cam [live\|snap\|bars\|reg a [v]\|off]` | camera on the CSI ribbon: find the sensor, live picture on HDMI |
 | `thermal [once\|range lo hi\|person C]` | 8x8 thermal camera (AMG8833), live heat map |
 | `voice [add id cmd\|del id\|volume\|mute\|wake]` | offline voice commands (DFRobot DF2301Q) |

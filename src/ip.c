@@ -862,8 +862,8 @@ static int http_try(struct tcp_pcb *pcb, struct http_conn *c)
                 c->cam_since = timer_us();
                 return 2;
             }
-            if (plen == -6) {                            /* 0.120: GET /api/alarm - the request buffer holds the answer */
-                int n = alarm_web_json(c->req, HTTP_REQ);
+            if (plen == -6 || plen == -7) {              /* 0.120: GET /api/alarm - the request buffer holds the answer (-6 admin) */
+                int n = alarm_web_json(c->req, HTTP_REQ, plen == -6);
                 stream_setup(c, "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
                              c->req, (u32)n);
                 return 3;

@@ -1,6 +1,7 @@
 /* alarmpage.c - the alarm web page (0.120): GET /alarm. State, arm / disarm with the code, zones live, the last
- * alarm photo + video, the event log, settings + zone editor (POST /api/alarm {"config":"..."} = /ALARM.TXT lines).
- * Same login / token as /camera (localStorage "roboos_token"). Made from an HTML file, one line per string. */
+ * alarm photo + video, the event log, settings + zone editor + keypad / reader / card lines (POST /api/alarm
+ * {"config":"..."} = /ALARM.TXT lines). Same login / token as /camera (localStorage "roboos_token").
+ * Made from an HTML file, one quoted string per line. */
 const char alarm_page[] =
 "<!doctype html><html><head><meta charset=\"utf-8\"><title>RoboOS alarm</title>\n"
 "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n"
@@ -68,6 +69,11 @@ const char alarm_page[] =
 "<div class=\"hint\">instant = alarm at once; delay = the door you come in by (entry time); interior = PIR inside (waits in the entry time, off when armed home); 24h = always (tamper / panic). nc = normally closed contact, no = normally open. Contact between the GPIO and GND.</div>\n"
 "<table><thead><tr><th>GPIO</th><th>type</th><th>contact</th><th>name</th><th></th></tr></thead><tbody id=\"ze\"></tbody></table>\n"
 "<button onclick=\"addZone()\">add zone</button> <button onclick=\"shield()\">IoT shield (IN1-IN4, relay K1, LED)</button>\n"
+"<h2>Keypad, card reader, cards</h2>\n"
+"<div class=\"hint\">One per line: keypad gpio &lt;r1&gt; &lt;r2&gt; &lt;r3&gt; &lt;r4&gt; &lt;c1&gt; &lt;c2&gt; &lt;c3&gt; [c4] | keypad i2c [0x20] [swap] | rfid rc522 [rst] | rfid wiegand &lt;d0&gt; &lt;d1&gt; | card &lt;number hex&gt; &lt;name&gt;.\n"
+"On the keypad: code + # = arm / disarm, code + A = arm away, B = arm home, D = disarm, * = clear. A known card arms / disarms.</div>\n"
+"<textarea id=\"s_extra\" rows=\"6\" style=\"width:100%;font-family:monospace;background:#0b0e11;color:#ddd;border:1px solid #456\"></textarea>\n"
+"<button onclick=\"cmd('learn')\">Learn a new card (show it within 30 s)</button>\n"
 "<div style=\"margin-top:12px\"><button class=\"big\" onclick=\"save()\">Save settings</button></div>\n"
 "</div></div>\n"
 "<script>\n"
@@ -99,10 +105,11 @@ const char alarm_page[] =
 " try{const r=await fetch('/api/alarm',{method:'POST',headers:Object.assign({'Content-Type':'application/json'},H()),body:JSON.stringify(b)});const j=await r.json();msg(j.message||j.error||'');}catch(e){msg('no answer');}\n"
 " if(c!='test')$('code').value='';load();}\n"
 "const keys=['exit','entry','siren','siren_pin','armed_pin','volume','voice','photos','video'],checks=['photo','sound','entry_photo','mqtt'];\n"
-"function form(t){const v={},zs=[];for(const l of t.split('\\n')){const s=l.trim();if(!s||s[0]=='#')continue;const w=s.split(/\\s+/);\n"
+"function form(t){const v={},zs=[],ex=[];for(const l of t.split('\\n')){const s=l.trim();if(!s||s[0]=='#')continue;const w=s.split(/\\s+/);\n"
+"  if(w[0]=='keypad'||w[0]=='rfid'||w[0]=='card'){ex.push(s);continue;}\n"
 "  if(w[0]=='zone')zs.push({pin:w[1],type:w[2],nc:w[3],name:w.slice(4).join(' ')});else v[w[0]]=w.slice(1).join(' ');}\n"
 " $('s_on').checked=v.state=='on';for(const k of keys)$('s_'+k).value=v[k]=='none'?'':(v[k]||'');for(const k of checks)$('s_'+k).checked=v[k]=='on';\n"
-" $('ze').innerHTML='';for(const z of zs)addZone(z);}\n"
+" $('ze').innerHTML='';for(const z of zs)addZone(z);$('s_extra').value=ex.join('\\n');}\n"
 "function addZone(z){z=z||{pin:'',type:'instant',nc:'nc',name:''};const tr=document.createElement('tr');\n"
 " const sel=(o,v)=>'<select>'+o.map(x=>'<option'+(x==v?' selected':'')+'>'+x+'</option>').join('')+'</select>';\n"
 " tr.innerHTML='<td><input type=\"number\" min=\"2\" max=\"27\" value=\"'+esc(z.pin)+'\"></td><td>'+sel(['instant','delay','interior','24h'],z.type)+'</td><td>'+sel(['nc','no'],z.nc)+\n"
@@ -114,6 +121,7 @@ const char alarm_page[] =
 " for(const k of checks)t+=k+' '+($('s_'+k).checked?'on':'off')+'\\n';\n"
 " for(const tr of $('ze').children){const i=tr.querySelectorAll('input,select');const p=i[0].value.trim();if(!p)continue;\n"
 "  t+='zone '+p+' '+i[1].value+' '+i[2].value+' '+(i[3].value.trim().replace(/[^ -~]/g,'_')||'zone')+'\\n';}\n"
+" for(const l of $('s_extra').value.split('\\n'))if(l.trim())t+=l.trim().replace(/[^ -~]/g,'_')+'\\n';\n"
 " try{const r=await fetch('/api/alarm',{method:'POST',headers:Object.assign({'Content-Type':'application/json'},H()),body:JSON.stringify({config:t})});const j=await r.json();\n"
 "  msg(j.message||j.error||'');}catch(e){msg('no answer');}setTimeout(()=>load(1),700);}\n"
 "load(1);setInterval(()=>load(0),1000);\n"

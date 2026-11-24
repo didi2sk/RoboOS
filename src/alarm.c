@@ -49,6 +49,9 @@ static char code[16] = "1234";
 static char voice[48] = "/ALARM";
 static struct zone zones[MAXZ];
 static int nz, loaded;
+#define MAXCARD 16
+static struct { char uid[24], name[24]; } cards[MAXCARD];
+static int ncards;
 
 /* state */
 static volatile int state = DISARMED, amode;              /* amode 0 away, 1 home */
@@ -120,6 +123,7 @@ static void event(const char *a, const char *b)
     kprintf("\n[ALARM %s] %s\n", t, e);
     con_color(COL_DEFAULT);
     mq_dirty = 1;
+    display_poke();
 }
 
 static void mqtt_event(const char *ev, const char *zone, const char *file)   /* queue <base>/alarm/event */
@@ -148,7 +152,7 @@ static int cfg_text(char *b, int max, int with_code)
     #define PI(v) do { char d_[12]; int k_ = 0, x_ = (v); if (x_ < 0) { P("none"); break; } do d_[k_++] = (char)('0' + x_ % 10); while ((x_ /= 10)); while (k_ && n < max - 1) b[n++] = d_[--k_]; } while (0)
     P("# RoboOS alarm (shell 'alarm', web page /alarm)\r\n");
     P("state "); P(on ? "on" : "off"); P("\r\n");
-    if (with_code) { P("code "); P(code); P("\r\n"); }
+    if (with_code == 1) { P("code "); P(code); P("\r\n"); }   /* 1 = the file, -2 = admin web (cards, no code), 0 = view */
     P("exit "); PI(exit_s); P("\r\nentry "); PI(entry_s); P("\r\nsiren "); PI(siren_s);
     P("\r\nsiren_pin "); PI(siren_pin); P("\r\narmed_pin "); PI(armed_pin);
     P("\r\nsound "); P(sound ? "on" : "off"); P("\r\nvolume "); PI(volume);
@@ -159,6 +163,8 @@ static int cfg_text(char *b, int max, int with_code)
     for (int i = 0; i < nz; i++) {
         P("zone "); PI(zones[i].pin); P(" "); P(type_name[zones[i].type]); P(zones[i].nc ? " nc " : " no "); P(zones[i].name); P("\r\n");
     }
+    { char a[160]; access_text(a, sizeof(a)); if (a[0]) { P("# keypad gpio <4 rows> <3-4 cols> | keypad i2c [addr] [swap] | rfid rc522 [rst] | rfid wiegand <d0> <d1>\r\n"); P(a); } }
+    if (with_code > 0 || with_code == -2) for (int i = 0; i < ncards; i++) { P("card "); P(cards[i].uid); P(" "); P(cards[i].name); P("\r\n"); }
     b[n] = 0;
     #undef P
     #undef PI
@@ -171,7 +177,10 @@ static int pin_ok(int p) { return p >= 2 && p <= 27; }
 static void parse(char *p, int keep_code, char *err, int emax)
 {
     struct zone nzs[MAXZ];
-    int nn = 0;
+    int nn = 0, nc = 0;
+    static struct { char uid[24], name[24]; } ncs[MAXCARD];
+    char *off1[2] = { "keypad", "off" }, *off2[2] = { "rfid", "off" };
+    access_set(2, off1); access_set(2, off2);             /* the readers come from the text too */
     if (err) err[0] = 0;
     while (*p) {
         char *w[5]; int k = 0;
@@ -208,6 +217,29 @@ static void parse(char *p, int keep_code, char *err, int emax)
         else if (!strcmp(x, "entry_photo") && k > 1) entry_photo = !strcmp(w[1], "on");
         else if (!strcmp(x, "mqtt") && k > 1) use_mqtt = !strcmp(w[1], "on");
         else if (!strcmp(x, "port")) ;                    /* the demo program's TCP port - not used here */
+        else if (!strcmp(x, "keypad") || !strcmp(x, "rfid")) {
+            char *ww[12]; int kk = 0;
+            for (int i = 0; i < k && i < 4; i++) ww[kk++] = w[i];
+            if (k == 5) for (char *q2 = w[4]; *q2 && kk < 12; ) {   /* the rest of the line: more words */
+                while (is_space(*q2)) *q2++ = 0;
+                if (!*q2) break;
+                ww[kk++] = q2;
+                while (*q2 && !is_space(*q2)) q2++;
+            }
+            if (access_set(kk, ww)) BAD("keypad / rfid: see 'alarm help' - ");
+        }
+        else if (!strcmp(x, "card") && k >= 2) {
+            int l = (int)strlen(w[1]), okh = l >= 4 && l <= 20;
+            for (int i = 0; i < l; i++) { char c = w[1][i]; if (c >= 'A' && c <= 'F') w[1][i] = (char)(c + 32); else if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) okh = 0; }
+            if (!okh) { BAD("card: the number in hex - "); continue; }
+            if (nc >= MAXCARD) { BAD("too many cards (16) - "); continue; }
+            scopy(ncs[nc].uid, w[1], sizeof(ncs[nc].uid));
+            char nm[48] = "";
+            if (k >= 3) { scopy(nm, w[2], sizeof(nm)); for (int i = 3; i < k; i++) { int l2 = (int)strlen(nm); if (l2 < 46) { nm[l2] = ' '; scopy(nm + l2 + 1, w[i], (int)sizeof(nm) - l2 - 1); } } }
+            scopy(ncs[nc].name, nm[0] ? nm : "card", sizeof(ncs[nc].name));
+            for (char *c = ncs[nc].name; *c; c++) if ((u8)*c < 32 || (u8)*c > 126 || *c == '"' || *c == '\\') *c = '_';
+            nc++;
+        }
         else if (!strcmp(x, "zone") && k >= 4) {
             int pin;
             if (to_int(w[1], &pin) || !pin_ok(pin)) { BAD("zone: GPIO 2-27 - "); continue; }
@@ -232,6 +264,8 @@ static void parse(char *p, int keep_code, char *err, int emax)
     }
     memcpy(zones, nzs, sizeof(nzs));
     nz = nn;
+    for (int i = 0; i < nc; i++) memcpy(&cards[i], &ncs[i], sizeof(cards[i]));
+    ncards = nc;
     if (siren_pin >= 0 && siren_pin == armed_pin) armed_pin = -1;
 }
 
@@ -252,6 +286,7 @@ static void setup_pins(void)
         int t = z->nc ? lv : !lv;
         if (!z->raw_since) { z->raw = z->open = t; z->raw_since = timer_us(); }
     }
+    access_setup();
 }
 
 static int save_cfg(void)
@@ -356,6 +391,8 @@ static int code_ok(const char *c)                        /* the same time for a 
     return d == 0;
 }
 
+static const char card_ok[] = "\001card";              /* act(): a known card instead of the code */
+
 /* what: 1 arm, 2 disarm, 3 panic; mode 0 away / 1 home; 1 = done, 0 = refused (msg says why) */
 static int act(int what, int mode, const char *c, const char *who, char *msg, int mmax)
 {
@@ -368,8 +405,8 @@ static int act(int what, int mode, const char *c, const char *who, char *msg, in
         event("panic from", who);
         scopy(msg, "ALARM (panic)", mmax); r = 1; goto out;
     }
-    if (locked_until && timer_us() < locked_until) { scopy(msg, "code blocked for a while (too many wrong codes)", mmax); goto out; }
-    if (!code_ok(c ? c : "")) {
+    if (c != card_ok && locked_until && timer_us() < locked_until) { scopy(msg, "code blocked for a while (too many wrong codes)", mmax); goto out; }
+    if (c != card_ok && !code_ok(c ? c : "")) {
         scopy(msg, "wrong code", mmax);
         event("wrong code from", who);
         say("WRONG");
@@ -412,6 +449,122 @@ static int act(int what, int mode, const char *c, const char *who, char *msg, in
 out:
     unlock();
     return r;
+}
+
+/* ---------------- keypad + cards (0.121, core 0) ---------------- */
+
+static char kbuf[16];                                     /* the code being typed */
+static int klen;
+static u64 kat, kmsg_until, learn_until;
+static char kmsg[40];
+static int cfg_dirty;
+
+static void kmsg_set(const char *m) { scopy(kmsg, m, sizeof(kmsg)); kmsg_until = timer_us() + 4000000; display_poke(); }
+
+static void key_in(char k, const char *who)
+{
+    u64 t = timer_us();
+    if (klen && t - kat > 10000000) klen = 0;             /* 10 s without a key: start again */
+    kat = t;
+    if (sound && !sound_is_exclusive()) sound_tone(1800, 40);
+    char msg[80];
+    int r = -1;
+    if (k >= '0' && k <= '9') { if (klen < 15) kbuf[klen++] = k; kbuf[klen] = 0; display_poke(); return; }
+    if (k == '*' || k == 'C') { klen = 0; kmsg_set("cleared"); return; }
+    if (!klen) { kmsg_set(k == '#' ? "type the code, then #" : "type the code first"); return; }
+    kbuf[klen] = 0;
+    if (k == '#') r = act(state == DISARMED ? 1 : 2, 0, kbuf, who, msg, sizeof(msg));
+    else if (k == 'A') r = act(1, 0, kbuf, who, msg, sizeof(msg));
+    else if (k == 'B') r = act(1, 1, kbuf, who, msg, sizeof(msg));
+    else if (k == 'D') r = act(2, 0, kbuf, who, msg, sizeof(msg));
+    for (int i = 0; i < 16; i++) kbuf[i] = 0;
+    klen = 0;
+    if (r >= 0) kmsg_set(msg);
+}
+
+static void card_in(const char *uid0, const char *src)
+{
+    char msg[80], who[48], uid[24];
+    int ul = 0;
+    for (; uid0[ul] && ul < 23; ul++) { char c = uid0[ul]; uid[ul] = c >= 'A' && c <= 'F' ? (char)(c + 32) : c; }
+    uid[ul] = 0;
+    int k = -1;
+    for (int i = 0; i < ncards; i++) if (!strcmp(cards[i].uid, uid)) k = i;
+    if (learn_until && timer_us() < learn_until) {
+        learn_until = 0;
+        if (k >= 0) { kmsg_set("card already known"); kprintf("\n[ALARM] card %s is already known (%s)\n", uid, cards[k].name); return; }
+        if (ncards >= MAXCARD) { kmsg_set("too many cards"); return; }
+        lock();
+        scopy(cards[ncards].uid, uid, sizeof(cards[0].uid));
+        char nm[24] = "card "; int l = 5; int v = ncards + 1; if (v >= 10) nm[l++] = (char)('0' + v / 10); nm[l++] = (char)('0' + v % 10); nm[l] = 0;
+        scopy(cards[ncards].name, nm, sizeof(cards[0].name));
+        ncards++;
+        event("card learned:", uid);
+        unlock();
+        cfg_dirty = 1;
+        kmsg_set("card learned");
+        if (sound) sound_tone(2400, 300);
+        return;
+    }
+    if (k < 0) {
+        lock();
+        scopy(who, "unknown card ", sizeof(who)); int l = (int)strlen(who); scopy(who + l, uid, (int)sizeof(who) - l);
+        event(who, src);
+        say("WRONG");
+        if (++wrong >= 5) { locked_until = timer_us() + 60000000ULL; wrong = 0; event("code blocked for 60 s", ""); }
+        unlock();
+        kmsg_set("unknown card");
+        return;
+    }
+    scopy(who, cards[k].name, sizeof(who));
+    act(state == DISARMED ? 1 : 2, 0, card_ok, who, msg, sizeof(msg));
+    kmsg_set(msg);
+}
+
+static void readers(void)
+{
+    char key, uid[24];
+    for (int i = 0; i < 4; i++) {
+        int e = access_poll(&key, uid, sizeof(uid));
+        if (!e) break;
+        if (e == 1) key_in(key, "keypad");
+        else card_in(uid, "");
+    }
+    if (cfg_dirty) { cfg_dirty = 0; if (save_cfg()) kprintf("[ALARM] /ALARM.TXT not saved (no SD card?)\n"); }
+}
+
+int alarm_is_on(void) { return on; }
+
+/* the display's alarm screen (display.c, core 0): up to 4 rows of `cols` characters */
+int alarm_display(char l[4][40], int cols)
+{
+    u64 t = timer_us();
+    for (int i = 0; i < 4; i++) l[i][0] = 0;
+    if (!on) { scopy(l[0], "alarm off", 40); return 1; }
+    char b[48];
+    int left = (state == EXIT_TIME ? exit_s : entry_s) - (int)((t - state_t) / 1000000);
+    if (left < 0) left = 0;
+    if (state == EXIT_TIME || state == ENTRY_TIME) {
+        scopy(b, state == EXIT_TIME ? "EXIT " : "ENTRY ", sizeof(b));
+        int n = (int)strlen(b); if (left >= 100) b[n++] = (char)('0' + left / 100); if (left >= 10) b[n++] = (char)('0' + left / 10 % 10);
+        b[n++] = (char)('0' + left % 10); b[n++] = ' '; b[n++] = 's'; b[n] = 0;
+    } else scopy(b, state == DISARMED ? "DISARMED" : state == ALARM ? "!! ALARM !!" : amode ? "ARMED home" : "ARMED", sizeof(b));
+    scopy(l[0], b, cols + 1);
+    if (klen && t - kat < 10000000) { scopy(b, "Code: ", sizeof(b)); int n = 6; for (int i = 0; i < klen && n < 40; i++) b[n++] = '*'; b[n] = 0; }
+    else if (kmsg_until > t) scopy(b, kmsg, sizeof(b));
+    else if ((state == ALARM || state == ENTRY_TIME) && cause_name[0]) scopy(b, cause_name, sizeof(b));
+    else if (learn_until > t) scopy(b, "show the new card", sizeof(b));
+    else {
+        int o = 0, k = -1; for (int i = 0; i < nz; i++) if (zones[i].open && !zones[i].skip) { o++; if (k < 0) k = i; }
+        if (o == 1) { scopy(b, zones[k].name, sizeof(b)); int n = (int)strlen(b); scopy(b + n, " open", (int)sizeof(b) - n); }
+        else if (o) { scopy(b, "open zones: ", sizeof(b)); int n = (int)strlen(b); b[n++] = (char)('0' + o / 10 % 10); b[n++] = (char)('0' + o % 10); b[n] = 0; if (b[n - 2] == '0') { b[n - 2] = b[n - 1]; b[n - 1] = 0; } }
+        else scopy(b, memory_name[0] ? "was: " : "all closed", sizeof(b));
+        if (!o && memory_name[0]) { int n = (int)strlen(b); scopy(b + n, memory_name, (int)sizeof(b) - n); }
+    }
+    scopy(l[1], b, cols + 1);
+    u64 now = clock_now();
+    if (now) { char tb[32]; clock_format(tb, now, 0); scopy(l[2], tb + 11, cols + 1); tb[10] = 0; scopy(l[3], tb, cols + 1); return 4; }
+    return 2;
 }
 
 /* ---------------- the loop (core 0) ---------------- */
@@ -612,6 +765,7 @@ void alarm_poll(void)
         if (siren_pin >= 0) gpio_set(siren_pin, siren_on);
         sound_stop();
     }
+    if (access_active()) readers();
     camera_work();
     sounds();
     if (lg_dirty && !lg_save_at) lg_save_at = timer_us() + 2000000;
@@ -678,7 +832,7 @@ static const char *ha_state(void)
 }
 
 /* the status (+ settings without the code + the log) as JSON; any core */
-int alarm_web_json(char *b, int max)
+int alarm_web_json(char *b, int max, int admin)
 {
     jb = b; jmax = max; jn = 0;
     lock();
@@ -707,14 +861,14 @@ int alarm_web_json(char *b, int max)
         J("}");
     }
     J("],\"log\":[");
-    for (int i = 0; i < lg_n && i < 36; i++) {            /* newest first (36 = the answer stays < 8 KB) */
+    for (int i = 0; i < lg_n && i < 28; i++) {            /* newest first (28 = the answer stays < 8 KB) */
         int j = (lg_h - 1 - i + 2 * NLOG) % NLOG;
         if (i) J(",");
         J("["); Js(lg[j].t); J(","); Js(lg[j].e); J("]");
     }
     J("],\"config\":");
-    static char c[2048];
-    cfg_text(c, sizeof(c), 0);
+    static char c[3072];
+    cfg_text(c, sizeof(c), admin ? -2 : 0);            /* cards only for an admin (a UID is enough to copy a card) */
     Js(c);
     J("}\n");
     unlock();
@@ -727,11 +881,17 @@ int alarm_web_cmd(const char *cmd, const char *mode, const char *c, const char *
     if (!strcmp(cmd, "arm")) return act(1, mode && !strcmp(mode, "home"), c, who, msg, mmax);
     if (!strcmp(cmd, "disarm")) return act(2, 0, c, who, msg, mmax);
     if (!strcmp(cmd, "panic")) return act(3, 0, c, who, msg, mmax);
+    if (!strcmp(cmd, "learn")) {
+        if (!access_active()) { scopy(msg, "no card reader set up", mmax); return 0; }
+        if (on && state != DISARMED) { scopy(msg, "disarm first", mmax); return 0; }
+        learn_until = timer_us() + 30000000ULL; display_poke();
+        scopy(msg, "show the new card to the reader within 30 s", mmax); return 1;
+    }
     if (!strcmp(cmd, "test")) {
         if (state != DISARMED) { scopy(msg, "disarm first", mmax); return 0; }
         fx |= FX_SIREN_TST; scopy(msg, "siren + tone for 2 s", mmax); return 1;
     }
-    scopy(msg, "cmd: arm (mode away|home), disarm, panic, test", mmax);
+    scopy(msg, "cmd: arm (mode away|home), disarm, panic, test, learn", mmax);
     return 0;
 }
 
@@ -840,8 +1000,6 @@ int alarm_mqtt_next(char *sub, int smax, char *pl, int pmax, int *retain)
 
 static void show(void)
 {
-    static char b[6144];
-    alarm_web_json(b, sizeof(b));                         /* (just to read everything under one lock) */
     u64 t = timer_us();
     con_color(state == ALARM ? COL_RED : state == DISARMED ? COL_GREEN : COL_YELLOW);
     kprintf("alarm %s: %s%s", on ? "ON" : "off", state_name[state], state == ARMED || state == EXIT_TIME ? (amode ? " (home)" : " (away)") : "");
@@ -865,6 +1023,8 @@ static void show(void)
     if (!nz) kprintf("  no zones yet: 'alarm zone <gpio> <instant|delay|interior|24h> <nc|no> <name>'\n");
     if (last_photo[0]) kprintf("  last photo %s\n", last_photo);
     if (last_video[0]) kprintf("  last video %s\n", last_video);
+    access_info();
+    if (ncards) { kprintf("  cards:"); for (int i = 0; i < ncards; i++) kprintf(" %s (%s)%s", cards[i].uid, cards[i].name, i + 1 < ncards ? "," : "\n"); }
 }
 
 void alarm_cmd(int argc, char **argv)
@@ -889,6 +1049,17 @@ void alarm_cmd(int argc, char **argv)
         if (!lg_n) kprintf("(no events yet)\n");
         return;
     }
+    if (!strcmp(a, "key") && argc > 2) {                  /* type on the keypad from here (tests, remote keypads) */
+        for (int i = 2; i < argc; i++) for (const char *k = argv[i]; *k; k++) key_in(*k >= 'a' && *k <= 'd' ? (char)(*k - 32) : *k, "keypad (alarm key)");
+        kprintf("%s\n", kmsg_until > timer_us() ? kmsg : klen ? "(code typed, end it with #)" : "");
+        return;
+    }
+    if (!strcmp(a, "swipe") && argc > 2) { card_in(argv[2], "(alarm swipe)"); kprintf("%s\n", kmsg); return; }
+    if (!strcmp(a, "card") && argc == 2) {
+        if (!ncards) kprintf("no cards ('alarm card learn' then show a card to the reader)\n");
+        for (int i = 0; i < ncards; i++) kprintf("  %s  %s\n", cards[i].uid, cards[i].name);
+        return;
+    }
     if (!strcmp(a, "test")) {
         char m[64];
         alarm_web_cmd("test", 0, 0, "keyboard", m, sizeof(m));
@@ -896,7 +1067,8 @@ void alarm_cmd(int argc, char **argv)
         return;
     }
     int changed = 0;
-    if (armed && (!strcmp(a, "off") || !strcmp(a, "zone") || !strcmp(a, "set") || !strcmp(a, "code") || !strcmp(a, "shield"))) {
+    if (armed && (!strcmp(a, "off") || !strcmp(a, "zone") || !strcmp(a, "set") || !strcmp(a, "code") || !strcmp(a, "shield") ||
+                  !strcmp(a, "card") || !strcmp(a, "keypad") || !strcmp(a, "rfid"))) {
         kprintf("disarm first ('alarm disarm <code>')\n");
         return;
     }
@@ -956,6 +1128,62 @@ void alarm_cmd(int argc, char **argv)
             if (e[0]) kprintf("%s\n", e);
             changed = 1;
         } else { kprintf("alarm zone <gpio> <instant|delay|interior|24h> <nc|no> <name>   /   alarm zone del <gpio>\n"); return; }
+    } else if (!strcmp(a, "card") && argc > 2 && !strcmp(argv[2], "learn")) {
+        if (!access_active()) { kprintf("no card reader set up ('alarm rfid rc522' / 'alarm rfid wiegand <d0> <d1>')\n"); return; }
+        learn_until = timer_us() + 30000000ULL;
+        display_poke();
+        kprintf("show the new card to the reader within 30 s (it is saved by itself)\n");
+        return;
+    } else if (!strcmp(a, "card") && argc > 3 && (!strcmp(argv[2], "del") || !strcmp(argv[2], "add"))) {
+        static char b[3072];
+        int n = cfg_text(b, sizeof(b), 1), found = 0;
+        if (argv[2][0] == 'd') {                          /* drop the line(s) of that card (number or name) */
+            char *o = b, *w = b;
+            while (*o) {
+                char *ls = o; while (*o && *o != '\n') o++; if (*o) o++;
+                int dropme = 0;
+                if (!strncmp(ls, "card ", 5)) {
+                    char u[24]; int q = 0; const char *p2 = ls + 5; while (*p2 && *p2 != ' ' && q < 23) u[q++] = *p2++; u[q] = 0;
+                    char nm[64]; int r = 0; if (*p2 == ' ') p2++; while (*p2 && *p2 != '\r' && *p2 != '\n' && r < 63) nm[r++] = *p2++; nm[r] = 0;
+                    char want[64]; int wl = 0;           /* the name may have spaces: join the words */
+                    for (int i = 3; i < argc && wl < 62; i++) { for (const char *s2 = argv[i]; *s2 && wl < 62; s2++) want[wl++] = *s2; if (i + 1 < argc) want[wl++] = ' '; }
+                    want[wl] = 0;
+                    char low[64]; int i2 = 0; for (; want[i2]; i2++) low[i2] = want[i2] >= 'A' && want[i2] <= 'F' ? (char)(want[i2] + 32) : want[i2]; low[i2] = 0;
+                    if (!strcmp(u, low) || !strcmp(nm, want)) dropme = found = 1;
+                }
+                if (!dropme) while (ls < o) *w++ = *ls++;
+            }
+            *w = 0; n = (int)(w - b);
+            if (!found) { kprintf("no such card (see 'alarm card')\n"); return; }
+        } else {
+            char l[96] = "card "; int m = 5;
+            for (int i = 3; i < argc && m < 90; i++) { for (const char *s2 = argv[i]; *s2 && m < 90; s2++) l[m++] = *s2; if (i + 1 < argc) l[m++] = ' '; }
+            l[m] = 0;
+            for (int i = 0; l[i] && n < (int)sizeof(b) - 3; i++) b[n++] = l[i];
+            b[n++] = '\r'; b[n++] = '\n'; b[n] = 0;
+        }
+        char e[80];
+        lock(); parse(b, 0, e, sizeof(e)); unlock();
+        if (e[0]) kprintf("%s\n", e);
+        changed = 1;
+    } else if ((!strcmp(a, "keypad") || !strcmp(a, "rfid")) && argc > 2) {
+        char l[96]; int m = 0;
+        for (int i = 1; i < argc && m < 90; i++) { for (const char *s2 = argv[i]; *s2 && m < 90; s2++) l[m++] = *s2; if (i + 1 < argc) l[m++] = ' '; }
+        l[m] = 0;
+        char *ww[12]; char cp[96]; int kk = 0; scopy(cp, l, sizeof(cp));
+        for (char *q = cp; *q && kk < 12; ) { while (*q == ' ') *q++ = 0; if (!*q) break; ww[kk++] = q; while (*q && *q != ' ') q++; }
+        if (access_set(kk, ww)) {
+            kprintf("alarm keypad gpio <r1> <r2> <r3> <r4> <c1> <c2> <c3> [c4]  |  alarm keypad i2c [addr] [swap]  |  alarm keypad off\n"
+                    "alarm rfid rc522 [rst gpio]  |  alarm rfid wiegand <d0> <d1>  |  alarm rfid off\n");
+            char e2[80]; static char b2[3072]; cfg_text(b2, sizeof(b2), 1); lock(); parse(b2, 0, e2, sizeof(e2)); unlock();   /* undo */
+            return;
+        }
+        static char b[3072];
+        int n = cfg_text(b, sizeof(b), 1);
+        char e[80];
+        lock(); parse(b, 0, e, sizeof(e)); unlock();
+        (void)n;
+        changed = 1;
     } else if (!strcmp(a, "set") && argc > 3) {
         if (!strcmp(argv[2], "code") || !strcmp(argv[2], "zone") || !strcmp(argv[2], "state")) { kprintf("use 'alarm code <old> <new>', 'alarm zone', 'alarm on|off'\n"); return; }
         char l[96]; int m = 0;
@@ -986,6 +1214,14 @@ void alarm_cmd(int argc, char **argv)
                 "                                  entry_photo on|off, mqtt on|off\n"
                 "       alarm code <old> <new>     change the code (default 1234!)\n"
                 "       alarm shield               zones + siren for the RoboOS IoT shield (IN1-IN4, relay K1, LED)\n"
+                "       alarm keypad gpio <r1> <r2> <r3> <r4> <c1> <c2> <c3> [c4]   4x3 / 4x4 keypad on GPIO pins\n"
+                "       alarm keypad i2c [addr] [swap]   keypad on a PCF8574 (default 0x20)   |  alarm keypad off\n"
+                "       alarm rfid rc522 [rst]     RC522 card reader on SPI0 (GPIO8-11)\n"
+                "       alarm rfid wiegand <d0> <d1>   Wiegand reader / keypad   |  alarm rfid off\n"
+                "       alarm card                 the cards; alarm card learn (show a new card in 30 s),\n"
+                "                                  alarm card add <hex> [name], alarm card del <hex|name>\n"
+                "       alarm key 1234#            type on the keypad from here; alarm swipe <hex> = a card read\n"
+                "  keypad: code + # = arm (disarmed) / disarm, code + A = arm away, B = arm home, D = disarm, * = clear\n"
                 "       alarm test                 siren + tone for 2 s\n"
                 "       alarm log                  the last 48 events (also /ALARM.LOG)\n"
                 "  web page: http(s)://<board>/alarm   (token or login like /camera)\n");
