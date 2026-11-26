@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.134**
+Aktuálna verzia: **0.135**
 
 ## Podporované dosky
 
@@ -536,6 +536,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.131: `alarm keypad shield` (klávesnica so shieldom: GPIO 13 19 26 21 / 20 7 18 + GND); kolízie pinov klávesnice / čítačky so zónami alarmu alebo tlačidlom zvončeka sa ukážu (`!!`, `PIN TAKEN`) a taká zóna sa nesleduje.
 0.132: `alarm keypad test` - naživo klávesa a úrovne liniek na kontrolu zapojenia klávesnice.
 0.133: pri zapnutom alarme bežná stavová obrazovka displeja sama ukazuje alarm (stav, kód ako hviezdičky, zostávajúce sekundy); konzola ukazuje písaný kód ako hviezdičky (`[KEYPAD] code: ****`). Zóna bez pripojeného kontaktu sa javí ako otvorená (napr. okno z `alarm shield`) - nepoužité zóny zmaž (`alarm zone del 27`).
+0.135: riadok `remote` sa dá nastaviť na webovej stránke /alarm (pri uložení tam sa strácal).
 0.134: terminál klávesnice: `alarm remote <ústredňa>` urobí z inej dosky RoboOS klávesnicu + displej alarmu cez LAN (správy podpísané + šifrované rovnakým `http token`).
 0.118: v mikroskope kláves `w` = režim kamery: 1920x1080 stred / 2592x1944 celý snímač (ostrý, ~15 snímok/s) / 1296x972 celý (rýchly); fotky až v plnom 2592x1944; `cam mode full`.
 0.117: správca súborov na webe: `/files` a `/microscope` (zobraziť, stiahnuť, zmazať fotky a videá na karte).
@@ -1299,7 +1300,8 @@ odchodového / príchodového času a pri poplachu hrá tón sirény. Na ústred
 objaví v `alarm` (`terminal dvere, seen 3 s ago`). Na termináli idú do ústredne aj `alarm arm|home|disarm <kód>`
 a `alarm key 1234#`. S tokenom má každá správa HMAC-SHA256 a text je šifrovaný, skopírovaný (zopakovaný) rámec sa
 odmietne; bez tokenu ide kód po LAN čitateľne (`alarm` varuje). `no master` na displeji terminálu = od ústredne
-15 s nič neprišlo.
+15 s nič neprišlo. Na webovej stránke `/alarm` terminálu (0.135): napíš `remote <meno ústredne>` do poľa s riadkami
+klávesnice / kariet a daj Save (samotné meno dosky sa nastavuje príkazom `net name`).
 
 ### IoT shield (návrh dosky)
 

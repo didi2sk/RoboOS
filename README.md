@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.134**
+Current version: **0.135**
 
 ## Supported boards
 
@@ -540,6 +540,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.131: `alarm keypad shield` (keypad with the IoT shield: GPIO 13 19 26 21 / 20 7 18 + GND); pin clashes between the keypad / card reader and alarm zones or the doorbell button are shown (`!!`, `PIN TAKEN`) and such a zone is not watched.
 0.132: `alarm keypad test` - live key / line levels for checking the keypad wiring.
 0.133: while the alarm is on, the display's normal status screen shows the alarm (state, code as stars, seconds left) by itself; the console shows the typed code as stars (`[KEYPAD] code: ****`). A zone with nothing connected shows as open (e.g. the window of `alarm shield`) - remove unused zones (`alarm zone del 27`).
+0.135: the `remote` line can be set on the web page /alarm (it was dropped when saving there).
 0.134: keypad terminal: `alarm remote <master>` makes another RoboOS board the alarm's keypad + display over the LAN (messages signed + encrypted with the same `http token`).
 0.118: microscope key `w` = camera mode: 1920x1080 centre / 2592x1944 whole sensor (sharp, ~15 fps) / 1296x972 whole (fast); photos up to the full 2592x1944; `cam mode full`.
 0.117: file manager on the web: `/files` and `/microscope` (view, download, delete photos and videos on the card).
@@ -1312,7 +1313,8 @@ in the exit / entry time and sounds the siren tone in an alarm. Nothing to set o
 `alarm` by itself (`terminal door, seen 3 s ago`). On the terminal `alarm arm|home|disarm <code>` and
 `alarm key 1234#` also go to the master. With the token every message carries an HMAC-SHA256 and the text is
 encrypted, a copied (replayed) frame is refused; without a token the code travels in clear on the LAN (`alarm` warns).
-`no master` on the terminal's display = nothing from the master for 15 s.
+`no master` on the terminal's display = nothing from the master for 15 s. On the web page `/alarm` of the terminal
+(0.135): write `remote <master name>` into the keypad / card lines box and Save (the board name itself is set with `net name`).
 
 ### IoT shield (hardware design)
 
