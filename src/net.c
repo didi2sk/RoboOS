@@ -214,6 +214,13 @@ static void input(const u8 *f, int n)
             if (p->has_id && p->last_id == id) return;   /* a repeat: our ACK got lost */
         }
         p->has_id = 1; p->last_id = id;
+        if (len >= 5 && !memcmp_n(f + HDR, "ALM ", 4)) {   /* 0.134: alarm terminal traffic - not for the inbox */
+            static char t[NET_TEXT_MAX + 1];
+            for (int i = 0; i < len; i++) { char c = (char)f[HDR + i]; t[i] = (c >= 32 && c < 127) ? c : '.'; }
+            t[len] = 0;
+            alarm_net_in(from, t, len);
+            break;
+        }
         if (in_count == INBOX) { in_head = (in_head + 1) % INBOX; in_count--; }   /* drop the oldest */
         struct msg *m = &inbox[(in_head + in_count++) % INBOX];
         memcpy(m->from, from, NET_NAME_MAX);

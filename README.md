@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.133**
+Current version: **0.134**
 
 ## Supported boards
 
@@ -540,6 +540,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.131: `alarm keypad shield` (keypad with the IoT shield: GPIO 13 19 26 21 / 20 7 18 + GND); pin clashes between the keypad / card reader and alarm zones or the doorbell button are shown (`!!`, `PIN TAKEN`) and such a zone is not watched.
 0.132: `alarm keypad test` - live key / line levels for checking the keypad wiring.
 0.133: while the alarm is on, the display's normal status screen shows the alarm (state, code as stars, seconds left) by itself; the console shows the typed code as stars (`[KEYPAD] code: ****`). A zone with nothing connected shows as open (e.g. the window of `alarm shield`) - remove unused zones (`alarm zone del 27`).
+0.134: keypad terminal: `alarm remote <master>` makes another RoboOS board the alarm's keypad + display over the LAN (messages signed + encrypted with the same `http token`).
 0.118: microscope key `w` = camera mode: 1920x1080 centre / 2592x1944 whole sensor (sharp, ~15 fps) / 1296x972 whole (fast); photos up to the full 2592x1944; `cam mode full`.
 0.117: file manager on the web: `/files` and `/microscope` (view, download, delete photos and videos on the card).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
@@ -1296,6 +1297,23 @@ alone does not protect it. Separate the reader with an optocoupler on each line 
   RC522 on SPI only ~10-20 cm (keep it next to the Pi). With the Pi inside and the reader at the gate, an outdoor
   Wiegand keypad + 125 kHz card reader in one (12 V, IP65) sends keys AND cards over the same two wires.
 
+**Keypad terminal: a second Pi as the keypad + display (0.134).** The same kernel on another board (e.g. a Zero 2 W
+by the door) becomes a terminal of the alarm board:
+
+```
+alarm remote <master name>     on the terminal (its own alarm stays off); 'alarm remote off' = normal board again
+http token <secret>            the SAME token on the master and every terminal (it signs + encrypts the messages)
+```
+
+The terminal's keypad / card reader (`alarm keypad ...`, `alarm rfid ...` set up on the terminal) go to the master
+as RoboOS messages (raw Ethernet / WiFi frames with an acknowledgement, same LAN, names from `net name`), the master
+decides (codes, cards, lockout) and sends back what its display shows; the terminal shows it on its display, beeps
+in the exit / entry time and sounds the siren tone in an alarm. Nothing to set on the master: a terminal appears in
+`alarm` by itself (`terminal door, seen 3 s ago`). On the terminal `alarm arm|home|disarm <code>` and
+`alarm key 1234#` also go to the master. With the token every message carries an HMAC-SHA256 and the text is
+encrypted, a copied (replayed) frame is refused; without a token the code travels in clear on the LAN (`alarm` warns).
+`no master` on the terminal's display = nothing from the master for 15 s.
+
 ### IoT shield (hardware design)
 
 `hardware/iot-shield/` has a KiCad design of a board that sits on the 40-pin header:
@@ -1426,7 +1444,7 @@ If you connect after boot, press Enter.
 | `ai <question>\|@cmd ..\|key\|model` | ask Claude (own Anthropic API key) |
 | `radio [MHz\|up\|down\|scan\|vol n\|off]` | FM radio (RDA5807M module on I2C) |
 | `motion [watch\|zero\|threshold mg\|alarm on\|off]` | tilt, acceleration, shakes (MPU-6050 / GY-521) |
-| `alarm [on\|off\|arm\|home\|disarm <code>\|zone\|set\|shield\|keypad\|rfid\|card\|log\|test]` | burglar alarm in the kernel: zones, siren, keypad + RFID / Wiegand cards, photos + video, web page /alarm, Home Assistant |
+| `alarm [on\|off\|arm\|home\|disarm <code>\|zone\|set\|shield\|keypad\|rfid\|card\|remote\|log\|test]` | burglar alarm in the kernel: zones, siren, keypad + RFID / Wiegand cards, photos + video, web page /alarm, Home Assistant |
 | `cam [live\|snap\|bars\|reg a [v]\|off]` | camera on the CSI ribbon: find the sensor, live picture on HDMI |
 | `thermal [once\|range lo hi\|person C]` | 8x8 thermal camera (AMG8833), live heat map |
 | `voice [add id cmd\|del id\|volume\|mute\|wake]` | offline voice commands (DFRobot DF2301Q) |

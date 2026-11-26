@@ -12,6 +12,7 @@ static u64 now_us;
 static u64 timer_us(void) { return now_us; }
 static void delay_us(u64 u) { now_us += u; }
 static void kprintf(const char *f, ...) { va_list a; va_start(a, f); vprintf(f, a); va_end(a); }
+static int con_trygetc(void) { return -1; }   /* access_keypad_test (0.132) */
 
 /* ---- GPIO: keypad rows 13 19 26 21 cols 20 7 18 6; Wiegand D0 22 D1 27 (event detect) ---- */
 static int fn[32], lvl[32], key_r = -1, key_c = -1;
