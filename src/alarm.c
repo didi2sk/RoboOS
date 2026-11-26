@@ -493,9 +493,16 @@ static void key_in(char k, const char *who)
     if (sound && !sound_is_exclusive()) sound_tone(1800, 40);
     char msg[80];
     int r = -1;
-    if (k >= '0' && k <= '9') { if (klen < 15) kbuf[klen++] = k; kbuf[klen] = 0; display_poke(); return; }
-    if (k == '*' || k == 'C') { klen = 0; kmsg_set("cleared"); return; }
-    if (!klen) { kmsg_set(k == '#' ? "type the code, then #" : "type the code first"); return; }
+    if (k >= '0' && k <= '9') {
+        if (klen < 15) kbuf[klen++] = k;
+        kbuf[klen] = 0;
+        char st[20]; int i = 0; for (; i < klen && i < 15; i++) st[i] = '*'; st[i] = 0;
+        kprintf("\r[KEYPAD] code: %s ", st);          /* 0.133: stars on the console too (one line, rewritten) */
+        display_poke();
+        return;
+    }
+    if (k == '*' || k == 'C') { klen = 0; kmsg_set("cleared"); kprintf("\n[KEYPAD] cleared\n"); return; }
+    if (!klen) { kmsg_set(k == '#' ? "type the code, then #" : "type the code first"); kprintf("\n[KEYPAD] %s\n", kmsg); return; }
     kbuf[klen] = 0;
     if (k == '#') r = act(state == DISARMED ? 1 : 2, 0, kbuf, who, msg, sizeof(msg));
     else if (k == 'A') r = act(1, 0, kbuf, who, msg, sizeof(msg));
