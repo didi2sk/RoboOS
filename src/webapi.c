@@ -437,6 +437,7 @@ int api_handle(const char *method, const char *path, const char *auth, int role,
     if (auth) { while (*auth == ' ') auth++; while (auth[alen] && auth[alen] != ' ' && auth[alen] != '\r') alen++; }
     if (!auth || !same_token(auth, alen)) {
         if (auth) users_failed(from); else kprintf("\n[API] missing token from %s\n", from);
+        if (auth) return fail(401, "wrong token - it must be the one 'http token' shows on the board (5 wrong tries = 1 minute lock)");
         return fail(401, users_count() ? "log in (HTTP Basic: curl -u name:password) or Authorization: Bearer <token>" : "Authorization: Bearer <token> needed");
     }
     users_ok(from);

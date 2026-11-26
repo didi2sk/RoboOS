@@ -558,7 +558,7 @@ static int build_home(char *dst, int max)
       "function setTok(){tok=$('tk').value.trim();localStorage.setItem('roboos_token',tok);$('tok').style.display='none';reboot();}\n"
       "async function reboot(){if(!confirm('Reboot the board now?'))return;\n"
       " try{const r=await fetch('/api/reboot',{method:'POST',headers:H()});\n"
-      "  if(r.status==401||r.status==403){$('tok').style.display='block';$('msg').textContent='an admin login / the token is needed';return;}\n"
+      "  if(r.status==401||r.status==403||r.status==429){$('tok').style.display='block';let e='';try{e=(await r.json()).error}catch(x){}$('msg').textContent=(e||'an admin login / the token is needed')+' (HTTP '+r.status+')';return;}\n"
       "  if(!r.ok){$('msg').textContent='error '+r.status;return;}}catch(e){}\n"
       " $('msg').textContent='rebooting... the page comes back by itself';\n"
       " for(let i=0;i<90;i++){await new Promise(z=>setTimeout(z,2000));try{const r=await fetch('/',{cache:'no-store'});if(r.ok){location.reload();return;}}catch(e){}}\n"
