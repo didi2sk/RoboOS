@@ -2,7 +2,7 @@
 #include "usb.h"
 #include "sd.h"
 
-#define VERSION "0.125"
+#define VERSION "0.126"
 
 const char *os_version(void) { return VERSION; }
 /* found by 'update' / POST /api/update in a kernel8.img: only a RoboOS kernel may replace the running one */
@@ -74,7 +74,7 @@ void kernel_main(void)
             mbox_prop(0x00028001, off, 2);
             delay_us(150000u * (u32)sd_tries);
         }
-        sde = sd_init();
+        sde = sd_init_on(sd_tries < 3 ? 1 : 0);   /* 0.126: SDHOST only 3x (the WiFi needs the Arasan), then also the Arasan */
         int m = sde == SD_OK ? fat_mount() : -1;
         fs_ok = sde == SD_OK && m == 0;
         if (!sd_tries) { sd_first = sde; sd_first_mount = m; }

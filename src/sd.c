@@ -337,6 +337,7 @@ static int on_sdhost, host_err, emmc_err;
 
 int sd_init_on(int which)                     /* 0 = auto, 1 = SDHOST only, 2 = Arasan only */
 {
+    if (which == 0 && wifi_owns_pins) which = 1;           /* 0.126: the Arasan belongs to the WiFi chip now */
     on_sdhost = 0;
     host_err = emmc_err = SD_OK;
     if (which != 2) {

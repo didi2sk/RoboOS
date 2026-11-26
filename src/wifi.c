@@ -410,6 +410,7 @@ static void chip_power(void)
 
 static void pins_wifi(void)
 {
+    wifi_owns_pins = 1;                                   /* 0.126: sd_init must not take them back */
     for (int p = 34; p <= 39; p++) gpio_func(p, 7);       /* ALT3 = Arasan */
     /* 34 = CLK: no pull, 35-39 = CMD + DAT: pull-up */
     mmio_write(GPPUD, 0); delay_cycles(150);
@@ -928,6 +929,7 @@ static int wl_init(void)
 /* ---------------- commands ---------------- */
 
 int wifi_up(void) { return w.up; }
+volatile int wifi_owns_pins;                              /* GPIO34-39 = Arasan -> WiFi chip */
 
 static int wifi_start(void)
 {

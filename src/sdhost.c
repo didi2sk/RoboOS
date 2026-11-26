@@ -121,7 +121,8 @@ static void set_clock(u32 hz)
 
 static void pins_alt0(void)
 {
-    for (int p = 34; p <= 39; p++) gpio_func(p, 0);       /* the WiFi pins: not on our controller */
+    if (!wifi_owns_pins)                                  /* 0.126: never while the WiFi uses them (a card re-init killed WiFi) */
+        for (int p = 34; p <= 39; p++) gpio_func(p, 0);   /* the WiFi pins: not on our controller */
     if (board_type() != 0x04) gpio_func(47, 0);
     for (int p = 48; p <= 53; p++) gpio_func(p, 4);       /* ALT0 = SDHOST */
     mmio_write(GPPUD, 2);                                 /* pull-up */
