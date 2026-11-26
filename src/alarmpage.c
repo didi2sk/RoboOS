@@ -85,7 +85,7 @@ const char alarm_page[] =
 "const names={disarmed:'DISARMED',exit:'ARMING',armed:'ARMED',entry:'ENTRY',alarm:'ALARM!'};\n"
 "let cfgShown=0,lastPhoto='',busy=0;\n"
 "async function load(full){if(busy)return;busy=1;try{const r=await fetch('/api/alarm',{headers:H(),cache:'no-store'});\n"
-" if(r.status==401||r.status==403){$('tok').style.display='block';busy=0;return;}const j=await r.json();show(j,full);}catch(e){msg('no answer from the board');}busy=0;}\n"
+" if(r.status==401||r.status==403||r.status==429){$('tok').style.display='block';let e='';try{e=(await r.json()).error}catch(x){}msg((e||'log in / token')+' (HTTP '+r.status+')');busy=0;return;}const j=await r.json();show(j,full);}catch(e){msg('no answer from the board');}busy=0;}\n"
 "function show(j,full){const s=$('state');s.className=j.state;s.textContent=j.on?(names[j.state]||j.state)+(j.state=='armed'||j.state=='exit'?(j.mode=='home'?' (home)':' (away)'):''):'ALARM OFF';\n"
 " let t=[];if(j.left!=null)t.push(j.left+' s left');if(j.cause)t.push('cause: '+j.cause);if(j.siren)t.push('SIREN');if(j.memory&&j.state!='alarm')t.push('alarm memory: '+j.memory);if(j.locked)t.push('code blocked '+j.locked+' s');\n"
 " $('sub').textContent=t.join(' - ');\n"
