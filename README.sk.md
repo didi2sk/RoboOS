@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.123**
+Aktuálna verzia: **0.124**
 
 ## Podporované dosky
 
@@ -503,6 +503,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.121: klávesnice a čítačky kariet pre alarm: klávesnica 4x3 / 4x4 na GPIO alebo na PCF8574 (I2C), RFID čítačka RC522 (SPI), Wiegand čítačky / klávesnice; `alarm card learn|add|del`, kód + # na klávesnici, režim displeja `alarm` (stav, hviezdičky, zostávajúce sekundy).
 0.122: aktualizácia kernelu z webu: stránka `/update` s tlačidlami „Check“ a „Install“ (doska si sama stiahne z GitHubu, záloha KERNEL8.BAK, reštart, stránka na ňu počká), `GET|POST /api/kernel`.
 0.123: SD karta sa pri štarte skúša až 4-krát (na 3B bolo po reštarte často treba `sd init`); keď bolo treba opakovať, riadok pri štarte povie, ako zlyhal prvý pokus.
+0.124: inicializácia SD karty už nežiada od karty 1,8 V (S18R - Pi 3 to nevie; veľké SDXC karty sa potom môžu správať zle) a opakovaný pokus pri štarte kartu najprv vypne a zapne. Nastavenia ako webový token a `http on` sa čítajú z karty pri štarte - keď karta nebola pripojená, chýbali.
 0.118: v mikroskope kláves `w` = režim kamery: 1920x1080 stred / 2592x1944 celý snímač (ostrý, ~15 snímok/s) / 1296x972 celý (rýchly); fotky až v plnom 2592x1944; `cam mode full`.
 0.117: správca súborov na webe: `/files` a `/microscope` (zobraziť, stiahnuť, zmazať fotky a videá na karte).
 

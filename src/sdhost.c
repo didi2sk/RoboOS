@@ -223,7 +223,7 @@ int sdhost_init(void)
     stage = "ACMD41 power-up";
     u64 end = timer_us() + 2000000;
     do {
-        r = acmd(41, 0x51FF8000, 0, &e);
+        r = acmd(41, 0x50FF8000, 0, &e);   /* no S18R (0.124) */
         if (!e && (r & 0x80000000)) break;
         delay_us(10000);
     } while (timer_us() < end);

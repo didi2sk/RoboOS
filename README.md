@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.123**
+Current version: **0.124**
 
 ## Supported boards
 
@@ -507,6 +507,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.121: alarm keypads and card readers: 4x3 / 4x4 keypad on GPIO or on a PCF8574 (I2C), RC522 RFID reader (SPI), Wiegand readers / keypads; `alarm card learn|add|del`, code + # on the keypad, display mode `alarm` (state, stars, seconds left).
 0.122: kernel update from the web: page `/update` with "Check" and "Install" buttons (the board downloads from GitHub itself, backup KERNEL8.BAK, reboots, the page waits for it), `GET|POST /api/kernel`.
 0.123: the SD card is tried up to 4 times at boot (the owner's 3B often needed `sd init` after a reboot); when a retry was needed the boot line says how the first try failed.
+0.124: SD init no longer asks the card for 1.8 V signalling (S18R - the Pi 3 cannot do it; large SDXC cards may misbehave), and a boot retry powers the card off and on first. Settings like the web token and `http on` are read from the card at boot - when the card was not mounted they were missing.
 0.118: microscope key `w` = camera mode: 1920x1080 centre / 2592x1944 whole sensor (sharp, ~15 fps) / 1296x972 whole (fast); photos up to the full 2592x1944; `cam mode full`.
 0.117: file manager on the web: `/files` and `/microscope` (view, download, delete photos and videos on the card).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
