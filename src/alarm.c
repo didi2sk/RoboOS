@@ -1083,6 +1083,7 @@ void alarm_cmd(int argc, char **argv)
         if (!lg_n) kprintf("(no events yet)\n");
         return;
     }
+    if (!strcmp(a, "keypad") && argc > 2 && !strcmp(argv[2], "test")) { access_keypad_test(); return; }   /* 0.132 */
     if (!strcmp(a, "key") && argc > 2) {                  /* type on the keypad from here (tests, remote keypads) */
         for (int i = 2; i < argc; i++) for (const char *k = argv[i]; *k; k++) key_in(*k >= 'a' && *k <= 'd' ? (char)(*k - 32) : *k, "keypad (alarm key)");
         kprintf("%s\n", kmsg_until > timer_us() ? kmsg : klen ? "(code typed, end it with #)" : "");
@@ -1250,6 +1251,7 @@ void alarm_cmd(int argc, char **argv)
                 "       alarm shield               zones + siren for the RoboOS IoT shield (IN1-IN4, relay K1, LED)\n"
                 "       alarm keypad plug [reversed]   the keypad's 8-pin connector pushed onto header pins 23-37 (inner row)\n"
                 "       alarm keypad shield        with the IoT shield: wires 1-8 -> pins 33 35 37 40 38 26 12 + any GND (39)\n"
+                "       alarm keypad test          live: which key is seen, which lines are low (30 s)\n"
                 "       alarm keypad gpio          4x4 keypad straight on the header: wires 1-8 -> pins 29 31 33 35 32 36 38 40\n"
                 "                                  (GPIO 5 6 13 19 rows, 12 16 20 21 columns; not with the IoT shield)\n"
                 "       alarm keypad gpio <r1> <r2> <r3> <r4> <c1> <c2> <c3> [c4]   other pins\n"
