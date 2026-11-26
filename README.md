@@ -36,6 +36,29 @@ or GPIO47 (Pi 2 v1.2).
    plus the folders `APPS` (example programs), `RUN` (autostart) and `FIRMWARE` (WiFi chip firmware).
 3. Put the card in the Raspberry Pi and power it on.
 
+## GPIO header (pinout)
+
+![Raspberry Pi 40-pin GPIO header](docs/pinout.webp)
+
+*Picture: [Raspberry Pi documentation](https://www.raspberrypi.com/documentation/computers/raspberry-pi.html), © Raspberry Pi Ltd, [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).*
+Odd pins (1, 3, ... 39) = the inner row, even pins (2, 4, ... 40) = the row at the board's edge. The numbers in
+RoboOS commands are always **GPIO numbers**, not header pins.
+
+What RoboOS uses by default:
+
+| GPIO (header pin) | used for |
+|---|---|
+| 2, 3 (3, 5) | I2C: sensors, displays, RTC, FM radio, I2C keypad |
+| 14, 15 (8, 10) | UART console (USB-TTL adapter) |
+| 8-11 (24, 21, 19, 23) | SPI: RC522 card reader, Waveshare OLED HAT |
+| 4 (7) | 1-Wire on the IoT shield (no driver yet) |
+| 17, 27, 22, 5 (11, 13, 15, 29) | IoT shield inputs IN1-IN4 = alarm zones (`alarm shield`) |
+| 24, 25, 12, 16 (18, 22, 32, 36) | IoT shield outputs / relays (24 = alarm siren) |
+| 23 (16) | IoT shield LED (alarm LED) |
+| 6 (31) | doorbell button (THT shield) |
+| 11, GND, 0, 5, 6, 13, 19, 26 (23-37 inner row) | 4x4 keypad pushed straight on (`alarm keypad plug`) |
+| 18, 19 (12, 35) | sound on the Zero 2 W (the Pi 3 uses its jack) |
+
 ## Programs and autostart
 
 The SD card is also RoboOS's disk (FAT32 or FAT16, read and write).
