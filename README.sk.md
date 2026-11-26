@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.128**
+Aktuálna verzia: **0.129**
 
 ## Podporované dosky
 
@@ -508,6 +508,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.126: opätovná inicializácia karty už nikdy nesiahne na piny WiFi / radič Arasan (v 0.125 mohla automatická oprava karty odpojiť WiFi); pri štarte sa radič SDHOST skúša 3-krát, až potom náhradný Arasan.
 0.127: firmvér WiFi sa prečíta z karty do pamäte ešte pred zapnutím WiFi čipu (na 3B so Samsung 64 GB kartou karta zlyhávala, keď sa jej čítanie striedalo s nahrávaním firmvéru).
 0.128: nová úvodná stránka (`http://<doska>/`): dlaždice stavu (čas behu, čas, CPU, sieť, adresa, alarm, API, HTTPS), karty Alarm / Camera / Photos & videos / Files / Update / JSON API a tlačidlo Reboot (token alebo admin prihlásenie; stránka sa po reštarte sama načíta).
+0.129: `alarm keypad gpio` bez čísel = fóliová klávesnica 4x4 priamo na lište (GPIO 5 6 13 19 / 12 16 20 21 = piny 29 31 33 35 / 32 36 38 40), tabuľka zapojenia v README.
 0.118: v mikroskope kláves `w` = režim kamery: 1920x1080 stred / 2592x1944 celý snímač (ostrý, ~15 snímok/s) / 1296x972 celý (rýchly); fotky až v plnom 2592x1944; `cam mode full`.
 0.117: správca súborov na webe: `/files` a `/microscope` (zobraziť, stiahnuť, zmazať fotky a videá na karte).
 
@@ -1164,7 +1165,8 @@ existuje (`run alarm`) - nespúšťaj oba, používajú rovnaké piny.
 **Klávesnica a čítačky kariet (0.121)** - kód / karta pri dverách (naraz jedna klávesnica a jedna čítačka):
 
 ```
-alarm keypad gpio 13 19 26 21 20 7 18    fóliová klávesnica 4x3: 4 piny riadkov, potom 3 (alebo 4) piny stĺpcov
+alarm keypad gpio                        fóliová klávesnica 4x4 priamo na lištu (pozri tabuľku nižšie)
+alarm keypad gpio 13 19 26 21 20 7 18    iné piny: 4 piny riadkov, potom 3 (alebo 4) piny stĺpcov
 alarm keypad i2c 0x20                    klávesnica 4x4 na doske s PCF8574 (P0-P3 riadky, P4-P7 stĺpce; 'swap' = naopak)
 alarm rfid rc522                         čítačka RC522 13,56 MHz na SPI0: SDA/CS GPIO8, MISO 9, MOSI 10, SCK 11,
                                          3,3 V (NIE 5 V), RST na 3,3 V (alebo 'alarm rfid rc522 <gpio>')
@@ -1174,6 +1176,20 @@ alarm card learn                         potom do 30 s ukáž novú kartu (ulož
 alarm card add 1a2b3c4d Maria            / alarm card del Maria / alarm card (zoznam)
 alarm keypad off, alarm rfid off
 ```
+
+Fóliová klávesnica 4x4 priamo na lištu Pi (0.129, `alarm keypad gpio` bez čísel; netreba rezistory - vnútorné
+pull-upy, naraz sa zapína jeden riadok). 8 vodičov klávesnice, pri pohľade spredu s káblom dole, zľava: 1-4 = riadky
+(1 2 3 A / 4 5 6 B / 7 8 9 C / * 0 # D), 5-8 = stĺpce:
+
+| vodič klávesnice | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|
+| GPIO | 5 | 6 | 13 | 19 | 12 | 16 | 20 | 21 |
+| pin lišty | 29 | 31 | 33 | 35 | 32 | 36 | 38 | 40 |
+
+Nie spolu s IoT shieldom (ten používa GPIO 5, 6, 12, 16) - so shieldom: `alarm keypad gpio 13 19 26 21 20 7 18 8`
+(piny 33 35 37 40 38 26 12 24; GPIO8 je SPI, takže nie s RC522) alebo I2C klávesnica. Klávesy poprehadzované (1 ukáže
+A)? Klávesnica má vodiče naopak: zadaj piny v opačnom poradí. Klávesnica sa číta len pri zapnutom alarme; `alarm`
+ukáže `keys N, last X`.
 
 Na klávesnici: kód + `#` = zakódovať (keď je odkódovaný) alebo odkódovať, kód + `A` = zakódovať (odchod),
 `B` = zakódovať (doma), `D` = odkódovať, `*` = zmazať (10 s bez klávesu zmaže tiež); každý kláves pípne na jacku.

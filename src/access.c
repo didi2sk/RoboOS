@@ -1,7 +1,8 @@
 /*
  * access.c - code / card readers for the alarm (0.121): they only READ, alarm.c decides what a key or card means.
  *
- *   keypad gpio <r1> <r2> <r3> <r4> <c1> <c2> <c3> [c4]
+ *   keypad gpio [<r1> <r2> <r3> <r4> <c1> <c2> <c3> [c4]]   (no pins = rows 5 6 13 19, columns 12 16 20 21 =
+ *        header pins 29 31 33 35 / 32 36 38 40 - the keypad's 8 wires in order, 0.129)
  *        a 4x3 / 4x4 membrane keypad straight on GPIO pins: columns are inputs with the pull-up, one row at a
  *        time is driven LOW (the others float), a low column = that key. Scanned every 10 ms, a key counts after
  *        2 equal scans, once per press. Layout 123A / 456B / 789C / *0#D.
@@ -83,6 +84,12 @@ int access_set(int n, char **w)
     if (n < 2) return -1;
     if (!strcmp(w[0], "keypad")) {
         if (!strcmp(w[1], "off")) { kp_type = 0; return 0; }
+        if (!strcmp(w[1], "gpio") && n == 2) {           /* 0.129: the default wiring (no shield): the end of the header */
+            static const int dr[4] = { 5, 6, 13, 19 }, dc[4] = { 12, 16, 20, 21 };   /* pins 29 31 33 35 / 32 36 38 40 */
+            for (int i = 0; i < 4; i++) { kr[i] = dr[i]; kc[i] = dc[i]; }
+            nkc = 4; kp_type = 1;
+            return 0;
+        }
         if (!strcmp(w[1], "gpio")) {
             int p[8], k = n - 2;
             if (k != 7 && k != 8) return -1;

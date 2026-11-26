@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.128**
+Current version: **0.129**
 
 ## Supported boards
 
@@ -512,6 +512,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.126: re-initialising the card never touches the WiFi pins / the Arasan controller any more (in 0.125 an automatic card re-init could cut off the WiFi); the boot tries the SDHOST controller 3 times before falling back to the Arasan.
 0.127: the WiFi firmware files are read from the card into RAM before the WiFi chip starts (on a 3B with a Samsung 64 GB card the card failed while its reads alternated with the firmware upload).
 0.128: new home page (`http://<board>/`): status tiles (uptime, time, CPU, network, address, alarm, API, HTTPS), cards for Alarm / Camera / Photos & videos / Files / Update / JSON API, and a Reboot button (token or admin login; the page reloads when the board is back).
+0.129: `alarm keypad gpio` with no pins = a 4x4 membrane keypad straight on the header (GPIO 5 6 13 19 / 12 16 20 21 = pins 29 31 33 35 / 32 36 38 40), wiring table in the README.
 0.118: microscope key `w` = camera mode: 1920x1080 centre / 2592x1944 whole sensor (sharp, ~15 fps) / 1296x972 whole (fast); photos up to the full 2592x1944; `cam mode full`.
 0.117: file manager on the web: `/files` and `/microscope` (view, download, delete photos and videos on the card).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
@@ -1177,7 +1178,8 @@ exists (`run alarm`) - do not run both, they use the same pins.
 **Keypad and card readers (0.121)** - a code / card at the door (one keypad and one reader at a time):
 
 ```
-alarm keypad gpio 13 19 26 21 20 7 18    4x3 membrane keypad: 4 row pins, then 3 (or 4) column pins
+alarm keypad gpio                        4x4 membrane keypad straight on the header (see the table below)
+alarm keypad gpio 13 19 26 21 20 7 18    other pins: 4 row pins, then 3 (or 4) column pins
 alarm keypad i2c 0x20                    4x4 keypad on a PCF8574 board (P0-P3 rows, P4-P7 columns; 'swap' = reversed)
 alarm rfid rc522                         RC522 13.56 MHz reader on SPI0: SDA/CS GPIO8, MISO 9, MOSI 10, SCK 11,
                                          3.3 V (NOT 5 V), RST to 3.3 V (or 'alarm rfid rc522 <gpio>')
@@ -1187,6 +1189,20 @@ alarm card learn                         then show a new card within 30 s (saved
 alarm card add 1a2b3c4d Maria            / alarm card del Maria / alarm card (list)
 alarm keypad off, alarm rfid off
 ```
+
+4x4 membrane keypad straight on the Pi header (0.129, `alarm keypad gpio` with no pins; no resistors needed -
+internal pull-ups, one row driven at a time). The keypad's 8 wires, looking at the front with the cable down, from
+the left: 1-4 = rows (1 2 3 A / 4 5 6 B / 7 8 9 C / * 0 # D), 5-8 = columns:
+
+| keypad wire | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|
+| GPIO | 5 | 6 | 13 | 19 | 12 | 16 | 20 | 21 |
+| header pin | 29 | 31 | 33 | 35 | 32 | 36 | 38 | 40 |
+
+Not together with the IoT shield (it uses GPIO 5, 6, 12, 16) - with the shield: `alarm keypad gpio 13 19 26 21 20 7 18 8`
+(header pins 33 35 37 40 38 26 12 24; GPIO8 is SPI, so not with the RC522) or the I2C keypad. Keys mixed up (1 shows
+as A)? The keypad has its wires the other way round: give the pins in reverse order. The alarm must be on for the
+keypad to be read; `alarm` shows `keys N, last X`.
 
 On the keypad: code + `#` = arm (when disarmed) or disarm, code + `A` = arm away, `B` = arm home,
 `D` = disarm, `*` = clear (10 s without a key clears too); every key beeps on the jack. A known card arms
