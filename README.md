@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.132**
+Current version: **0.133**
 
 ## Supported boards
 
@@ -539,6 +539,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.130: `alarm keypad plug [reversed]` = the keypad's 8-pin connector pushed straight onto header pins 23-37 (no wiring; the wire on the GND pin is read the other way round, all 16 keys work); keypad lines may be `gnd` in `alarm keypad gpio`.
 0.131: `alarm keypad shield` (keypad with the IoT shield: GPIO 13 19 26 21 / 20 7 18 + GND); pin clashes between the keypad / card reader and alarm zones or the doorbell button are shown (`!!`, `PIN TAKEN`) and such a zone is not watched.
 0.132: `alarm keypad test` - live key / line levels for checking the keypad wiring.
+0.133: while the alarm is on, the display's normal status screen shows the alarm (state, code as stars, seconds left) by itself; the console shows the typed code as stars (`[KEYPAD] code: ****`). A zone with nothing connected shows as open (e.g. the window of `alarm shield`) - remove unused zones (`alarm zone del 27`).
 0.118: microscope key `w` = camera mode: 1920x1080 centre / 2592x1944 whole sensor (sharp, ~15 fps) / 1296x972 whole (fast); photos up to the full 2592x1944; `cam mode full`.
 0.117: file manager on the web: `/files` and `/microscope` (view, download, delete photos and videos on the card).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.

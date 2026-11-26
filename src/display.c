@@ -590,7 +590,7 @@ static void alarm_draw(void)
     int n = alarm_display(l, cols > 39 ? 39 : cols);
     for (int r = 0; r < rows; r++) set_row(r, r < n && (rows > 2 || r < 2) ? l[r] : "");
 }
-void display_poke(void) { if (mode == M_ALARM) next_status = 0; }
+void display_poke(void) { if (mode == M_ALARM || (mode == M_STATUS && alarm_is_on())) next_status = 0; }
 
 /* the tilt screen (0.83, MPU-6050): pitch / roll / |a| / shakes */
 static int d10(char *b, int n, int v)
@@ -801,13 +801,14 @@ void display_poll(void)
     }
     if ((mode != M_STATUS && mode != M_CLOCK && mode != M_RADIO && mode != M_SENSORS && mode != M_MOTION && mode != M_THERMAL && mode != M_ALARM) || timer_us() < next_status) return;
     busy = 1;
-    next_status = timer_us() + (mode == M_SENSORS ? 2000000 : mode == M_MOTION ? 250000 : mode == M_THERMAL ? 500000 : mode == M_ALARM ? 250000 : 1000000);
+    next_status = timer_us() + (mode == M_SENSORS ? 2000000 : mode == M_MOTION ? 250000 : mode == M_THERMAL ? 500000 : mode == M_ALARM || (mode == M_STATUS && alarm_is_on()) ? 250000 : 1000000);
     if (mode == M_CLOCK) clock_draw();
     else if (mode == M_RADIO) { radio_draw(); flush(); }
     else if (mode == M_SENSORS) { sensors_draw(); flush(); }
     else if (mode == M_MOTION) { motion_draw(); flush(); }
     else if (mode == M_THERMAL) { thermal_draw(); flush(); }
     else if (mode == M_ALARM) { alarm_draw(); flush(); }
+    else if (alarm_is_on()) { alarm_draw(); flush(); }   /* 0.133: the alarm is on -> the status screen shows the alarm */
     else { status_draw(); flush(); }
     busy = 0;
 }
