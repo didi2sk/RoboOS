@@ -19,12 +19,15 @@ static const int R[4] = { 13, 19, 26, 21 }, C[4] = { 20, 7, 18, 6 };
 static void gpio_func(int p, int f) { fn[p] = f; }
 static void gpio_pull(int p, int m) {}
 static void gpio_set(int p, int on) { lvl[p] = on; }
+/* the real wiring: key (r, c) joins line PR[r] with line PC[c]; -1 = that keypad wire sits on GND (0.130) */
+static int PR[4] = { 13, 19, 26, 21 }, PC[4] = { 20, 7, 18, 6 };
+static int low_by(int q) { return q == -1 || (q >= 0 && fn[q] == 1 && lvl[q] == 0); }
 static int gpio_get(int p)
 {
-    for (int c = 0; c < 4; c++) if (C[c] == p) {
-        if (key_r >= 0 && key_c == c && fn[R[key_r]] == 1 && lvl[R[key_r]] == 0) return 0;
-        return 1;
-    }
+    if (key_r < 0) return 1;
+    int a = PR[key_r], b = PC[key_c];
+    if (p == b && low_by(a)) return 0;
+    if (p == a && low_by(b)) return 0;
     return 1;
 }
 static u32 gpeds, gpfen;
@@ -147,6 +150,32 @@ int main(void)
     check("5 ms glitch ignored", gn == 0);
     char t[200]; access_text(t, sizeof(t));
     check("settings text", strstr(t, "keypad gpio 13 19 26 21 20 7 18 6") != 0);
+    /* 0.130: the connector straight on header pins 23-37 (pin 25 = GND) */
+    {
+        static const char want[] = "123A456B789C*0#D";
+        int pr[4] = { 11, -1, 0, 5 }, pc[4] = { 6, 13, 19, 26 };
+        memcpy(PR, pr, sizeof(pr)); memcpy(PC, pc, sizeof(pc));
+        check("keypad plug accepted", setline("keypad plug") == 0);
+        access_setup(); gn = 0; got[0] = 0;
+        for (int k = 0; k < 16; k++) press(k / 4, k % 4, 50);
+        printf("    got \"%s\"\n", got);
+        check("keypad plug: all 16 keys (one wire on GND)", !strcmp(got, want));
+        char t1[200]; access_text(t1, sizeof(t1));
+        check("settings text: keypad gpio 11 gnd 0 5 6 13 19 26", strstr(t1, "keypad gpio 11 gnd 0 5 6 13 19 26") != 0);
+        int rr[4] = { 26, 19, 13, 6 }, rc[4] = { 5, 0, -1, 11 };   /* plugged the other way round */
+        memcpy(PR, rr, sizeof(rr)); memcpy(PC, rc, sizeof(rc));
+        gn = 0; got[0] = 0;
+        for (int k = 0; k < 16; k++) press(k / 4, k % 4, 50);
+        int distinct = 1; for (int i = 0; i < gn; i++) for (int j = 0; j < i; j++) if (got[i] == got[j]) distinct = 0;
+        check("plugged reversed: still 16 different keys", gn == 16 && distinct);
+        check("keypad plug reversed accepted", setline("keypad plug reversed") == 0);
+        access_setup(); gn = 0; got[0] = 0;
+        for (int k = 0; k < 16; k++) press(k / 4, k % 4, 50);
+        check("keypad plug reversed: all 16 keys right", !strcmp(got, want));
+        check("gpio line with two gnd + pins accepted", setline("keypad gpio gnd 6 13 19 26 5 0 gnd") == 0);
+        check("three gnd refused", setline("keypad gpio gnd gnd 13 19 26 5 0 gnd") != 0);
+        setline("keypad off");
+    }
     /* I2C keypad */
     check("keypad i2c line accepted", setline("keypad i2c 0x20") == 0);
     access_setup(); gn = 0; got[0] = 0;

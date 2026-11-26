@@ -70,7 +70,7 @@ const char alarm_page[] =
 "<table><thead><tr><th>GPIO</th><th>type</th><th>contact</th><th>name</th><th></th></tr></thead><tbody id=\"ze\"></tbody></table>\n"
 "<button onclick=\"addZone()\">add zone</button> <button onclick=\"shield()\">IoT shield (IN1-IN4, relay K1, LED)</button>\n"
 "<h2>Keypad, card reader, cards</h2>\n"
-"<div class=\"hint\">One per line: keypad gpio (a 4x4 keypad straight on header pins 29 31 33 35 32 36 38 40, not with the shield) | keypad gpio &lt;r1&gt; &lt;r2&gt; &lt;r3&gt; &lt;r4&gt; &lt;c1&gt; &lt;c2&gt; &lt;c3&gt; [c4] | keypad i2c [0x20] [swap] | rfid rc522 [rst] | rfid wiegand &lt;d0&gt; &lt;d1&gt; | card &lt;number hex&gt; &lt;name&gt;.\n"
+"<div class=\"hint\">One per line: keypad plug (the 8-pin connector pushed onto header pins 23-37) | keypad gpio (wires on pins 29 31 33 35 32 36 38 40) | keypad gpio &lt;r1&gt; &lt;r2&gt; &lt;r3&gt; &lt;r4&gt; &lt;c1&gt; &lt;c2&gt; &lt;c3&gt; [c4] | keypad i2c [0x20] [swap] | rfid rc522 [rst] | rfid wiegand &lt;d0&gt; &lt;d1&gt; | card &lt;number hex&gt; &lt;name&gt;.\n"
 "On the keypad: code + # = arm / disarm, code + A = arm away, B = arm home, D = disarm, * = clear. A known card arms / disarms.</div>\n"
 "<textarea id=\"s_extra\" rows=\"6\" style=\"width:100%;font-family:monospace;background:#0b0e11;color:#ddd;border:1px solid #456\"></textarea>\n"
 "<button onclick=\"cmd('learn')\">Learn a new card (show it within 30 s)</button>\n"

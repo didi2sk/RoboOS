@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.129**
+Current version: **0.130**
 
 ## Supported boards
 
@@ -513,6 +513,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.127: the WiFi firmware files are read from the card into RAM before the WiFi chip starts (on a 3B with a Samsung 64 GB card the card failed while its reads alternated with the firmware upload).
 0.128: new home page (`http://<board>/`): status tiles (uptime, time, CPU, network, address, alarm, API, HTTPS), cards for Alarm / Camera / Photos & videos / Files / Update / JSON API, and a Reboot button (token or admin login; the page reloads when the board is back).
 0.129: `alarm keypad gpio` with no pins = a 4x4 membrane keypad straight on the header (GPIO 5 6 13 19 / 12 16 20 21 = pins 29 31 33 35 / 32 36 38 40), wiring table in the README.
+0.130: `alarm keypad plug [reversed]` = the keypad's 8-pin connector pushed straight onto header pins 23-37 (no wiring; the wire on the GND pin is read the other way round, all 16 keys work); keypad lines may be `gnd` in `alarm keypad gpio`.
 0.118: microscope key `w` = camera mode: 1920x1080 centre / 2592x1944 whole sensor (sharp, ~15 fps) / 1296x972 whole (fast); photos up to the full 2592x1944; `cam mode full`.
 0.117: file manager on the web: `/files` and `/microscope` (view, download, delete photos and videos on the card).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
@@ -1189,6 +1190,18 @@ alarm card learn                         then show a new card within 30 s (saved
 alarm card add 1a2b3c4d Maria            / alarm card del Maria / alarm card (list)
 alarm keypad off, alarm rfid off
 ```
+
+**Simplest: push the connector straight onto the header (0.130, `alarm keypad plug`).** The keypad's 8-pin
+connector goes onto pins **23 to 37 of the inner row** (odd numbers, the row nearer the board's middle), wire 1
+(the left one, looking at the front with the cable down) on pin 23. Nothing to solder or wire. Pin 25 under wire 2
+is GND - RoboOS reads that wire the other way round, so all 16 keys still work, and as the lines are only ever
+pulled LOW the GND pin is safe. Pushed on the other way round (wire 1 on pin 37)? `alarm keypad plug reversed`.
+Not with the IoT shield (it covers the header) and not with the RC522 (pin 23 = GPIO11 = SPI clock).
+
+| header pin | 23 | 25 | 27 | 29 | 31 | 33 | 35 | 37 |
+|---|---|---|---|---|---|---|---|---|
+| keypad wire | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+| GPIO | 11 | GND | 0 | 5 | 6 | 13 | 19 | 26 |
 
 4x4 membrane keypad straight on the Pi header (0.129, `alarm keypad gpio` with no pins; no resistors needed -
 internal pull-ups, one row driven at a time). The keypad's 8 wires, looking at the front with the cable down, from
