@@ -439,6 +439,10 @@ extern struct upload upl;
 #define UPLOAD_MAX (16u << 20)
 void upload_poll(void);            /* core 0 */
 void cmd_update(int argc, char **argv);
+int  update_web_request(int install, int force);   /* 0.122: core 1 - 0 queued, -1 busy */
+void update_web_poll(void);                    /* core 0, con_trygetc */
+int  update_web_json(char *b, int max);
+extern const char update_page[];               /* updatepage.c: GET /update */
 int  api_admin_ok(const char *auth, int role, const char *from);   /* webapi.c: 1 ok, 0 no, -1 locked, -2 API off */
 void api_reboot_later(u32 ms);
 long fetch_url(const char *url, u8 *buf, u32 max, int insecure);   /* fetch.c: HTTP(S) GET; -1 + fetch_err */

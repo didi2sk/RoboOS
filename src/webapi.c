@@ -663,6 +663,33 @@ logged_in:;
         put("{\"ok\":"); put(ok ? "true" : "false"); put(",\"message\":"); put_str(msg); put("}\n");
         return olen;
     }
+    if (!strcmp(path, "/api/kernel")) {                   /* 0.122: update the kernel from GitHub (the /update page) */
+        if (post) {
+            char key[16], sv[16];
+            long n = 0;
+            int install = -1, force = 0;
+            jp = body; jend = body + blen; jerr = 0;
+            if (!eat('{')) return fail(400, "expected {\"cmd\":\"check\"} or {\"cmd\":\"install\",\"force\":false}");
+            if (peek() != '}') do {
+                if (value(&n, key, sizeof(key)) != J_STR || !eat(':')) return fail(400, "expected \"key\":value");
+                int k = value(&n, sv, sizeof(sv));
+                if (!strcmp(key, "cmd") && k == J_STR) install = !strcmp(sv, "install") ? 1 : !strcmp(sv, "check") ? 0 : -1;
+                else if (!strcmp(key, "force")) force = k == J_TRUE;
+                else return fail(400, "keys: cmd (check|install), force");
+            } while (eat(','));
+            if (install < 0) return fail(400, "cmd: check or install");
+            if (update_web_request(install, force)) return fail(409, "busy (a check / install is running)");
+            kprintf("\n[API] kernel %s asked by %s\n", install ? "install" : "check", from);
+            head(202);
+            put("{\"ok\":true,\"queued\":true}\n");
+            return olen;
+        }
+        if (!get) return fail(405, "use GET or POST");
+        static char kj[512];
+        update_web_json(kj, sizeof(kj));
+        head(200); put(kj);
+        return olen;
+    }
     if (!strcmp(path, "/api/camera.jpg")) {               /* 0.104: ip.c sends the picture, camera.c takes it on core 0 */
         if (!get) return fail(405, "use GET");
         return -2;
@@ -704,5 +731,5 @@ logged_in:;
         put("{\"ok\":true,\"rebooting\":true}\n");
         return olen;
     }
-    return fail(404, "unknown: GET /api/status, GET|POST /api/gpio, GET /api/gpio/<pin>, GET|POST /api/sound, GET|POST /api/display, GET|POST /api/radio, GET /api/sensors, GET|POST /api/camera, GET /api/camera.jpg, GET|POST /api/alarm, GET|POST /api/files, GET /api/file, POST /api/reboot");
+    return fail(404, "unknown: GET /api/status, GET|POST /api/gpio, GET /api/gpio/<pin>, GET|POST /api/sound, GET|POST /api/display, GET|POST /api/radio, GET /api/sensors, GET|POST /api/camera, GET /api/camera.jpg, GET|POST /api/alarm, GET|POST /api/kernel, GET|POST /api/files, GET /api/file, POST /api/reboot");
 }

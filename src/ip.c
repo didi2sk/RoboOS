@@ -505,7 +505,7 @@ static void build_page(void)
         "h1{color:#55ffff}td{padding:2px 12px 2px 0}</style></head><body><h1>RoboOS</h1><table>");
     add("<tr><td>name</td><td>"); add(net_name()); add("</td></tr>");
     add("<tr><td>board</td><td>"); add(board_name()); add("</td></tr>");
-    add("<tr><td>version</td><td>"); add(os_version()); add("</td></tr>");
+    add("<tr><td>version</td><td>"); add(os_version()); add(" &nbsp; <a style=\"color:#8cf\" href=\"/update\">update</a></td></tr>");
     add("<tr><td>address</td><td>"); add(ip_address_str()); add("</td></tr>");
     add("<tr><td>uptime</td><td>"); add_u(s / 3600); add(" h "); add_u(s / 60 % 60); add(" min "); add_u(s % 60); add(" s</td></tr>");
     if (tc >= 0) { add("<tr><td>CPU</td><td>"); add_u((u64)tc / 1000); add("."); add_u((u64)tc % 1000 / 100); add(" C</td></tr>"); }
@@ -878,6 +878,10 @@ static int http_try(struct tcp_pcb *pcb, struct http_conn *c)
     } else if (!strcmp(path, "/files") || !strcmp(path, "/microscope")) {   /* 0.117: file manager page */
         stream_setup(c, "HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
                      files_page, (u32)strlen(files_page));
+        return 3;
+    } else if (!strcmp(path, "/update")) {               /* 0.122: kernel update page */
+        stream_setup(c, "HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+                     update_page, (u32)strlen(update_page));
         return 3;
     } else if (!strcmp(path, "/alarm")) {                /* 0.120: the alarm page */
         stream_setup(c, "HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
