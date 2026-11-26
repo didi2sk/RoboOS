@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.131**
+Current version: **0.132**
 
 ## Supported boards
 
@@ -538,6 +538,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.129: `alarm keypad gpio` with no pins = a 4x4 membrane keypad straight on the header (GPIO 5 6 13 19 / 12 16 20 21 = pins 29 31 33 35 / 32 36 38 40), wiring table in the README.
 0.130: `alarm keypad plug [reversed]` = the keypad's 8-pin connector pushed straight onto header pins 23-37 (no wiring; the wire on the GND pin is read the other way round, all 16 keys work); keypad lines may be `gnd` in `alarm keypad gpio`.
 0.131: `alarm keypad shield` (keypad with the IoT shield: GPIO 13 19 26 21 / 20 7 18 + GND); pin clashes between the keypad / card reader and alarm zones or the doorbell button are shown (`!!`, `PIN TAKEN`) and such a zone is not watched.
+0.132: `alarm keypad test` - live key / line levels for checking the keypad wiring.
 0.118: microscope key `w` = camera mode: 1920x1080 centre / 2592x1944 whole sensor (sharp, ~15 fps) / 1296x972 whole (fast); photos up to the full 2592x1944; `cam mode full`.
 0.117: file manager on the web: `/files` and `/microscope` (view, download, delete photos and videos on the card).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
@@ -1235,6 +1236,8 @@ SPI stays free for an RC522). The header pins must be reachable (a stacking head
 |---|---|---|---|---|---|---|---|---|
 | GPIO | 13 | 19 | 26 | 21 | 20 | 7 | 18 | GND |
 | header pin | 33 | 35 | 37 | 40 | 38 | 26 | 12 | 39 (or any GND) |
+
+`alarm keypad test` (0.132) shows live which key is seen and which lines are low with nothing pressed - a line that is `L` without a key sits on a GND pin (the connector is shifted). For `alarm keypad plug` the connector must be on the inner row with exactly one free pin (39) between it and the USB end of the header.
 
 When a keypad / card reader takes the pin of an alarm zone (e.g. `alarm keypad plug` takes GPIO 5 = IN4 of `alarm shield`)
 or of the doorbell button (GPIO 6), RoboOS prints a yellow `!!` line, shows the zone as `PIN TAKEN` (also on the web

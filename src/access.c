@@ -378,9 +378,12 @@ int access_uses_pin(int p)
     return 0;
 }
 
+static int testing;                                       /* 0.132: 'alarm keypad test' runs - no events */
+
 /* core 0: 1 = a key in *key, 2 = a card (hex) in uid, 0 = nothing */
 int access_poll(char *key, char *uid, int umax)
 {
+    if (testing) return 0;
     u64 t = timer_us();
     if (kp_type && t >= next_kp && t >= kp_retry) {
         next_kp = t + (kp_type == 2 ? 30000 : 10000);
@@ -419,6 +422,40 @@ int access_poll(char *key, char *uid, int umax)
            for (i = 0; uid[i] && i < 23; i++) last_uid[i] = uid[i]; last_uid[i] = 0; cards_read++; }
     et = (et + 1) % 8;
     return kind;
+}
+
+/* 0.132: 'alarm keypad test' - live: the key seen and every line's level with nothing driven (L = pulled low).
+ * A line that is L with no key pressed = it sits on a GND pin (the connector is shifted) or a key is stuck. */
+void access_keypad_test(void)
+{
+    if (kp_type != 1) { kprintf("only for a keypad on GPIO pins ('alarm keypad plug|shield|gpio')\n"); return; }
+    access_setup();
+    testing = 1;
+    kprintf("keypad test for 30 s - press the keys one by one (a key on the USB keyboard / Enter ends it)\n");
+    kprintf("each line: the key seen, then rows | columns as GPIO:level (L = low with nothing driven)\n");
+    char last[160] = "";
+    u64 end = timer_us() + 30000000ULL;
+    while (timer_us() < end) {
+        if (con_trygetc() >= 0) break;
+        int k = scan_gpio();
+        char l[160]; int n = 0;
+        n = put(l, n, sizeof(l), "key ");
+        if (k >= 0) { char c[2] = { lay[k / 4][k % 4], 0 }; n = put(l, n, sizeof(l), c); } else n = put(l, n, sizeof(l), "-");
+        n = put(l, n, sizeof(l), "   rows");
+        for (int i = 0; i < 8; i++) {
+            if (i == 4) { if (nkc == 0) break; n = put(l, n, sizeof(l), "  | cols"); }
+            if (i >= 4 && i - 4 >= nkc) break;
+            int p = i < 4 ? kr[i] : kc[i - 4];
+            n = put(l, n, sizeof(l), " ");
+            if (p < 0) { n = put(l, n, sizeof(l), "gnd"); continue; }
+            n = putn(l, n, sizeof(l), p);
+            n = put(l, n, sizeof(l), gpio_get(p) ? ":H" : ":L");
+        }
+        if (strcmp(l, last)) { kprintf("%s\n", l); int i = 0; for (; l[i]; i++) last[i] = l[i]; last[i] = 0; }
+        delay_us(30000);
+    }
+    testing = 0;
+    kprintf("test over\n");
 }
 
 /* for 'alarm': what is configured and how it goes */

@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.131**
+Aktuálna verzia: **0.132**
 
 ## Podporované dosky
 
@@ -534,6 +534,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.129: `alarm keypad gpio` bez čísel = fóliová klávesnica 4x4 priamo na lište (GPIO 5 6 13 19 / 12 16 20 21 = piny 29 31 33 35 / 32 36 38 40), tabuľka zapojenia v README.
 0.130: `alarm keypad plug [reversed]` = 8-pinový konektor klávesnice nasunutý priamo na piny 23-37 (bez prepájania; vodič na GND pine sa číta naopak, fungujú všetky 16 klávesy); v `alarm keypad gpio` môže byť linka `gnd`.
 0.131: `alarm keypad shield` (klávesnica so shieldom: GPIO 13 19 26 21 / 20 7 18 + GND); kolízie pinov klávesnice / čítačky so zónami alarmu alebo tlačidlom zvončeka sa ukážu (`!!`, `PIN TAKEN`) a taká zóna sa nesleduje.
+0.132: `alarm keypad test` - naživo klávesa a úrovne liniek na kontrolu zapojenia klávesnice.
 0.118: v mikroskope kláves `w` = režim kamery: 1920x1080 stred / 2592x1944 celý snímač (ostrý, ~15 snímok/s) / 1296x972 celý (rýchly); fotky až v plnom 2592x1944; `cam mode full`.
 0.117: správca súborov na webe: `/files` a `/microscope` (zobraziť, stiahnuť, zmazať fotky a videá na karte).
 
@@ -1222,6 +1223,8 @@ voľné pre RC522). Piny lišty musia byť prístupné (shield s predĺženou li
 |---|---|---|---|---|---|---|---|---|
 | GPIO | 13 | 19 | 26 | 21 | 20 | 7 | 18 | GND |
 | pin lišty | 33 | 35 | 37 | 40 | 38 | 26 | 12 | 39 (alebo iný GND) |
+
+`alarm keypad test` (0.132) naživo ukáže, ktorú klávesu doska vidí a ktoré linky sú pri nestlačenej klávesnici na nule - linka `L` bez stlačenej klávesy je na GND pine (konektor je posunutý). Pri `alarm keypad plug` musí byť konektor na vnútornom rade a medzi ním a koncom lišty pri USB musí ostať voľný presne jeden pin (39).
 
 Keď klávesnica / čítačka zaberie pin zóny alarmu (napr. `alarm keypad plug` zaberie GPIO 5 = IN4 z `alarm shield`)
 alebo tlačidla zvončeka (GPIO 6), RoboOS vypíše žltý riadok `!!`, zónu ukáže ako `PIN TAKEN` (aj na webe) a nesleduje
