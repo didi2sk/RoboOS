@@ -722,6 +722,7 @@ void display_boot(void)
 }
 
 int display_found(void) { return ok; }
+int display_hat(void) { return cfg_spi; }         /* 0.136: the Waveshare HAT (its joystick uses GPIO5/6/13/19/26) */
 int display_rows(void) { return ok ? rows : 0; }
 int display_cols(void) { return ok ? cols : 0; }
 

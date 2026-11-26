@@ -63,7 +63,10 @@ static void pick_pins(void)
     read_config();
     if (out_gpio < 0) out_gpio = (t == 0x12 || t == 0x0A || t == 0x10);   /* Zero 2 W, CM3, CM3+ */
     if (out_gpio == OUT_I2S) { pin_a = 0; return; }                  /* pins belong to i2s.c */
-    if (out_gpio)          { pin_a = 18; pin_b = 19; pin_fn = 2; }   /* ALT5 */
+    if (out_gpio) {                                                /* ALT5 */
+        pin_a = 18; pin_b = 19; pin_fn = 2;
+        if (access_uses_pin(19) || display_hat()) pin_b = 18;      /* 0.136: GPIO19 is a keypad / HAT joystick line: buzzer on 18 only */
+    }
     else if (t == 0x04)    { pin_a = 40; pin_b = 45; pin_fn = 4; }   /* Pi 2: ALT0 */
     else                   { pin_a = 40; pin_b = 41; pin_fn = 4; }   /* Pi 3: ALT0 */
 }
@@ -325,7 +328,7 @@ const char *sound_pins(void)
 {
     pick_pins();
     if (out_gpio == OUT_I2S) return "I2S DAC (GPIO18 BCLK, GPIO19 LRCLK, GPIO21 DIN)";
-    return out_gpio ? "GPIO18 + GPIO19" : pin_b == 45 ? "3.5 mm jack (GPIO40 + GPIO45)" : "3.5 mm jack (GPIO40 + GPIO41)";
+    return out_gpio ? (pin_b == 18 ? "GPIO18 only (pin 12; GPIO19 is used by the keypad / HAT)" : "GPIO18 + GPIO19") : pin_b == 45 ? "3.5 mm jack (GPIO40 + GPIO45)" : "3.5 mm jack (GPIO40 + GPIO41)";
 }
 
 /* wait ms while the network etc. keep running; 1 = idle() asked to stop */
