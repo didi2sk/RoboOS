@@ -112,6 +112,7 @@ static void load(void)
 
 void doorbell_boot(void) { load(); if (!dist_echo || dist_echo == dist_trig) dist_trig = 0; setup_pin(); }
 int doorbell_enabled(void) { return on; }
+int doorbell_pin(void) { if (!loaded) load(); return on ? pin : -1; }   /* 0.131: for the alarm's pin check */
 int doorbell_radar(void) { return radar_pin || dist_trig; }
 
 /* one HC-SR04 reading: cm, -2 = further than 2x the limit (or nothing), -1 = no echo at all (wiring / no 5 V) */

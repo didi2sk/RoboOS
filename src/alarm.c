@@ -269,19 +269,43 @@ static void parse(char *p, int keep_code, char *err, int emax)
     if (siren_pin >= 0 && siren_pin == armed_pin) armed_pin = -1;
 }
 
+/* 0.131: a zone whose pin the keypad / card reader / siren / LED uses is not watched (the keypad pushed onto
+ * header pins 23-37 takes GPIO 5 = IN4 of 'alarm shield') */
+static int zone_off(const struct zone *z) { return access_uses_pin(z->pin) || z->pin == siren_pin || z->pin == armed_pin; }
+
+/* print the pin clashes (after a settings change and in 'alarm') */
+static void conflicts(void)
+{
+    for (int i = 0; i < nz; i++) {
+        const struct zone *z = &zones[i];
+        if (!zone_off(z)) continue;
+        con_color(COL_YELLOW);
+        kprintf("  !! zone '%s' on GPIO%d: that pin is used by the %s - the zone is NOT watched (move it: alarm zone del %d)\n",
+                z->name, z->pin, access_uses_pin(z->pin) ? "keypad / card reader" : "siren / LED", z->pin);
+        con_color(COL_DEFAULT);
+    }
+    int db = doorbell_pin();
+    if (db >= 0 && access_uses_pin(db)) {
+        con_color(COL_YELLOW);
+        kprintf("  !! the doorbell button is on GPIO%d, which the keypad uses - its keys would ring ('doorbell off' or 'doorbell pin <n>')\n", db);
+        con_color(COL_DEFAULT);
+    }
+}
+
 static void setup_pins(void)
 {
     if (siren_pin >= 0) { gpio_func(siren_pin, 1); gpio_set(siren_pin, siren_on); }
     if (armed_pin >= 0) { gpio_func(armed_pin, 1); gpio_set(armed_pin, 0); }
     for (int i = 0; i < nz; i++) {
         struct zone *z = &zones[i];
-        if (z->pin == siren_pin || z->pin == armed_pin) continue;
+        if (zone_off(z)) { z->open = z->raw = z->opened = 0; continue; }
         gpio_func(z->pin, 0);
         gpio_pull(z->pin, 2);
     }
     delay_us(2000);
     for (int i = 0; i < nz; i++) {
         struct zone *z = &zones[i];
+        if (zone_off(z)) continue;
         int lv = gpio_get(z->pin);
         int t = z->nc ? lv : !lv;
         if (!z->raw_since) { z->raw = z->open = t; z->raw_since = timer_us(); }
@@ -580,6 +604,7 @@ static void read_zones(void)
     u64 t = timer_us();
     for (int i = 0; i < nz; i++) {
         struct zone *z = &zones[i];
+        if (zone_off(z)) { z->open = 0; continue; }
         int lv = gpio_get(z->pin);
         int trig = z->nc ? lv : !lv;
         if (trig != z->raw) { z->raw = trig; z->raw_since = t; }
@@ -730,6 +755,7 @@ void alarm_poll(void)
         pend_on = 0;
         unlock();
         setup_pins();
+        conflicts();
         if (save_cfg()) kprintf("[ALARM] /ALARM.TXT not saved (no SD card?)\n");
         sound_volume(volume);
         mq_dirty = 1;
@@ -864,6 +890,7 @@ int alarm_web_json(char *b, int max, int admin)
         J("{\"pin\":"); Jn(z->pin); J(",\"name\":"); Js(z->name); J(",\"type\":"); Js(type_name[z->type]);
         J(",\"nc\":"); J(z->nc ? "true" : "false"); J(",\"open\":"); J(z->open ? "true" : "false");
         if (z->skip) J(",\"skip\":true");
+        if (zone_off(z)) J(",\"taken\":true");
         J("}");
     }
     J("],\"log\":[");
@@ -1024,12 +1051,13 @@ static void show(void)
     for (int i = 0; i < nz; i++) {
         struct zone *z = &zones[i];
         kprintf("  zone GPIO%-2d %-8s %s  %-23s %s%s\n", z->pin, type_name[z->type], z->nc ? "nc" : "no", z->name,
-                z->open ? "OPEN" : "ok", z->skip ? " (skipped until closed)" : "");
+                zone_off(z) ? "PIN TAKEN" : z->open ? "OPEN" : "ok", z->skip ? " (skipped until closed)" : "");
     }
     if (!nz) kprintf("  no zones yet: 'alarm zone <gpio> <instant|delay|interior|24h> <nc|no> <name>'\n");
     if (last_photo[0]) kprintf("  last photo %s\n", last_photo);
     if (last_video[0]) kprintf("  last video %s\n", last_video);
     access_info();
+    conflicts();
     if (ncards) { kprintf("  cards:"); for (int i = 0; i < ncards; i++) kprintf(" %s (%s)%s", cards[i].uid, cards[i].name, i + 1 < ncards ? "," : "\n"); }
 }
 
@@ -1179,7 +1207,7 @@ void alarm_cmd(int argc, char **argv)
         char *ww[12]; char cp[96]; int kk = 0; scopy(cp, l, sizeof(cp));
         for (char *q = cp; *q && kk < 12; ) { while (*q == ' ') *q++ = 0; if (!*q) break; ww[kk++] = q; while (*q && *q != ' ') q++; }
         if (access_set(kk, ww)) {
-            kprintf("alarm keypad plug [reversed]  |  alarm keypad gpio [<r1> .. <c4>] (a pin may be gnd)  |  alarm keypad i2c [addr] [swap]  |  alarm keypad off\n"
+            kprintf("alarm keypad plug [reversed]  |  alarm keypad shield  |  alarm keypad gpio [<r1> .. <c4>] (a pin may be gnd)  |  alarm keypad i2c [addr] [swap]  |  alarm keypad off\n"
                     "alarm rfid rc522 [rst gpio]  |  alarm rfid wiegand <d0> <d1>  |  alarm rfid off\n");
             char e2[80]; static char b2[3072]; cfg_text(b2, sizeof(b2), 1); lock(); parse(b2, 0, e2, sizeof(e2)); unlock();   /* undo */
             return;
@@ -1221,6 +1249,7 @@ void alarm_cmd(int argc, char **argv)
                 "       alarm code <old> <new>     change the code (default 1234!)\n"
                 "       alarm shield               zones + siren for the RoboOS IoT shield (IN1-IN4, relay K1, LED)\n"
                 "       alarm keypad plug [reversed]   the keypad's 8-pin connector pushed onto header pins 23-37 (inner row)\n"
+                "       alarm keypad shield        with the IoT shield: wires 1-8 -> pins 33 35 37 40 38 26 12 + any GND (39)\n"
                 "       alarm keypad gpio          4x4 keypad straight on the header: wires 1-8 -> pins 29 31 33 35 32 36 38 40\n"
                 "                                  (GPIO 5 6 13 19 rows, 12 16 20 21 columns; not with the IoT shield)\n"
                 "       alarm keypad gpio <r1> <r2> <r3> <r4> <c1> <c2> <c3> [c4]   other pins\n"
@@ -1242,6 +1271,7 @@ void alarm_cmd(int argc, char **argv)
         if (save_cfg()) kprintf("(not saved: no SD card or write error)\n");
         else kprintf("(saved in /ALARM.TXT)\n");
         lock(); event("settings changed from the keyboard", ""); unlock();
+        conflicts();
         fx |= FX_SAVE_ST;
         mq_dirty = 1;
         mqtt_rediscover();
