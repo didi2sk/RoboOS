@@ -15,6 +15,8 @@ u64  sd_sectors(void);
 int  sd_is_sdhc(void);
 int  sd_bus_width(void);
 const char *sd_error(int e);
+u32 fat_sd_recoveries(void);                 /* 0.125: card re-initialised after a read/write error */
+u32 fat_late_mounts(void);                   /* 0.125: mounted after the boot */
 int  sd_init_on(int which);                      /* 0 auto, 1 SDHOST, 2 Arasan */
 const char *sd_controller(void);                 /* "SDHOST" / "Arasan (EMMC)" */
 int  sd_sdhost_error(void);                      /* why SDHOST was not used (0 = it is) */

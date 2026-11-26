@@ -18,10 +18,30 @@ static u32  fatbuf_lba = 0xFFFFFFFF;
 static u16 rd16(const u8 *p) { return p[0] | (p[1] << 8); }
 static u32 rd32(const u8 *p) { return p[0] | (p[1] << 8) | (p[2] << 16) | ((u32)p[3] << 24); }
 
+/* 0.125: a failed block read / write re-initialises the card once and tries again (owner's 3B + Samsung 64 GB:
+ * the card was often gone after a boot, 'sd init' brought it back). Core 0 only (FAT is core 0 only anyway). */
+static u32 sd_recover_n, late_n;
+static int sd_rd1(u32 lba, void *buf)
+{
+    if (!sd_read(lba, buf, 1)) return 0;
+    if (smp_core() != 0 || sd_init()) return -1;
+    sd_recover_n++;
+    return sd_read(lba, buf, 1);
+}
+static int sd_wr1(u32 lba, const void *buf)
+{
+    if (!sd_write(lba, buf, 1)) return 0;
+    if (smp_core() != 0 || sd_init()) return -1;
+    sd_recover_n++;
+    return sd_write(lba, buf, 1);
+}
+u32 fat_sd_recoveries(void) { return sd_recover_n; }
+u32 fat_late_mounts(void) { return late_n; }
+
 static int read_sec(u32 lba, u8 *buf, u32 *cache)
 {
     if (*cache == lba) return 0;
-    if (sd_read(lba, buf, 1)) { *cache = 0xFFFFFFFF; return -1; }
+    if (sd_rd1(lba, buf)) { *cache = 0xFFFFFFFF; return -1; }
     *cache = lba;
     return 0;
 }
@@ -77,7 +97,20 @@ int fat_mount(void)
     return 0;
 }
 
-int fat_mounted(void) { return mounted; }
+/* 0.125: not mounted (the card was not ready at boot)? try again, at most every 2 s, core 0 only */
+int fat_mounted(void)
+{
+    static u64 last;
+    static int in_try;
+    if (!mounted && !in_try && smp_core() == 0 && timer_us() - last > 2000000) {
+        in_try = 1;
+        last = timer_us();
+        if (sd_init() == SD_OK && fat_mount() == 0) { late_n++; kprintf("\n[SD] card mounted now (it was not ready at boot)\n"); }
+        last = timer_us();
+        in_try = 0;
+    }
+    return mounted;
+}
 const char *fat_type(void) { return fat32 ? "FAT32" : "FAT16"; }
 u32 fat_cluster_bytes(void) { return sec_per_clus * 512; }
 u64 fat_volume_bytes(void) { return (u64)total_clusters * sec_per_clus * 512; }
@@ -125,7 +158,7 @@ int fat_read(struct fat_file *f, void *buf, u32 len)
         u32 off = f->pos % 512, n = 512 - off;
         if (n > len - done) n = len - done;
         if (off == 0 && n == 512 && !((uintptr_t)(out + done) & 3)) {   /* whole sector straight to the buffer */
-            if (sd_read(lba, out + done, 1)) return -1;
+            if (sd_rd1(lba, out + done)) return -1;
         } else {
             if (read_sec(lba, secbuf, &secbuf_lba)) return -1;
             memcpy(out + done, secbuf + off, n);
@@ -275,7 +308,7 @@ static int write_sec(u32 lba, const u8 *buf)
 {
     if (buf != secbuf && lba == secbuf_lba) secbuf_lba = 0xFFFFFFFF;
     if (buf != fatbuf && lba == fatbuf_lba) fatbuf_lba = 0xFFFFFFFF;
-    return sd_write(lba, buf, 1) ? -1 : 0;
+    return sd_wr1(lba, buf) ? -1 : 0;
 }
 
 /* set a FAT entry in every FAT copy */

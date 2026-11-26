@@ -675,6 +675,8 @@ static void cmd_sd(int argc, char **argv)
                 (u32)(fat_volume_bytes() >> 20), fat_cluster_bytes());
     else
         kprintf("fs:    not mounted\n");
+    if (fat_sd_recoveries() || fat_late_mounts())
+        kprintf("       recovered after an error: %u x, mounted after the boot: %u x\n", fat_sd_recoveries(), fat_late_mounts());
 }
 
 struct cmd {
