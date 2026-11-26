@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.133**
+Aktuálna verzia: **0.134**
 
 ## Podporované dosky
 
@@ -536,6 +536,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.131: `alarm keypad shield` (klávesnica so shieldom: GPIO 13 19 26 21 / 20 7 18 + GND); kolízie pinov klávesnice / čítačky so zónami alarmu alebo tlačidlom zvončeka sa ukážu (`!!`, `PIN TAKEN`) a taká zóna sa nesleduje.
 0.132: `alarm keypad test` - naživo klávesa a úrovne liniek na kontrolu zapojenia klávesnice.
 0.133: pri zapnutom alarme bežná stavová obrazovka displeja sama ukazuje alarm (stav, kód ako hviezdičky, zostávajúce sekundy); konzola ukazuje písaný kód ako hviezdičky (`[KEYPAD] code: ****`). Zóna bez pripojeného kontaktu sa javí ako otvorená (napr. okno z `alarm shield`) - nepoužité zóny zmaž (`alarm zone del 27`).
+0.134: terminál klávesnice: `alarm remote <ústredňa>` urobí z inej dosky RoboOS klávesnicu + displej alarmu cez LAN (správy podpísané + šifrované rovnakým `http token`).
 0.118: v mikroskope kláves `w` = režim kamery: 1920x1080 stred / 2592x1944 celý snímač (ostrý, ~15 snímok/s) / 1296x972 celý (rýchly); fotky až v plnom 2592x1944; `cam mode full`.
 0.117: správca súborov na webe: `/files` a `/microscope` (zobraziť, stiahnuť, zmazať fotky a videá na karte).
 
@@ -1283,6 +1284,23 @@ neochráni. Čítačku oddeľ optočlenom na každej linke (ako vstupy IoT shiel
   len ~10-20 cm (nech je pri Pi). Keď je Pi vnútri a čítačka pri bráne, vonkajšia Wiegand klávesnica s čítačkou
   kariet 125 kHz v jednom (12 V, IP65) posiela klávesy AJ karty po tých istých dvoch drôtoch.
 
+**Terminál klávesnice: druhé Pi ako klávesnica + displej (0.134).** To isté jadro na inej doske (napr. Zero 2 W
+pri dverách) sa stane terminálom ústredne:
+
+```
+alarm remote <meno ústredne>   na termináli (jeho vlastný alarm ostáva off); 'alarm remote off' = zas bežná doska
+http token <tajné>             ROVNAKÝ token na ústredni aj každom termináli (podpisuje + šifruje správy)
+```
+
+Klávesnica / čítačka kariet terminálu (`alarm keypad ...`, `alarm rfid ...` nastavené na termináli) idú do ústredne
+ako správy RoboOS (surové Ethernet / WiFi rámce s potvrdením, rovnaká LAN, mená z `net name`), ústredňa rozhoduje
+(kódy, karty, blokovanie) a posiela späť, čo ukazuje jej displej; terminál to ukáže na svojom displeji, pípa počas
+odchodového / príchodového času a pri poplachu hrá tón sirény. Na ústredni sa nič nenastavuje: terminál sa sám
+objaví v `alarm` (`terminal dvere, seen 3 s ago`). Na termináli idú do ústredne aj `alarm arm|home|disarm <kód>`
+a `alarm key 1234#`. S tokenom má každá správa HMAC-SHA256 a text je šifrovaný, skopírovaný (zopakovaný) rámec sa
+odmietne; bez tokenu ide kód po LAN čitateľne (`alarm` varuje). `no master` na displeji terminálu = od ústredne
+15 s nič neprišlo.
+
 ### IoT shield (návrh dosky)
 
 `hardware/iot-shield/` obsahuje návrh dosky v KiCade, ktorá sa nasadí na 40-pinový konektor:
@@ -1413,7 +1431,7 @@ Systém komunikuje po anglicky.
 | `ai <otázka>\|@príkaz ..\|key\|model` | otázka pre Claude (vlastný API kľúč Anthropic) |
 | `radio [MHz\|up\|down\|scan\|vol n\|off]` | FM rádio (modul RDA5807M na I2C) |
 | `motion [watch\|zero\|threshold mg\|alarm on\|off]` | náklon, zrýchlenie, otrasy (MPU-6050 / GY-521) |
-| `alarm [on\|off\|arm\|home\|disarm <kód>\|zone\|set\|shield\|keypad\|rfid\|card\|log\|test]` | zabezpečovací systém v jadre: zóny, siréna, klávesnica + RFID / Wiegand karty, fotky + video, stránka /alarm, Home Assistant |
+| `alarm [on\|off\|arm\|home\|disarm <kód>\|zone\|set\|shield\|keypad\|rfid\|card\|remote\|log\|test]` | zabezpečovací systém v jadre: zóny, siréna, klávesnica + RFID / Wiegand karty, fotky + video, stránka /alarm, Home Assistant |
 | `cam [live\|snap\|bars\|reg a [v]\|off]` | kamera na plochom kábli: nájde senzor, obraz naživo na HDMI |
 | `thermal [once\|range lo hi\|person C]` | termokamera 8x8 (AMG8833), tepelná mapa naživo |
 | `voice [add id cmd\|del id\|volume\|mute\|wake]` | hlasové príkazy offline (DFRobot DF2301Q) |

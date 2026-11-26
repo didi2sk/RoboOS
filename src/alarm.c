@@ -28,6 +28,9 @@
  */
 #include "kernel.h"
 #include "sd.h"
+#include "bearssl.h"
+
+static char remote[NET_NAME_MAX];                         /* 0.134: this board is a TERMINAL of that master ("" = no) */
 
 #define MAXZ 16
 enum { Z_INSTANT, Z_DELAY, Z_INTERIOR, Z_24H };
@@ -159,6 +162,7 @@ static int cfg_text(char *b, int max, int with_code)
     P("\r\nvoice "); P(voice[0] ? voice : "none");
     P("\r\nphoto "); P(photo ? "on" : "off"); P("\r\nphotos "); PI(photos); P("\r\nvideo "); PI(video_s);
     P("\r\nentry_photo "); P(entry_photo ? "on" : "off"); P("\r\nmqtt "); P(use_mqtt ? "on" : "off");
+    if (remote[0]) { P("\r\nremote "); P(remote); }
     P("\r\n# zone <gpio> <instant|delay|interior|24h> <nc|no> <name>\r\n");
     for (int i = 0; i < nz; i++) {
         P("zone "); PI(zones[i].pin); P(" "); P(type_name[zones[i].type]); P(zones[i].nc ? " nc " : " no "); P(zones[i].name); P("\r\n");
@@ -181,6 +185,7 @@ static void parse(char *p, int keep_code, char *err, int emax)
     static struct { char uid[24], name[24]; } ncs[MAXCARD];
     char *off1[2] = { "keypad", "off" }, *off2[2] = { "rfid", "off" };
     access_set(2, off1); access_set(2, off2);             /* the readers come from the text too */
+    remote[0] = 0;
     if (err) err[0] = 0;
     while (*p) {
         char *w[5]; int k = 0;
@@ -217,6 +222,7 @@ static void parse(char *p, int keep_code, char *err, int emax)
         else if (!strcmp(x, "entry_photo") && k > 1) entry_photo = !strcmp(w[1], "on");
         else if (!strcmp(x, "mqtt") && k > 1) use_mqtt = !strcmp(w[1], "on");
         else if (!strcmp(x, "port")) ;                    /* the demo program's TCP port - not used here */
+        else if (!strcmp(x, "remote") && k > 1) scopy(remote, none || !strcmp(w[1], "off") ? "" : w[1], sizeof(remote));
         else if (!strcmp(x, "keypad") || !strcmp(x, "rfid")) {
             char *ww[12]; int kk = 0;
             for (int i = 0; i < k && i < 4; i++) ww[kk++] = w[i];
@@ -477,6 +483,7 @@ out:
 
 /* ---------------- keypad + cards (0.121, core 0) ---------------- */
 
+static int key_remote;                                    /* key_in from a terminal: no beep on the master */
 static char kbuf[16];                                     /* the code being typed */
 static int klen;
 static u64 kat, kmsg_until, learn_until;
@@ -490,7 +497,7 @@ static void key_in(char k, const char *who)
     u64 t = timer_us();
     if (klen && t - kat > 10000000) klen = 0;             /* 10 s without a key: start again */
     kat = t;
-    if (sound && !sound_is_exclusive()) sound_tone(1800, 40);
+    if (sound && !key_remote && !sound_is_exclusive()) sound_tone(1800, 40);
     char msg[80];
     int r = -1;
     if (k >= '0' && k <= '9') {
@@ -564,7 +571,7 @@ static void readers(void)
     if (cfg_dirty) { cfg_dirty = 0; if (save_cfg()) kprintf("[ALARM] /ALARM.TXT not saved (no SD card?)\n"); }
 }
 
-int alarm_is_on(void) { return on; }
+int alarm_is_on(void) { return on || remote[0]; }
 const char *alarm_state_text(void)                        /* 0.128: the home page */
 {
     if (!on) return "off";
@@ -573,7 +580,18 @@ const char *alarm_state_text(void)                        /* 0.128: the home pag
 }
 
 /* the display's alarm screen (display.c, core 0): up to 4 rows of `cols` characters */
+static int term_display(char l[4][40], int cols);
+
+static int local_display(char l[4][40], int cols);
+
 int alarm_display(char l[4][40], int cols)
+{
+    for (int i = 0; i < 4; i++) l[i][0] = 0;
+    if (remote[0]) return term_display(l, cols);
+    return local_display(l, cols);
+}
+
+static int local_display(char l[4][40], int cols)
 {
     u64 t = timer_us();
     for (int i = 0; i < 4; i++) l[i][0] = 0;
@@ -602,6 +620,285 @@ int alarm_display(char l[4][40], int cols)
     u64 now = clock_now();
     if (now) { char tb[32]; clock_format(tb, now, 0); scopy(l[2], tb + 11, cols + 1); tb[10] = 0; scopy(l[3], tb, cols + 1); return 4; }
     return 2;
+}
+
+/* ---------------- 0.134: terminals - another RoboOS board as the keypad + display ----------------
+ * Same kernel; `alarm remote <master>` makes a board a terminal: its keypad / card reader go to the master as
+ * RoboOS messages ("ALM K <key>", "ALM C <uid>", "ALM H" = hello every 20 s), the master answers with what its own
+ * display shows ("ALM S line0|line1") on every change and every 5 s; the terminal shows it, beeps in the exit /
+ * entry time and wails in an alarm. Messages = net.c raw Ethernet frames with ACK (no IP needed, names only). */
+#define MAXTERM 6
+static struct { char name[NET_NAME_MAX]; u64 seen, sent_at; char last[100]; int fails; } terms[MAXTERM];
+static struct { char from[NET_NAME_MAX]; char text[40]; } rq[8];
+static volatile int rqh, rqt;
+static char rlines[2][40];
+static volatile u64 rstate_at;
+static int rlk;
+static u64 hello_at, tpoll_at;
+static int master_ok = -1;                                /* terminal: last send to the master worked */
+
+static int name_same(const char *a, const char *b)
+{
+    for (; *a && *b; a++, b++) { char x = *a >= 'A' && *a <= 'Z' ? (char)(*a + 32) : *a, y = *b >= 'A' && *b <= 'Z' ? (char)(*b + 32) : *b; if (x != y) return 0; }
+    return *a == *b;
+}
+
+/* Security: with an API token ('http token', the SAME on the master and its terminals) every message is
+ * "ALM X <seq 16 hex> <data hex> <mac 16 hex>": data = the text XOR an HMAC-SHA256(token, "E" seq block) key stream,
+ * mac = HMAC-SHA256(token, from | to | seq | data) cut to 8 bytes. seq = max(last + 1, unix time << 20), so a copied
+ * frame is refused (each peer's last seq is kept; the first one after a restart must be within 5 minutes of our
+ * clock when both clocks are set). Without a token on the receiving board plain "ALM K 1" is taken (old LAN-only way). */
+static void hm(const char *k, const void *a, int al, const void *b, int bl, const void *c, int cl, u8 out[32])
+{
+    br_hmac_key_context kc; br_hmac_context hc;
+    br_hmac_key_init(&kc, &br_sha256_vtable, k, strlen(k));
+    br_hmac_init(&hc, &kc, 0);
+    br_hmac_update(&hc, a, (size_t)al); if (bl) br_hmac_update(&hc, b, (size_t)bl); if (cl) br_hmac_update(&hc, c, (size_t)cl);
+    br_hmac_out(&hc, out);
+}
+static const char hx[] = "0123456789abcdef";
+static int unhex(const char *s, u8 *o, int n) { for (int i = 0; i < n; i++) { int v = 0; for (int j = 0; j < 2; j++) { char c = s[i * 2 + j]; v = v * 16 + (c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1000); } if (v < 0) return -1; o[i] = (u8)v; } return 0; }
+static void crypt(const char *k, const char *seqh, u8 *d, int n)
+{
+    for (int b = 0; b * 32 < n; b++) {
+        u8 ks[32]; char e[2] = { 'E', (char)('A' + b) };
+        hm(k, e, 2, seqh, 16, 0, 0, ks);
+        for (int i = b * 32; i < n && i < b * 32 + 32; i++) d[i] ^= ks[i - b * 32];
+    }
+}
+static u64 seq_out;
+static struct { char name[NET_NAME_MAX]; u64 seq; } peers[8];
+static int bad_msgs;
+
+/* text "K 1" -> what goes on the wire; 0 = ok */
+static int alm_send(const char *to, const char *text)
+{
+    const char *k = api_token();
+    char m[NET_TEXT_MAX + 1];
+    if (!k[0]) { scopy(m, "ALM ", 5); scopy(m + 4, text, (int)sizeof(m) - 4); return net_send(to, m); }
+    u64 now = clock_now() << 20;
+    seq_out = now > seq_out ? now : seq_out + 1;
+    char sh[17]; for (int i = 0; i < 16; i++) sh[i] = hx[(seq_out >> (60 - 4 * i)) & 15]; sh[16] = 0;
+    u8 d[80]; int n = 0;
+    for (; text[n] && n < 80; n++) d[n] = (u8)text[n];
+    crypt(k, sh, d, n);
+    int o = 0;
+    scopy(m, "ALM X ", 7); o = 6;
+    for (int i = 0; i < 16; i++) m[o++] = sh[i];
+    m[o++] = ' ';
+    char *dh = m + o;
+    for (int i = 0; i < n; i++) { m[o++] = hx[d[i] >> 4]; m[o++] = hx[d[i] & 15]; }
+    m[o] = 0;
+    char ft[2 * NET_NAME_MAX + 2]; int fl = 0;
+    for (const char *p = net_name(); *p; p++) ft[fl++] = *p >= 'A' && *p <= 'Z' ? (char)(*p + 32) : *p;
+    ft[fl++] = '|';
+    for (const char *p = to; *p; p++) ft[fl++] = *p >= 'A' && *p <= 'Z' ? (char)(*p + 32) : *p;
+    u8 mac[32];
+    hm(k, ft, fl, sh, 16, dh, 2 * n, mac);
+    m[o++] = ' ';
+    for (int i = 0; i < 8; i++) { m[o++] = hx[mac[i] >> 4]; m[o++] = hx[mac[i] & 15]; }
+    m[o] = 0;
+    return net_send(to, m);
+}
+
+static int name_same(const char *a, const char *b);
+
+/* the wire text -> "ALM K 1" in out; 0 = take it */
+static int alm_open(const char *from, const char *text, char *out, int omax)
+{
+    const char *k = api_token();
+    if (text[4] != 'X' || text[5] != ' ') {
+        if (k[0]) { bad_msgs++; return -1; }              /* we have a token: plain messages are refused */
+        scopy(out, text, omax);
+        return 0;
+    }
+    if (!k[0]) { bad_msgs++; return -1; }
+    const char *sh = text + 6, *dh = text + 23, *mh = dh;
+    if ((int)strlen(text) < 23 + 1 + 16 || text[22] != ' ') { bad_msgs++; return -1; }
+    while (*mh && *mh != ' ') mh++;
+    int dl = (int)(mh - dh);
+    if (*mh != ' ' || strlen(mh + 1) != 16 || dl % 2 || dl > 160) { bad_msgs++; return -1; }
+    char ft[2 * NET_NAME_MAX + 2]; int fl = 0;
+    for (const char *p = from; *p && fl < NET_NAME_MAX; p++) ft[fl++] = *p >= 'A' && *p <= 'Z' ? (char)(*p + 32) : *p;
+    ft[fl++] = '|';
+    for (const char *p = net_name(); *p && fl < 2 * NET_NAME_MAX; p++) ft[fl++] = *p >= 'A' && *p <= 'Z' ? (char)(*p + 32) : *p;
+    u8 mac[32], got[8];
+    hm(k, ft, fl, sh, 16, dh, dl, mac);
+    if (unhex(mh + 1, got, 8)) { bad_msgs++; return -1; }
+    int diff = 0; for (int i = 0; i < 8; i++) diff |= mac[i] ^ got[i];
+    if (diff) { bad_msgs++; return -1; }
+    u8 sb[8]; if (unhex(sh, sb, 8)) { bad_msgs++; return -1; }
+    u64 seq = 0; for (int i = 0; i < 8; i++) seq = seq << 8 | sb[i];
+    int pi = -1, fr = -1;
+    for (int i = 0; i < 8; i++) { if (peers[i].name[0] && name_same(peers[i].name, from)) pi = i; if (!peers[i].name[0] && fr < 0) fr = i; }
+    if (pi >= 0) { if (seq <= peers[pi].seq) { bad_msgs++; return -1; } }
+    else {
+        u64 now = clock_now(), st = seq >> 20;
+        if (now && st && (st + 300 < now || st > now + 300)) { bad_msgs++; return -1; }
+        pi = fr >= 0 ? fr : (int)(seq & 7);
+        scopy(peers[pi].name, from, sizeof(peers[pi].name));
+    }
+    peers[pi].seq = seq;
+    u8 d[80]; int n = dl / 2;
+    if (n > 80 || n + 5 > omax || unhex(dh, d, n)) { bad_msgs++; return -1; }
+    crypt(k, sh, d, n);
+    scopy(out, "ALM ", omax);
+    for (int i = 0; i < n; i++) out[4 + i] = d[i] >= 32 && d[i] < 127 ? (char)d[i] : '.';
+    out[4 + n] = 0;
+    return 0;
+}
+
+/* core 1, from net.c (io lock held) */
+void alarm_net_in(const char *from, const char *wire, int wlen)
+{
+    char tb[100];
+    (void)wlen;
+    if (!on && !remote[0]) return;
+    if (alm_open(from, wire, tb, sizeof(tb))) return;
+    const char *text = tb;
+    int len = (int)strlen(tb);
+    if (len >= 6 && text[4] == 'S') {                     /* the master's display lines -> this terminal */
+        if (!remote[0] || !name_same(from, remote)) return;
+        while (__atomic_test_and_set(&rlk, __ATOMIC_ACQUIRE)) ;
+        int li = 0, n = 0;
+        rlines[0][0] = rlines[1][0] = 0;
+        for (const char *p = text + 6; *p && li < 2; p++) {
+            if (*p == '|') { rlines[li][n] = 0; li++; n = 0; continue; }
+            if (n < 39) rlines[li][n++] = *p;
+            rlines[li][n] = 0;
+        }
+        rstate_at = timer_us();
+        __atomic_clear(&rlk, __ATOMIC_RELEASE);
+        display_poke();
+        return;
+    }
+    if (text[4] != 'K' && text[4] != 'C' && text[4] != 'H') return;
+    int h = rqh;
+    if ((h + 1) % 8 == rqt) return;
+    scopy(rq[h].from, from, sizeof(rq[h].from));
+    scopy(rq[h].text, text, sizeof(rq[h].text));
+    __atomic_store_n(&rqh, (h + 1) % 8, __ATOMIC_RELEASE);
+}
+
+/* master, core 0: keys / cards / hellos from the terminals, then the display lines back to them */
+static void master_net(void)
+{
+    u64 t = timer_us();
+    while (rqt != rqh) {
+        char from[NET_NAME_MAX], text[40];
+        scopy(from, rq[rqt].from, sizeof(from)); scopy(text, rq[rqt].text, sizeof(text));
+        __atomic_store_n(&rqt, (rqt + 1) % 8, __ATOMIC_RELEASE);
+        int k = -1, freei = -1;
+        for (int i = 0; i < MAXTERM; i++) { if (terms[i].name[0] && name_same(terms[i].name, from)) k = i; if (!terms[i].name[0] && freei < 0) freei = i; }
+        if (k < 0) {
+            if (freei < 0) { u64 o = ~0ULL; for (int i = 0; i < MAXTERM; i++) if (terms[i].seen < o) { o = terms[i].seen; freei = i; } }
+            k = freei;
+            scopy(terms[k].name, from, sizeof(terms[k].name));
+            terms[k].sent_at = 0; terms[k].last[0] = 0;
+            kprintf("\n[ALARM] terminal %s connected\n", from);
+        }
+        terms[k].seen = t; terms[k].fails = 0;
+        char who[48] = "keypad "; scopy(who + 7, from, (int)sizeof(who) - 7);
+        if (text[4] == 'K' && text[6]) { key_remote = 1; key_in(text[6], who); key_remote = 0; }
+        else if (text[4] == 'C' && text[6]) card_in(text + 6, from);
+        terms[k].last[0] = 0;                             /* answer at once */
+    }
+    if (t < tpoll_at) return;
+    tpoll_at = t + 200000;
+    char l[4][40], m[100] = "ALM S ";
+    local_display(l, 20);
+    int n = 6;
+    for (const char *p = l[0]; *p && n < 60; p++) m[n++] = *p == '|' ? '/' : *p;
+    m[n++] = '|';
+    for (const char *p = l[1]; *p && n < 98; p++) m[n++] = *p == '|' ? '/' : *p;
+    m[n] = 0;
+    for (int i = 0; i < MAXTERM; i++) {
+        if (!terms[i].name[0]) continue;
+        if (t - terms[i].seen > 120000000ULL) { kprintf("\n[ALARM] terminal %s gone\n", terms[i].name); terms[i].name[0] = 0; continue; }
+        if (!strcmp(terms[i].last, m) && t - terms[i].sent_at < 5000000) continue;
+        int r = alm_send(terms[i].name, m + 4);
+        terms[i].sent_at = t;
+        if (r == 0) { scopy(terms[i].last, m, sizeof(terms[i].last)); terms[i].fails = 0; }
+        else if (++terms[i].fails >= 3) terms[i].sent_at = t + 10000000;   /* quiet for a while */
+    }
+}
+
+static void term_send(const char *txt)
+{
+    int r = alm_send(remote, txt + 4);
+    if ((r == 0) != (master_ok == 1)) {
+        master_ok = r == 0;
+        kprintf("\n[ALARM] master %s %s\n", remote, r == 0 ? "answers" : "does NOT answer");
+        display_poke();
+    }
+}
+
+static int t_left = -1, t_wail;
+static u64 t_wail_at;
+
+/* terminal, core 0 */
+static void terminal_poll(void)
+{
+    u64 t = timer_us();
+    if (t >= hello_at) { hello_at = t + 20000000; term_send("ALM H"); }
+    char key, uid[24];
+    for (int i = 0; i < 4; i++) {
+        int e = access_poll(&key, uid, sizeof(uid));
+        if (!e) break;
+        char m[40] = "ALM K x";
+        if (e == 1) { if (sound && !sound_is_exclusive()) sound_tone(1800, 40); m[6] = key; }
+        else { scopy(m, "ALM C ", sizeof(m)); scopy(m + 6, uid, (int)sizeof(m) - 6); }
+        term_send(m);
+    }
+    /* sounds from the master's state: beeps in the exit / entry time, the siren tone in an alarm */
+    char l0[40];
+    while (__atomic_test_and_set(&rlk, __ATOMIC_ACQUIRE)) ;
+    scopy(l0, rlines[0], sizeof(l0));
+    __atomic_clear(&rlk, __ATOMIC_RELEASE);
+    int fresh = rstate_at && t - rstate_at < 15000000;
+    if (!sound || sound_is_exclusive() || !fresh) { if (t_wail) { sound_stop(); t_wail = 0; } return; }
+    if (!strncmp(l0, "EXIT ", 5) || !strncmp(l0, "ENTRY ", 6)) {
+        int s = 0; for (const char *p = l0; *p; p++) if (*p >= '0' && *p <= '9') s = s * 10 + (*p - '0');
+        if (s != t_left) { t_left = s; sound_tone(l0[1] == 'N' ? 2500 : 2000, l0[1] == 'N' ? 150 : 80); }
+    } else t_left = -1;
+    if (!strncmp(l0, "!! ALARM", 8)) {
+        u64 ms = t / 1000;
+        if (!t_wail || ms - t_wail_at >= 20) { t_wail_at = ms; int ph = (int)(ms % 2000); sound_tone(ph < 1000 ? 600 + ph * 600 / 1000 : 1200 - (ph - 1000) * 600 / 1000, 0); t_wail = 1; }
+    } else if (t_wail) { sound_stop(); t_wail = 0; }
+}
+
+static int term_display(char l[4][40], int cols)
+{
+    u64 t = timer_us();
+    while (__atomic_test_and_set(&rlk, __ATOMIC_ACQUIRE)) ;
+    int fresh = rstate_at && t - rstate_at < 15000000;
+    if (fresh) { scopy(l[0], rlines[0], cols + 1); scopy(l[1], rlines[1], cols + 1); }
+    __atomic_clear(&rlk, __ATOMIC_RELEASE);
+    if (!fresh) { scopy(l[0], "no master", cols + 1); scopy(l[1], remote, cols + 1); }
+    u64 now = clock_now();
+    if (now) { char tb[32]; clock_format(tb, now, 0); scopy(l[2], tb + 11, cols + 1); tb[10] = 0; scopy(l[3], tb, cols + 1); return 4; }
+    return 2;
+}
+
+static void show_net(void)
+{
+    u64 t = timer_us();
+    if (remote[0]) {
+        char l0[40], l1[40];
+        while (__atomic_test_and_set(&rlk, __ATOMIC_ACQUIRE)) ;
+        scopy(l0, rlines[0], sizeof(l0)); scopy(l1, rlines[1], sizeof(l1));
+        int age = rstate_at ? (int)((t - rstate_at) / 1000000) : -1;
+        __atomic_clear(&rlk, __ATOMIC_RELEASE);
+        kprintf("alarm: keypad TERMINAL of %s (%s)\n", remote, master_ok == 1 ? "answers" : master_ok == 0 ? "does NOT answer" : "not tried yet");
+        if (age >= 0 && age < 15) kprintf("  master shows: %s / %s\n", l0, l1); else kprintf("  no state from the master%s\n", age >= 0 ? " for a while" : " yet");
+    }
+    {
+        for (int i = 0; i < MAXTERM; i++) if (terms[i].name[0]) {
+            kprintf("  terminal %s, seen %d s ago%s\n", terms[i].name, (int)((t - terms[i].seen) / 1000000), terms[i].fails ? ", not answering" : "");
+        }
+    }
+    if (!api_token()[0] && (remote[0] || terms[0].name[0] || terms[1].name[0])) kprintf("  terminal messages: NOT protected - set the same 'http token' on the master and the terminals\n");
+    if (bad_msgs) kprintf("  refused terminal messages (wrong token / copied / plain): %d\n", bad_msgs);
 }
 
 /* ---------------- the loop (core 0) ---------------- */
@@ -769,6 +1066,10 @@ void alarm_poll(void)
         mqtt_rediscover();
         busy = 0;
     }
+    static u64 term_at;
+    if (remote[0] && timer_us() >= term_at) {             /* 0.134: this board is a terminal (its readers go to the master) */
+        busy = 1; term_at = timer_us() + 10000; terminal_poll(); busy = 0;
+    }
     if (!on) return;
     static u64 next;
     u64 t = timer_us();
@@ -804,7 +1105,8 @@ void alarm_poll(void)
         if (siren_pin >= 0) gpio_set(siren_pin, siren_on);
         sound_stop();
     }
-    if (access_active()) readers();
+    if (access_active() && !remote[0]) readers();
+    master_net();
     camera_work();
     sounds();
     if (lg_dirty && !lg_save_at) lg_save_at = timer_us() + 2000000;
@@ -817,7 +1119,7 @@ void alarm_boot(void)
 {
     load();
     log_load();
-    if (!on) return;
+    if (!on) { if (remote[0]) { access_setup(); kprintf("alarm: keypad terminal of %s\n", remote); } return; }
     setup_pins();
     sound_volume(volume);
     struct fat_file f;
@@ -1038,9 +1340,12 @@ int alarm_mqtt_next(char *sub, int smax, char *pl, int pmax, int *retain)
 
 /* ---------------- shell ---------------- */
 
+static void show_net(void);
+
 static void show(void)
 {
     u64 t = timer_us();
+    if (remote[0] && !on) { show_net(); access_info(); conflicts(); return; }
     con_color(state == ALARM ? COL_RED : state == DISARMED ? COL_GREEN : COL_YELLOW);
     kprintf("alarm %s: %s%s", on ? "ON" : "off", state_name[state], state == ARMED || state == EXIT_TIME ? (amode ? " (home)" : " (away)") : "");
     if (state == EXIT_TIME || state == ENTRY_TIME) {
@@ -1065,6 +1370,7 @@ static void show(void)
     if (last_video[0]) kprintf("  last video %s\n", last_video);
     access_info();
     conflicts();
+    show_net();
     if (ncards) { kprintf("  cards:"); for (int i = 0; i < ncards; i++) kprintf(" %s (%s)%s", cards[i].uid, cards[i].name, i + 1 < ncards ? "," : "\n"); }
 }
 
@@ -1075,6 +1381,17 @@ void alarm_cmd(int argc, char **argv)
     char msg[80];
     int armed = on && state != DISARMED;
     if (!*a) { show(); return; }
+    if (remote[0] && ((!on && (!strcmp(a, "arm") || !strcmp(a, "home") || !strcmp(a, "disarm"))) || !strcmp(a, "key"))) {
+        /* a terminal: the code goes to the master as keys (code + A / B / D) */
+        char ks[40]; int n = 0;
+        int kf = !strcmp(a, "key");
+        for (int i = 2; i < argc; i++) for (const char *k = argv[i]; *k && n < 36; k++) ks[n++] = *k >= 'a' && *k <= 'd' ? (char)(*k - 32) : *k;
+        if (!kf) { if (!n) { kprintf("alarm %s <code>\n", a); return; } ks[n++] = a[0] == 'a' ? 'A' : a[0] == 'h' ? 'B' : 'D'; }
+        int bad = 0;
+        for (int i = 0; i < n; i++) { char m[8] = "ALM K x"; m[6] = ks[i]; if (alm_send(remote, m + 4)) bad = 1; }
+        kprintf(bad ? "master %s does not answer\n" : "sent to %s\n", remote);
+        return;
+    }
     if (!strcmp(a, "arm") || !strcmp(a, "home") || !strcmp(a, "disarm") || !strcmp(a, "panic")) {
         const char *c = argc > 2 ? argv[2] : "";
         int what = !strcmp(a, "disarm") ? 2 : !strcmp(a, "panic") ? 3 : 1;
@@ -1127,6 +1444,12 @@ void alarm_cmd(int argc, char **argv)
         lock(); parse(b, 0, e, sizeof(e)); unlock();
         kprintf("IoT shield: IN1 GPIO17 door (delay), IN2 GPIO27 window, IN3 GPIO22 PIR (interior, normally open),\n"
                 "IN4 GPIO5 tamper (24h); siren = relay K1 / OUT1 GPIO24, LED GPIO23. Rename / remove with 'alarm zone'.\n");
+        changed = 1;
+    } else if (!strcmp(a, "remote") && argc > 2) {
+        scopy(remote, !strcmp(argv[2], "off") || !strcmp(argv[2], "none") ? "" : argv[2], sizeof(remote));
+        if (remote[0] && on) kprintf("note: a terminal should have its own alarm off ('alarm off') - the master decides\n");
+        if (remote[0] && name_same(remote, net_name()) && !net_looping()) kprintf("note: that is this board's own name\n");
+        hello_at = 0; master_ok = -1; rstate_at = 0;
         changed = 1;
     } else if (!strcmp(a, "on") || !strcmp(a, "off")) {
         on = !strcmp(a, "on");
@@ -1268,6 +1591,8 @@ void alarm_cmd(int argc, char **argv)
                 "       alarm card                 the cards; alarm card learn (show a new card in 30 s),\n"
                 "                                  alarm card add <hex> [name], alarm card del <hex|name>\n"
                 "       alarm key 1234#            type on the keypad from here; alarm swipe <hex> = a card read\n"
+                "       alarm remote <master>|off  this board = a keypad terminal of the master board (RoboOS name,\n"
+                "                                  Ethernet/WiFi on the same LAN); set the same 'http token' on both\n"
                 "  keypad: code + # = arm (disarmed) / disarm, code + A = arm away, B = arm home, D = disarm, * = clear\n"
                 "       alarm test                 siren + tone for 2 s\n"
                 "       alarm log                  the last 48 events (also /ALARM.LOG)\n"

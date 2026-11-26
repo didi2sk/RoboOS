@@ -301,6 +301,7 @@ int  access_poll(char *key, char *uid, int umax);   /* core 0: 1 key, 2 card, 0 
 void access_core1_poll(void);                  /* core 1: Wiegand bits */
 void access_info(void);
 int  access_uses_pin(int p);                  /* 0.131 */
+void alarm_net_in(const char *from, const char *text, int len);   /* 0.134: net.c, core 1: "ALM ..." messages */
 void access_keypad_test(void);                /* 0.132: 'alarm keypad test' */
 int  doorbell_pin(void);                      /* 0.131: the button GPIO, -1 = off */
 int  camera_clip_start(int seconds, char *name_out);   /* core 0: alarm video, recorded from camera_poll */
