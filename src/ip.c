@@ -477,13 +477,6 @@ static char page[4096];
 static int plen;
 
 static void add(const char *s) { while (*s && plen < (int)sizeof(page) - 1) page[plen++] = *s++; page[plen] = 0; }
-static void add_u(u64 v)
-{
-    char t[24]; int k = 0;
-    do { t[k++] = '0' + v % 10; v /= 10; } while (v);
-    while (k && plen < (int)sizeof(page) - 1) page[plen++] = t[--k];
-    page[plen] = 0;
-}
 
 static char addr_s[16];
 const char *ip_address_str(void) { return ip4addr_ntoa_r(netif_ip4_addr(&nif), addr_s, sizeof(addr_s)); }
@@ -492,36 +485,86 @@ int https_on(void) { return https_pcb != 0; }
 static char page_user[24];
 static int page_role;
 
-static void build_page(void)
+/* 0.128: the home page - built into the connection's request buffer (8 KB) and streamed (the 4 KB page[]
+ * was too small for the new design). Status without a login; the Reboot button uses the token / login like
+ * the other pages (localStorage "roboos_token"). */
+static char *bp; static int bn, bmax;
+static void B(const char *s) { while (*s && bn < bmax - 1) bp[bn++] = *s++; bp[bn] = 0; }
+static void Be(const char *s)                             /* HTML-escaped */
 {
+    for (; *s; s++) {
+        if (*s == '<') B("&lt;"); else if (*s == '>') B("&gt;"); else if (*s == '&') B("&amp;"); else if (*s == '"') B("&quot;");
+        else { char c[2] = { *s, 0 }; B(c); }
+    }
+}
+static void tile(const char *k, const char *v) { B("<div class=\"st\"><span>"); B(k); B("</span><b>"); Be(v); B("</b></div>"); }
+static void card(const char *href, const char *title, const char *text)
+{
+    B("<a class=\"card\" href=\""); B(href); B("\"><b>"); B(title); B("</b><span>"); B(text); B("</span></a>");
+}
+
+static int build_home(char *dst, int max)
+{
+    bp = dst; bmax = max; bn = 0;
     u32 t[2] = { 0, 0 };
     u64 s = timer_us() / 1000000;
     int tc = mbox_prop(0x00030006, t, 2) ? (int)t[1] : -1;
-    plen = 0;
-    add("HTTP/1.0 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n"
-        "<!doctype html><html><head><meta charset=\"utf-8\"><title>RoboOS</title>"
-        "<meta name=\"viewport\" content=\"width=device-width\">"
-        "<style>body{font-family:monospace;background:#101418;color:#c0c0c0;margin:2em}"
-        "h1{color:#55ffff}td{padding:2px 12px 2px 0}</style></head><body><h1>RoboOS</h1><table>");
-    add("<tr><td>name</td><td>"); add(net_name()); add("</td></tr>");
-    add("<tr><td>board</td><td>"); add(board_name()); add("</td></tr>");
-    add("<tr><td>version</td><td>"); add(os_version()); add(" &nbsp; <a style=\"color:#8cf\" href=\"/update\">update</a></td></tr>");
-    add("<tr><td>address</td><td>"); add(ip_address_str()); add("</td></tr>");
-    add("<tr><td>uptime</td><td>"); add_u(s / 3600); add(" h "); add_u(s / 60 % 60); add(" min "); add_u(s % 60); add(" s</td></tr>");
-    if (tc >= 0) { add("<tr><td>CPU</td><td>"); add_u((u64)tc / 1000); add("."); add_u((u64)tc % 1000 / 100); add(" C</td></tr>"); }
-    add("<tr><td>visits</td><td>"); add_u(http_hits); add("</td></tr>");
-    add("<tr><td>JSON API</td><td>"); add(api_token()[0] ? "on (/api/..., Bearer token)" : "off"); add("</td></tr>");
-    add("<tr><td>HTTPS</td><td>"); add(https_pcb ? "on" : "off"); add("</td></tr>");
-    add("<tr><td>camera</td><td><a style=\"color:#8cf\" href=\"/camera\">/camera</a></td></tr>");
-    add("<tr><td>alarm</td><td><a style=\"color:#8cf\" href=\"/alarm\">/alarm</a></td></tr>");
-    add("<tr><td>files</td><td><a style=\"color:#8cf\" href=\"/files\">/files</a> &nbsp; <a style=\"color:#8cf\" href=\"/microscope\">/microscope</a></td></tr>");
-    if (page_user[0]) { add("<tr><td>logged in</td><td>"); add(page_user); add(page_role == 2 ? " (admin)" : " (view)"); add("</td></tr>"); }
-    {
-        char tb[32];
-        u64 now = clock_now();
-        if (now) { clock_format(tb, now, 0); add("<tr><td>time</td><td>"); add(tb); add("</td></tr>"); }
-    }
-    add("</table></body></html>\n");
+    char v[64];
+    B("<!doctype html><html><head><meta charset=\"utf-8\"><title>"); Be(net_name()); B(" - RoboOS</title>"
+      "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><style>"
+      "body{font-family:system-ui,sans-serif;background:#101418;color:#d0d0d0;margin:0;padding:16px}"
+      ".w{max-width:960px;margin:0 auto}h1{color:#55ffff;font-size:1.6em;margin:0}h2{color:#9cf;font-size:1em;margin:22px 0 8px;font-weight:600;text-transform:uppercase;letter-spacing:.06em}"
+      ".sub{color:#889;margin:4px 0 0}"
+      ".g{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}"
+      ".st{background:#182028;border:1px solid #2a3440;border-radius:10px;padding:10px 12px}"
+      ".st span{display:block;color:#889;font-size:.8em}.st b{color:#fff;font-weight:600;font-size:1.05em;word-break:break-all}"
+      ".cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px}"
+      ".card{display:block;text-decoration:none;background:#182028;border:1px solid #2a3440;border-radius:12px;padding:14px;color:#ccc}"
+      ".card:hover{border-color:#55aaff;background:#1c2632}.card b{display:block;color:#55ffff;font-size:1.1em;margin-bottom:4px}.card span{font-size:.9em;color:#9aa}"
+      "button{background:#24303a;color:#e0e0e0;border:1px solid #456;border-radius:6px;padding:9px 16px;font-size:1em;cursor:pointer;margin-right:8px}"
+      "button:hover{background:#2f3f4c}button.red{border-color:#a44}#msg{color:#ffb060;margin:10px 0;min-height:1.2em}"
+      "#tok{display:none;margin:8px 0}#tok input{background:#0b0e11;color:#ddd;border:1px solid #456;border-radius:4px;padding:6px;width:50%}"
+      "</style></head><body><div class=\"w\"><h1>RoboOS &middot; "); Be(net_name());
+    B("</h1><p class=\"sub\">"); Be(board_name()); B(" &middot; version "); Be(os_version()); B(" &middot; "); Be(ip_address_str());
+    if (page_user[0]) { B(" &middot; logged in as "); Be(page_user); B(page_role == 2 ? " (admin)" : " (view)"); }
+    B("</p><h2>Status</h2><div class=\"g\">");
+    { int n = 0; char *o = v;
+      #define VA(x) do { const char *q_ = (x); while (*q_ && n < 60) o[n++] = *q_++; } while (0)
+      #define VN(x) do { char d_[12]; int k_ = 0; u32 x_ = (u32)(x); do d_[k_++] = (char)('0' + x_ % 10); while ((x_ /= 10)); while (k_ && n < 60) o[n++] = d_[--k_]; } while (0)
+      if (s >= 86400) { VN(s / 86400); VA(" d "); }
+      VN(s / 3600 % 24); VA(" h "); VN(s / 60 % 60); VA(" min");
+      o[n] = 0; tile("uptime", v); }
+    { u64 now = clock_now(); if (now) { char tb[32]; clock_format(tb, now, 0); tile("time", tb); } else tile("time", "not set"); }
+    if (tc >= 0) { int n = 0; char *o = v; VN(tc / 1000); VA("."); VN(tc % 1000 / 100); VA(" C"); o[n] = 0; tile("CPU", v); }
+    tile("network", link_name());
+    tile("address", ip_address_str());
+    tile("alarm", alarm_state_text());
+    tile("JSON API", api_token()[0] ? "on (token)" : "off");
+    tile("HTTPS", https_pcb ? "on" : "off");
+    { int n = 0; char *o = v; VN(http_hits); o[n] = 0; tile("web visits", v); }
+    #undef VA
+    #undef VN
+    B("</div><h2>Pages</h2><div class=\"cards\">");
+    card("/alarm", "Alarm", "state, arm / disarm, zones, keypad and cards, settings");
+    card("/camera", "Camera", "live picture, photo, exposure, colours, IR light");
+    card("/microscope", "Photos &amp; videos", "the pictures in /CAM - view, download, delete");
+    card("/files", "Files", "everything on the SD card");
+    card("/update", "Update", "check GitHub for a new kernel and install it");
+    card("/api/status", "JSON API", "for scripts and Home Assistant (token needed)");
+    B("</div><h2>Board</h2><div id=\"tok\">API token: <input id=\"tk\" type=\"password\"> <button onclick=\"setTok()\">OK</button></div>"
+      "<button class=\"red\" onclick=\"reboot()\">Reboot</button><button onclick=\"location.reload()\">Refresh</button><div id=\"msg\"></div>"
+      "<script>let tok=localStorage.getItem('roboos_token')||'';const $=i=>document.getElementById(i);\n"
+      "function H(){return tok?{'Authorization':'Bearer '+tok}:{}}\n"
+      "function setTok(){tok=$('tk').value.trim();localStorage.setItem('roboos_token',tok);$('tok').style.display='none';reboot();}\n"
+      "async function reboot(){if(!confirm('Reboot the board now?'))return;\n"
+      " try{const r=await fetch('/api/reboot',{method:'POST',headers:H()});\n"
+      "  if(r.status==401||r.status==403){$('tok').style.display='block';$('msg').textContent='an admin login / the token is needed';return;}\n"
+      "  if(!r.ok){$('msg').textContent='error '+r.status;return;}}catch(e){}\n"
+      " $('msg').textContent='rebooting... the page comes back by itself';\n"
+      " for(let i=0;i<90;i++){await new Promise(z=>setTimeout(z,2000));try{const r=await fetch('/',{cache:'no-store'});if(r.ok){location.reload();return;}}catch(e){}}\n"
+      " $('msg').textContent='the board did not come back in 3 minutes';}\n"
+      "</script></div></body></html>\n");
+    return bn;
 }
 
 /* one connection: the request is collected until the headers and Content-Length bytes are in.
@@ -892,7 +935,9 @@ static int http_try(struct tcp_pcb *pcb, struct http_conn *c)
                      camera_page, (u32)strlen(camera_page));
         return 3;
     } else {
-        build_page();
+        int n = build_home(c->req, HTTP_REQ);            /* 0.128: the request is complete - its buffer holds the page */
+        stream_setup(c, "HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", c->req, (u32)n);
+        return 3;
     }
     return 1;
 }

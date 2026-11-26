@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.127**
+Current version: **0.128**
 
 ## Supported boards
 
@@ -511,6 +511,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.125: the card heals itself: a failed block read / write re-initialises the card once and tries again, and if the card was not mounted at boot every file access tries to mount it again (at most every 2 s). `sd` shows how often that happened.
 0.126: re-initialising the card never touches the WiFi pins / the Arasan controller any more (in 0.125 an automatic card re-init could cut off the WiFi); the boot tries the SDHOST controller 3 times before falling back to the Arasan.
 0.127: the WiFi firmware files are read from the card into RAM before the WiFi chip starts (on a 3B with a Samsung 64 GB card the card failed while its reads alternated with the firmware upload).
+0.128: new home page (`http://<board>/`): status tiles (uptime, time, CPU, network, address, alarm, API, HTTPS), cards for Alarm / Camera / Photos & videos / Files / Update / JSON API, and a Reboot button (token or admin login; the page reloads when the board is back).
 0.118: microscope key `w` = camera mode: 1920x1080 centre / 2592x1944 whole sensor (sharp, ~15 fps) / 1296x972 whole (fast); photos up to the full 2592x1944; `cam mode full`.
 0.117: file manager on the web: `/files` and `/microscope` (view, download, delete photos and videos on the card).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.

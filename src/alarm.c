@@ -534,6 +534,12 @@ static void readers(void)
 }
 
 int alarm_is_on(void) { return on; }
+const char *alarm_state_text(void)                        /* 0.128: the home page */
+{
+    if (!on) return "off";
+    return state == DISARMED ? "disarmed" : state == EXIT_TIME ? "arming" : state == ENTRY_TIME ? "entry time" :
+           state == ALARM ? "ALARM" : amode ? "armed (home)" : "armed";
+}
 
 /* the display's alarm screen (display.c, core 0): up to 4 rows of `cols` characters */
 int alarm_display(char l[4][40], int cols)
