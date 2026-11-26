@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.121**
+Current version: **0.122**
 
 ## Supported boards
 
@@ -505,6 +505,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.119: date + time stamp in photos, videos and Home Assistant photos (`cam stamp on|off`, checkbox on the `/camera` page).
 0.120: burglar alarm in the kernel (`alarm`, web page `/alarm`, Home Assistant alarm panel + zone sensors + events over MQTT): zones instant / delay / interior / 24h, away / home, siren relay + tone + voice, photos + video on an alarm, photo at entry, event log /ALARM.LOG, armed again after a power cut; `alarm shield` for the IoT shield pins.
 0.121: alarm keypads and card readers: 4x3 / 4x4 keypad on GPIO or on a PCF8574 (I2C), RC522 RFID reader (SPI), Wiegand readers / keypads; `alarm card learn|add|del`, code + # on the keypad, display mode `alarm` (state, stars, seconds left).
+0.122: kernel update from the web: page `/update` with "Check" and "Install" buttons (the board downloads from GitHub itself, backup KERNEL8.BAK, reboots, the page waits for it), `GET|POST /api/kernel`.
 0.118: microscope key `w` = camera mode: 1920x1080 centre / 2592x1944 whole sensor (sharp, ~15 fps) / 1296x972 whole (fast); photos up to the full 2592x1944; `cam mode full`.
 0.117: file manager on the web: `/files` and `/microscope` (view, download, delete photos and videos on the card).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
@@ -615,6 +616,12 @@ DigiCert, Sectigo, Google, GlobalSign, Amazon; `tools/mkta.py`) and `/TLS/CA.PEM
 board needs the time for that (NTP or `time set`). `update get -k` (or the word `insecure` in
 /UPDATE.TXT) skips the check. The same version is not installed again, an older one only with
 `update get force`. Redirects and chunked answers are followed. Works on the Pi 3B+: a kernel sent from a PC, and `update check` from GitHub with the certificate checked.
+
+**From the web page (0.122):** `http(s)://<board>/update` (also the "update" link next to the version on the main page):
+"Check for an update" shows the version on GitHub, "Install the update" makes the board download it itself, write it
+(the old one as KERNEL8.BAK), reboot, and the page waits until the board answers again. "force" reinstalls the same or an
+older version. Needs the token or an admin login like the other pages. API: `GET /api/kernel` (state, message, available),
+`POST /api/kernel` `{"cmd":"check"}` / `{"cmd":"install","force":false}`.
 
 ### Users: a login for the web page and the API (optional)
 

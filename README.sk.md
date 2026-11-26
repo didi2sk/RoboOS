@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.121**
+Aktuálna verzia: **0.122**
 
 ## Podporované dosky
 
@@ -501,6 +501,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.119: časová značka (dátum + čas) vo fotkách, videách a fotkách pre Home Assistant (`cam stamp on|off`, políčko na stránke `/camera`).
 0.120: zabezpečovací systém v jadre (`alarm`, webová stránka `/alarm`, v Home Assistant alarm panel + senzory zón + udalosti cez MQTT): zóny instant / delay / interior / 24h, away / home, relé sirény + tón + hlas, fotky + video pri poplachu, fotka pri príchode, záznam udalostí /ALARM.LOG, po výpadku prúdu znova zakódovaný; `alarm shield` pre piny IoT shieldu.
 0.121: klávesnice a čítačky kariet pre alarm: klávesnica 4x3 / 4x4 na GPIO alebo na PCF8574 (I2C), RFID čítačka RC522 (SPI), Wiegand čítačky / klávesnice; `alarm card learn|add|del`, kód + # na klávesnici, režim displeja `alarm` (stav, hviezdičky, zostávajúce sekundy).
+0.122: aktualizácia kernelu z webu: stránka `/update` s tlačidlami „Check“ a „Install“ (doska si sama stiahne z GitHubu, záloha KERNEL8.BAK, reštart, stránka na ňu počká), `GET|POST /api/kernel`.
 0.118: v mikroskope kláves `w` = režim kamery: 1920x1080 stred / 2592x1944 celý snímač (ostrý, ~15 snímok/s) / 1296x972 celý (rýchly); fotky až v plnom 2592x1944; `cam mode full`.
 0.117: správca súborov na webe: `/files` a `/microscope` (zobraziť, stiahnuť, zmazať fotky a videá na karte).
 
@@ -607,6 +608,12 @@ Certifikáty HTTPS sa overujú voči vstavaným koreňovým autoritám (Let's En
 GlobalSign, Amazon; `tools/mkta.py`) a `/TLS/CA.PEM` (vlastná autorita) - Pi na to potrebuje čas (NTP alebo
 `time set`). `update get -k` (alebo slovo `insecure` v /UPDATE.TXT) overovanie vynechá. Rovnaká verzia sa znova
 neinštaluje, staršia len cez `update get force`. Presmerovania a „chunked“ odpovede zvláda. Funguje na Pi 3B+: kernel poslaný z PC aj `update check` z GitHubu s overeným certifikátom.
+
+**Z webovej stránky (0.122):** `http(s)://<doska>/update` (aj odkaz „update“ pri verzii na hlavnej stránke): „Check for
+an update“ ukáže verziu na GitHube, „Install the update“ - doska si ju sama stiahne, zapíše (starú ako KERNEL8.BAK),
+reštartuje sa a stránka počká, kým doska znova odpovie. „force“ nainštaluje aj rovnakú alebo staršiu verziu. Treba token
+alebo admin prihlásenie ako na ostatných stránkach. API: `GET /api/kernel` (stav, správa, dostupná verzia),
+`POST /api/kernel` `{"cmd":"check"}` / `{"cmd":"install","force":false}`.
 
 ### Používatelia: prihlásenie na webovú stránku a API (voliteľné)
 

@@ -242,3 +242,94 @@ void cmd_update(int argc, char **argv)
     kprintf("  curl --data-binary @ALARM.BIN -H \"Authorization: Bearer TOKEN\" \"http://%s/api/file?path=/APPS/ALARM.BIN\"\n", ip_address_str());
     kprintf("  (https:// and curl -k when HTTPS is on; ?reboot=0 keeps the board running after a kernel update)\n");
 }
+
+/* ---------------- 0.122: update from the web page (/update, GET|POST /api/kernel) ----------------
+ * Core 1 (webapi.c) only queues a job; core 0 (update_web_poll from con_trygetc) downloads from GitHub /
+ * /UPDATE.TXT like 'update check' / 'update get' and leaves a message; the page polls GET /api/kernel. */
+static volatile int uw_state;                 /* 0 idle, 1 check queued, 2 install queued, 3 working, 4 done */
+static int uw_force, uw_ok, uw_newer, uw_reboot, uw_install;
+static char uw_msg[200], uw_avail[24];
+static u64 uw_since;
+
+static void uw_set(const char *m) { int k = 0; for (; m[k] && k < (int)sizeof(uw_msg) - 1; k++) uw_msg[k] = m[k]; uw_msg[k] = 0; }
+
+/* core 1: 0 queued, -1 busy */
+int update_web_request(int install, int force)
+{
+    int s = __atomic_load_n(&uw_state, __ATOMIC_ACQUIRE);
+    if ((s == 1 || s == 2 || s == 3) && timer_us() - uw_since < 180000000ULL) return -1;   /* (a stuck job frees itself) */
+    if (uw_reboot) return -1;
+    uw_force = force; uw_install = install; uw_ok = 0;
+    uw_set(install ? "queued: download + install" : "queued: checking");
+    uw_since = timer_us();
+    __atomic_store_n(&uw_state, install ? 2 : 1, __ATOMIC_RELEASE);
+    return 0;
+}
+
+/* core 0, from con_trygetc */
+void update_web_poll(void)
+{
+    int s = __atomic_load_n(&uw_state, __ATOMIC_ACQUIRE);
+    if ((s != 1 && s != 2) || io_held()) return;
+    __atomic_store_n(&uw_state, 3, __ATOMIC_RELEASE);
+    int get = s == 2, insecure = 0;
+    char url[300], v[24], m[200];
+    uw_avail[0] = 0; uw_newer = 0;
+    if (upl.state) { uw_set("an upload is running - try again in a moment"); goto done; }
+    if (update_url_quiet(url, sizeof(url), &insecure)) { uw_set("/UPDATE.TXT has no address"); goto done; }
+    uw_set("downloading...");
+    kprintf("\n[UPDATE] web: %s from %s\n", get ? "install" : "check", url);
+    long n = fetch_url(url, UPLOAD_BUF, UPLOAD_MAX, insecure);
+    if (n < 0) { int k = 0; const char *a = "download failed: "; while (*a) m[k++] = *a++; for (const char *e = fetch_err; e && *e && k < 190; e++) m[k++] = *e; m[k] = 0; uw_set(m); goto done; }
+    kernel_version(UPLOAD_BUF, (u32)n, v, sizeof(v));
+    if (!v[0]) { uw_set("the download is not a RoboOS kernel - nothing changed"); goto done; }
+    { int k = 0; for (; v[k] && k < (int)sizeof(uw_avail) - 1; k++) uw_avail[k] = v[k]; uw_avail[k] = 0; }
+    int same = !strcmp(v, os_version()), older = !same && ver_num(v) < ver_num(os_version());
+    uw_newer = !same && !older;
+    if (!get) {
+        uw_set(same ? "you have the newest version" : older ? "GitHub has an OLDER version (install with 'force' only)" : "a new version is ready to install");
+        uw_ok = 1;
+        goto done;
+    }
+    if ((same || older) && !uw_force) { uw_set(same ? "the same version - nothing to do (tick 'force' to reinstall)" : "that is OLDER than the running one (tick 'force')"); goto done; }
+    upl.reboot = 1;
+    do_kernel_buf(UPLOAD_BUF, (u32)n);
+    if (upl.code != 200) { uw_set("installing failed - the old kernel stays (see the board's screen)"); goto done; }
+    {
+        int k = 0; const char *a = "installed ";
+        while (*a) m[k++] = *a++;
+        for (const char *b = v; *b; b++) m[k++] = *b;
+        a = " - rebooting, the page reconnects by itself"; while (*a) m[k++] = *a++;
+        m[k] = 0;
+        uw_set(m);
+    }
+    uw_ok = 1;
+    uw_reboot = 1;
+    api_reboot_later(3000);
+done:
+    __atomic_store_n(&uw_state, 4, __ATOMIC_RELEASE);
+}
+
+static void js_add(char *b, int *n, int max, const char *s, int quote)
+{
+    if (quote && *n < max - 1) b[(*n)++] = '"';
+    for (; *s && *n < max - 2; s++) { if (quote && (*s == '"' || *s == '\\')) b[(*n)++] = '\\'; if ((u8)*s >= 32) b[(*n)++] = *s; }
+    if (quote && *n < max - 1) b[(*n)++] = '"';
+    b[*n] = 0;
+}
+
+/* any core: GET /api/kernel */
+int update_web_json(char *b, int max)
+{
+    int n = 0, s = __atomic_load_n(&uw_state, __ATOMIC_ACQUIRE);
+    static const char *const st[5] = { "idle", "checking", "installing", "working", "done" };
+    js_add(b, &n, max, "{\"ok\":true,\"running\":", 0); js_add(b, &n, max, os_version(), 1);
+    js_add(b, &n, max, ",\"state\":", 0); js_add(b, &n, max, s == 3 ? (uw_install ? "installing" : "checking") : st[s], 1);
+    js_add(b, &n, max, ",\"busy\":", 0); js_add(b, &n, max, s >= 1 && s <= 3 ? "true" : "false", 0);
+    js_add(b, &n, max, ",\"message\":", 0); js_add(b, &n, max, uw_msg, 1);
+    js_add(b, &n, max, ",\"available\":", 0); js_add(b, &n, max, uw_avail, 1);
+    js_add(b, &n, max, ",\"newer\":", 0); js_add(b, &n, max, uw_newer ? "true" : "false", 0);
+    js_add(b, &n, max, ",\"rebooting\":", 0); js_add(b, &n, max, uw_reboot ? "true" : "false", 0);
+    js_add(b, &n, max, "}\n", 0);
+    return n;
+}
