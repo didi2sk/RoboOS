@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.129**
+Aktuálna verzia: **0.130**
 
 ## Podporované dosky
 
@@ -509,6 +509,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.127: firmvér WiFi sa prečíta z karty do pamäte ešte pred zapnutím WiFi čipu (na 3B so Samsung 64 GB kartou karta zlyhávala, keď sa jej čítanie striedalo s nahrávaním firmvéru).
 0.128: nová úvodná stránka (`http://<doska>/`): dlaždice stavu (čas behu, čas, CPU, sieť, adresa, alarm, API, HTTPS), karty Alarm / Camera / Photos & videos / Files / Update / JSON API a tlačidlo Reboot (token alebo admin prihlásenie; stránka sa po reštarte sama načíta).
 0.129: `alarm keypad gpio` bez čísel = fóliová klávesnica 4x4 priamo na lište (GPIO 5 6 13 19 / 12 16 20 21 = piny 29 31 33 35 / 32 36 38 40), tabuľka zapojenia v README.
+0.130: `alarm keypad plug [reversed]` = 8-pinový konektor klávesnice nasunutý priamo na piny 23-37 (bez prepájania; vodič na GND pine sa číta naopak, fungujú všetky 16 klávesy); v `alarm keypad gpio` môže byť linka `gnd`.
 0.118: v mikroskope kláves `w` = režim kamery: 1920x1080 stred / 2592x1944 celý snímač (ostrý, ~15 snímok/s) / 1296x972 celý (rýchly); fotky až v plnom 2592x1944; `cam mode full`.
 0.117: správca súborov na webe: `/files` a `/microscope` (zobraziť, stiahnuť, zmazať fotky a videá na karte).
 
@@ -1176,6 +1177,18 @@ alarm card learn                         potom do 30 s ukáž novú kartu (ulož
 alarm card add 1a2b3c4d Maria            / alarm card del Maria / alarm card (zoznam)
 alarm keypad off, alarm rfid off
 ```
+
+**Najjednoduchšie: konektor len nasunúť na lištu (0.130, `alarm keypad plug`).** 8-pinový konektor klávesnice
+ide na piny **23 až 37 vnútorného radu** (nepárne čísla, rad bližšie k stredu dosky), vodič 1 (ľavý, pri pohľade
+spredu s káblom dole) na pin 23. Nič sa nespájkuje ani neprepája. Pin 25 pod vodičom 2 je GND - RoboOS ten vodič
+číta naopak, takže fungujú všetky 16 klávesy, a keďže sa linky iba sťahujú k nule, GND pin nevadí. Nasunutá naopak
+(vodič 1 na pine 37)? `alarm keypad plug reversed`. Nie spolu s IoT shieldom (zakrýva lištu) ani s RC522 (pin 23 =
+GPIO11 = SPI hodiny).
+
+| pin lišty | 23 | 25 | 27 | 29 | 31 | 33 | 35 | 37 |
+|---|---|---|---|---|---|---|---|---|
+| vodič klávesnice | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+| GPIO | 11 | GND | 0 | 5 | 6 | 13 | 19 | 26 |
 
 Fóliová klávesnica 4x4 priamo na lištu Pi (0.129, `alarm keypad gpio` bez čísel; netreba rezistory - vnútorné
 pull-upy, naraz sa zapína jeden riadok). 8 vodičov klávesnice, pri pohľade spredu s káblom dole, zľava: 1-4 = riadky

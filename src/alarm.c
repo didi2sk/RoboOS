@@ -1179,7 +1179,7 @@ void alarm_cmd(int argc, char **argv)
         char *ww[12]; char cp[96]; int kk = 0; scopy(cp, l, sizeof(cp));
         for (char *q = cp; *q && kk < 12; ) { while (*q == ' ') *q++ = 0; if (!*q) break; ww[kk++] = q; while (*q && *q != ' ') q++; }
         if (access_set(kk, ww)) {
-            kprintf("alarm keypad gpio [<r1> <r2> <r3> <r4> <c1> <c2> <c3> [c4]]  |  alarm keypad i2c [addr] [swap]  |  alarm keypad off\n"
+            kprintf("alarm keypad plug [reversed]  |  alarm keypad gpio [<r1> .. <c4>] (a pin may be gnd)  |  alarm keypad i2c [addr] [swap]  |  alarm keypad off\n"
                     "alarm rfid rc522 [rst gpio]  |  alarm rfid wiegand <d0> <d1>  |  alarm rfid off\n");
             char e2[80]; static char b2[3072]; cfg_text(b2, sizeof(b2), 1); lock(); parse(b2, 0, e2, sizeof(e2)); unlock();   /* undo */
             return;
@@ -1220,6 +1220,7 @@ void alarm_cmd(int argc, char **argv)
                 "                                  entry_photo on|off, mqtt on|off\n"
                 "       alarm code <old> <new>     change the code (default 1234!)\n"
                 "       alarm shield               zones + siren for the RoboOS IoT shield (IN1-IN4, relay K1, LED)\n"
+                "       alarm keypad plug [reversed]   the keypad's 8-pin connector pushed onto header pins 23-37 (inner row)\n"
                 "       alarm keypad gpio          4x4 keypad straight on the header: wires 1-8 -> pins 29 31 33 35 32 36 38 40\n"
                 "                                  (GPIO 5 6 13 19 rows, 12 16 20 21 columns; not with the IoT shield)\n"
                 "       alarm keypad gpio <r1> <r2> <r3> <r4> <c1> <c2> <c3> [c4]   other pins\n"

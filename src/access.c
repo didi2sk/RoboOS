@@ -2,7 +2,12 @@
  * access.c - code / card readers for the alarm (0.121): they only READ, alarm.c decides what a key or card means.
  *
  *   keypad gpio [<r1> <r2> <r3> <r4> <c1> <c2> <c3> [c4]]   (no pins = rows 5 6 13 19, columns 12 16 20 21 =
- *        header pins 29 31 33 35 / 32 36 38 40 - the keypad's 8 wires in order, 0.129)
+ *        header pins 29 31 33 35 / 32 36 38 40 - the keypad's 8 wires in order, 0.129). A line may be "gnd" (0.130).
+ *   keypad plug [reversed]
+ *        0.130: the keypad's 8-pin connector pushed straight onto header pins 23-37 (the inner row, odd numbers):
+ *        23 GPIO11, 25 GND, 27 GPIO0, 29 GPIO5, 31 GPIO6, 33 GPIO13, 35 GPIO19, 37 GPIO26 - wire 1 at pin 23
+ *        ("reversed": wire 1 at pin 37). The wire on GND is read the other way round: its keys pull their line low
+ *        with nothing driven, so all 16 keys work. Lines are only ever driven LOW, so a GND line is safe.
  *        a 4x3 / 4x4 membrane keypad straight on GPIO pins: columns are inputs with the pull-up, one row at a
  *        time is driven LOW (the others float), a low column = that key. Scanned every 10 ms, a key counts after
  *        2 equal scans, once per press. Layout 123A / 456B / 789C / *0#D.
@@ -77,6 +82,8 @@ static int num(const char *s, int *v)
     return 0;
 }
 static int gp(const char *s, int *v) { return num(s, v) || *v < 2 || *v > 27 ? -1 : 0; }
+/* 0.130: a keypad line may also be GPIO 0/1 or "gnd" (-1) - a connector plugged straight onto the header */
+static int gk(const char *s, int *v) { if (!strcmp(s, "gnd")) { *v = -1; return 0; } return num(s, v) || *v > 27 ? -1 : 0; }
 
 /* one settings line split into words ("keypad ..." / "rfid ..."); 0 ok, -1 bad */
 int access_set(int n, char **w)
@@ -90,10 +97,22 @@ int access_set(int n, char **w)
             nkc = 4; kp_type = 1;
             return 0;
         }
+        if (!strcmp(w[1], "plug")) {                     /* 0.130: the connector straight on header pins 23-37 (inner row) */
+            static const int pr[4] = { 11, -1, 0, 5 }, pc[4] = { 6, 13, 19, 26 };      /* wire 1 at pin 23, pin 25 = GND */
+            static const int rr[4] = { 26, 19, 13, 6 }, rc[4] = { 5, 0, -1, 11 };      /* "reversed": wire 1 at pin 37 */
+            int rev = n > 2 && !strcmp(w[2], "reversed");
+            for (int i = 0; i < 4; i++) { kr[i] = rev ? rr[i] : pr[i]; kc[i] = rev ? rc[i] : pc[i]; }
+            nkc = 4; kp_type = 1;
+            return 0;
+        }
         if (!strcmp(w[1], "gpio")) {
-            int p[8], k = n - 2;
+            int p[8], k = n - 2, ng = 0;
             if (k != 7 && k != 8) return -1;
-            for (int i = 0; i < k; i++) { if (gp(w[2 + i], &p[i])) return -1; for (int j = 0; j < i; j++) if (p[j] == p[i]) return -1; }
+            for (int i = 0; i < k; i++) {
+                if (gk(w[2 + i], &p[i])) return -1;
+                if (p[i] < 0) { if (++ng > 2) return -1; continue; }
+                for (int j = 0; j < i; j++) if (p[j] == p[i]) return -1;
+            }
             for (int i = 0; i < 4; i++) kr[i] = p[i];
             nkc = k - 4;
             for (int i = 0; i < nkc; i++) kc[i] = p[4 + i];
@@ -139,8 +158,8 @@ int access_text(char *b, int max)
     b[0] = 0;
     if (kp_type == 1) {
         n = put(b, n, max, "keypad gpio");
-        for (int i = 0; i < 4; i++) { n = put(b, n, max, " "); n = putn(b, n, max, kr[i]); }
-        for (int i = 0; i < nkc; i++) { n = put(b, n, max, " "); n = putn(b, n, max, kc[i]); }
+        for (int i = 0; i < 4; i++) { n = put(b, n, max, " "); n = kr[i] < 0 ? put(b, n, max, "gnd") : putn(b, n, max, kr[i]); }
+        for (int i = 0; i < nkc; i++) { n = put(b, n, max, " "); n = kc[i] < 0 ? put(b, n, max, "gnd") : putn(b, n, max, kc[i]); }
         n = put(b, n, max, "\r\n");
     } else if (kp_type == 2) {
         n = put(b, n, max, "keypad i2c "); n = puth(b, n, max, ki2c); if (kswap) n = put(b, n, max, " swap"); n = put(b, n, max, "\r\n");
@@ -294,11 +313,18 @@ static void wg_frame(u64 v, int n)
 
 static int scan_gpio(void)
 {
-    int found = -1;
+    int found = -1, gr = -1, gc = -1;
+    for (int i = 0; i < 4; i++) if (kr[i] < 0) gr = i;
+    for (int i = 0; i < nkc; i++) if (kc[i] < 0) gc = i;
+    /* 0.130: a line on GND (keypad plugged straight on the header): its keys pull the other line low by
+     * themselves - read with nothing driven first. A key between two GND lines cannot be seen. */
+    if (gr >= 0) for (int c = 0; c < nkc; c++) if (kc[c] >= 0 && !gpio_get(kc[c])) return gr * 4 + c;
+    if (gc >= 0) for (int r = 0; r < 4; r++) if (kr[r] >= 0 && !gpio_get(kr[r])) return r * 4 + gc;
     for (int r = 0; r < 4 && found < 0; r++) {
+        if (kr[r] < 0) continue;
         gpio_func(kr[r], 1); gpio_set(kr[r], 0);
         delay_us(10);
-        for (int c = 0; c < nkc; c++) if (!gpio_get(kc[c])) { found = r * 4 + c; break; }
+        for (int c = 0; c < nkc; c++) if (kc[c] >= 0 && !gpio_get(kc[c])) { found = r * 4 + c; break; }
         gpio_func(kr[r], 0);
     }
     return found;
@@ -319,8 +345,8 @@ static int scan_i2c(void)
 void access_setup(void)
 {
     if (kp_type == 1) {
-        for (int i = 0; i < 4; i++) { gpio_func(kr[i], 0); gpio_pull(kr[i], 2); }
-        for (int i = 0; i < nkc; i++) { gpio_func(kc[i], 0); gpio_pull(kc[i], 2); }
+        for (int i = 0; i < 4; i++) if (kr[i] >= 0) { gpio_func(kr[i], 0); gpio_pull(kr[i], 2); }
+        for (int i = 0; i < nkc; i++) if (kc[i] >= 0) { gpio_func(kc[i], 0); gpio_pull(kc[i], 2); }
     }
     kp_last = kp_cand = -1; kp_cnt = 0; kp_err = 0; kp_retry = 0;
     if (rf_type == 1) { spi_init(0); rc_ver = -1; rc_retry = 0; }
@@ -380,8 +406,10 @@ int access_poll(char *key, char *uid, int umax)
 void access_info(void)
 {
     if (kp_type == 1) {
-        kprintf("  keypad on GPIO: rows %d %d %d %d, columns", kr[0], kr[1], kr[2], kr[3]);
-        for (int i = 0; i < nkc; i++) kprintf(" %d", kc[i]);
+        kprintf("  keypad on GPIO: rows");
+        for (int i = 0; i < 4; i++) { if (kr[i] < 0) kprintf(" gnd"); else kprintf(" %d", kr[i]); }
+        kprintf(", columns");
+        for (int i = 0; i < nkc; i++) { if (kc[i] < 0) kprintf(" gnd"); else kprintf(" %d", kc[i]); }
         kprintf(" (4x%d), keys %u%s%c\n", nkc, keys_read, keys_read ? ", last " : "", keys_read ? last_key : ' ');
     } else if (kp_type == 2)
         kprintf("  keypad on I2C 0x%x (PCF8574, rows P%s): %s, keys %u\n", ki2c, kswap ? "4-7" : "0-3",
