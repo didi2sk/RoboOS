@@ -65,6 +65,7 @@ int mbox_prop(u32 tag, u32 *vals, int n);   /* one tag, n values in/out */
 
 /* smp.c - core 1 = USB + network; locks */
 int  smp_core(void);
+extern volatile int wifi_owns_pins;           /* wifi.c: GPIO34-39 on ALT3 for the WiFi chip (0.126) */
 int  smp_start_io(void);
 int  io_core_active(void);
 void io_poll_all(void);

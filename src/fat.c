@@ -24,14 +24,14 @@ static u32 sd_recover_n, late_n;
 static int sd_rd1(u32 lba, void *buf)
 {
     if (!sd_read(lba, buf, 1)) return 0;
-    if (smp_core() != 0 || sd_init()) return -1;
+    if (smp_core() != 0 || sd_init_on(wifi_owns_pins ? 1 : 0)) return -1;
     sd_recover_n++;
     return sd_read(lba, buf, 1);
 }
 static int sd_wr1(u32 lba, const void *buf)
 {
     if (!sd_write(lba, buf, 1)) return 0;
-    if (smp_core() != 0 || sd_init()) return -1;
+    if (smp_core() != 0 || sd_init_on(wifi_owns_pins ? 1 : 0)) return -1;
     sd_recover_n++;
     return sd_write(lba, buf, 1);
 }
@@ -105,7 +105,7 @@ int fat_mounted(void)
     if (!mounted && !in_try && smp_core() == 0 && timer_us() - last > 2000000) {
         in_try = 1;
         last = timer_us();
-        if (sd_init() == SD_OK && fat_mount() == 0) { late_n++; kprintf("\n[SD] card mounted now (it was not ready at boot)\n"); }
+        if (sd_init_on(wifi_owns_pins ? 1 : 0) == SD_OK && fat_mount() == 0) { late_n++; kprintf("\n[SD] card mounted now (it was not ready at boot)\n"); }
         last = timer_us();
         in_try = 0;
     }
