@@ -2,7 +2,7 @@
 #include "usb.h"
 #include "sd.h"
 
-#define VERSION "0.123"
+#define VERSION "0.124"
 
 const char *os_version(void) { return VERSION; }
 /* found by 'update' / POST /api/update in a kernel8.img: only a RoboOS kernel may replace the running one */
@@ -69,7 +69,11 @@ void kernel_main(void)
     /* 0.123: up to 4 tries - the owner's 3B often needed 'sd init' after a reboot (the first try failed) */
     int sde = SD_OK, fs_ok = 0, sd_tries = 0, sd_first = 0, sd_first_mount = 0;
     while (!fs_ok && sd_tries < 4) {
-        if (sd_tries) delay_us(150000u * (u32)sd_tries);
+        if (sd_tries) {                        /* 0.124: power the card off + on before a retry (mailbox SD power) */
+            u32 off[2] = { 0, 2 };             /* device 0 = SD card, off + wait */
+            mbox_prop(0x00028001, off, 2);
+            delay_us(150000u * (u32)sd_tries);
+        }
         sde = sd_init();
         int m = sde == SD_OK ? fat_mount() : -1;
         fs_ok = sde == SD_OK && m == 0;

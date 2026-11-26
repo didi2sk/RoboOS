@@ -73,7 +73,7 @@
 #define ACMD41_VOLTAGE      0x00ff8000
 #define ACMD41_CMD_COMPLETE 0x80000000
 #define ACMD41_CMD_CCS      0x40000000
-#define ACMD41_ARG_HC       0x51ff8000
+#define ACMD41_ARG_HC       0x50ff8000      /* HCS + XPC, no S18R (0.124: the Pi 3 has no 1.8 V signalling) */
 
 #define SCR_SD_BUS_WIDTH_4  0x00000400
 
