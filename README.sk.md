@@ -37,6 +37,29 @@ alebo na GPIO47 (Pi 2 v1.2).
    a priečinky `APPS` (ukážkové programy), `RUN` (autostart) a `FIRMWARE` (firmvér WiFi čipu).
 3. Vlož kartu do Raspberry Pi a zapni ho.
 
+## GPIO lišta (rozloženie pinov)
+
+![40-pinová GPIO lišta Raspberry Pi](docs/pinout.webp)
+
+*Obrázok: [dokumentácia Raspberry Pi](https://www.raspberrypi.com/documentation/computers/raspberry-pi.html), © Raspberry Pi Ltd, [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).*
+Nepárne piny (1, 3, ... 39) = vnútorný rad, párne (2, 4, ... 40) = rad pri okraji dosky. Čísla v príkazoch RoboOS
+sú vždy **čísla GPIO**, nie čísla pinov lišty.
+
+Čo RoboOS predvolene používa:
+
+| GPIO (pin lišty) | na čo |
+|---|---|
+| 2, 3 (3, 5) | I2C: senzory, displeje, hodiny RTC, FM rádio, I2C klávesnica |
+| 14, 15 (8, 10) | sériová konzola (USB-TTL prevodník) |
+| 8-11 (24, 21, 19, 23) | SPI: čítačka kariet RC522, Waveshare OLED HAT |
+| 4 (7) | 1-Wire na IoT shielde (ovládač zatiaľ nie je) |
+| 17, 27, 22, 5 (11, 13, 15, 29) | vstupy IoT shieldu IN1-IN4 = zóny alarmu (`alarm shield`) |
+| 24, 25, 12, 16 (18, 22, 32, 36) | výstupy / relé IoT shieldu (24 = siréna alarmu) |
+| 23 (16) | LED IoT shieldu (LED alarmu) |
+| 6 (31) | tlačidlo zvončeka (THT shield) |
+| 11, GND, 0, 5, 6, 13, 19, 26 (23-37 vnútorný rad) | klávesnica 4x4 nasunutá priamo (`alarm keypad plug`) |
+| 18, 19 (12, 35) | zvuk na Zero 2 W (Pi 3 má jack) |
+
 ## Programy a autostart
 
 SD karta je zároveň disk RoboOS (FAT32 alebo FAT16, čítanie aj zápis).
