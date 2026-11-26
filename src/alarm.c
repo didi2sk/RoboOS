@@ -628,7 +628,7 @@ static int local_display(char l[4][40], int cols)
  * display shows ("ALM S line0|line1") on every change and every 5 s; the terminal shows it, beeps in the exit /
  * entry time and wails in an alarm. Messages = net.c raw Ethernet frames with ACK (no IP needed, names only). */
 #define MAXTERM 6
-static struct { char name[NET_NAME_MAX]; u64 seen, sent_at; char last[100]; int fails; } terms[MAXTERM];
+static struct { char name[NET_NAME_MAX]; u64 seen, sent_at, quiet; char last[100]; int fails; } terms[MAXTERM];
 static struct { char from[NET_NAME_MAX]; char text[40]; } rq[8];
 static volatile int rqh, rqt;
 static char rlines[2][40];
@@ -781,9 +781,12 @@ void alarm_net_in(const char *from, const char *wire, int wlen)
 }
 
 /* master, core 0: keys / cards / hellos from the terminals, then the display lines back to them */
+static void master_send(int force);
+
 static void master_net(void)
 {
     u64 t = timer_us();
+    int got = 0;
     while (rqt != rqh) {
         char from[NET_NAME_MAX], text[40];
         scopy(from, rq[rqt].from, sizeof(from)); scopy(text, rq[rqt].text, sizeof(text));
@@ -794,7 +797,7 @@ static void master_net(void)
             if (freei < 0) { u64 o = ~0ULL; for (int i = 0; i < MAXTERM; i++) if (terms[i].seen < o) { o = terms[i].seen; freei = i; } }
             k = freei;
             scopy(terms[k].name, from, sizeof(terms[k].name));
-            terms[k].sent_at = 0; terms[k].last[0] = 0;
+            terms[k].sent_at = terms[k].quiet = 0; terms[k].fails = 0; terms[k].last[0] = 0;
             kprintf("\n[ALARM] terminal %s connected\n", from);
         }
         terms[k].seen = t; terms[k].fails = 0;
@@ -802,8 +805,16 @@ static void master_net(void)
         if (text[4] == 'K' && text[6]) { key_remote = 1; key_in(text[6], who); key_remote = 0; }
         else if (text[4] == 'C' && text[6]) card_in(text + 6, from);
         terms[k].last[0] = 0;                             /* answer at once */
+        got = 1;
     }
-    if (t < tpoll_at) return;
+    master_send(got);
+}
+
+/* the master's display lines to every terminal: on a change (at most every 200 ms, at once with force) + every 5 s */
+static void master_send(int force)
+{
+    u64 t = timer_us();
+    if (!force && t < tpoll_at) return;
     tpoll_at = t + 200000;
     char l[4][40], m[100] = "ALM S ";
     local_display(l, 20);
@@ -815,11 +826,12 @@ static void master_net(void)
     for (int i = 0; i < MAXTERM; i++) {
         if (!terms[i].name[0]) continue;
         if (t - terms[i].seen > 120000000ULL) { kprintf("\n[ALARM] terminal %s gone\n", terms[i].name); terms[i].name[0] = 0; continue; }
+        if (t < terms[i].quiet) continue;
         if (!strcmp(terms[i].last, m) && t - terms[i].sent_at < 5000000) continue;
         int r = alm_send(terms[i].name, m + 4);
         terms[i].sent_at = t;
         if (r == 0) { scopy(terms[i].last, m, sizeof(terms[i].last)); terms[i].fails = 0; }
-        else if (++terms[i].fails >= 3) terms[i].sent_at = t + 10000000;   /* quiet for a while */
+        else if (++terms[i].fails >= 3) { terms[i].fails = 0; terms[i].quiet = t + 10000000; }   /* not answering: quiet for 10 s */
     }
 }
 
@@ -971,7 +983,7 @@ static void lights(void)
     if (s != last) { gpio_set(armed_pin, s); last = s; }
 }
 
-static int no_idle(void) { return 0; }
+static int voice_idle(void) { if (on) master_send(0); return 0; }   /* 0.137: terminals keep getting the state while a voice file plays */
 
 static int play_voice(const char *name)
 {
@@ -984,7 +996,8 @@ static int play_voice(const char *name)
     p[n] = 0;
     struct fat_file f;
     if (fat_open(p, &f)) return -1;
-    return sound_wav(p, no_idle) < 0 ? -1 : 0;
+    if (on) master_send(1);                               /* 0.137: the terminals see the new state BEFORE the voice (it blocks for seconds) */
+    return sound_wav(p, voice_idle) < 0 ? -1 : 0;
 }
 
 static int last_left = -1, wailing;
