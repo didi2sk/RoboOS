@@ -172,6 +172,13 @@ int main(void)
         access_setup(); gn = 0; got[0] = 0;
         for (int k = 0; k < 16; k++) press(k / 4, k % 4, 50);
         check("keypad plug reversed: all 16 keys right", !strcmp(got, want));
+        int sr2[4] = { 13, 19, 26, 21 }, sc2[4] = { 20, 7, 18, -1 };   /* keypad shield: wire 8 on GND */
+        memcpy(PR, sr2, sizeof(sr2)); memcpy(PC, sc2, sizeof(sc2));
+        check("keypad shield accepted", setline("keypad shield") == 0);
+        access_setup(); gn = 0; got[0] = 0;
+        for (int k = 0; k < 16; k++) press(k / 4, k % 4, 50);
+        check("keypad shield: all 16 keys (column 4 on GND)", !strcmp(got, want));
+        check("keypad shield leaves GPIO 5 + SPI free", !access_uses_pin(5) && !access_uses_pin(8) && access_uses_pin(13));
         check("gpio line with two gnd + pins accepted", setline("keypad gpio gnd 6 13 19 26 5 0 gnd") == 0);
         check("three gnd refused", setline("keypad gpio gnd gnd 13 19 26 5 0 gnd") != 0);
         setline("keypad off");

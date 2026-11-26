@@ -89,7 +89,7 @@ const char alarm_page[] =
 "function show(j,full){const s=$('state');s.className=j.state;s.textContent=j.on?(names[j.state]||j.state)+(j.state=='armed'||j.state=='exit'?(j.mode=='home'?' (home)':' (away)'):''):'ALARM OFF';\n"
 " let t=[];if(j.left!=null)t.push(j.left+' s left');if(j.cause)t.push('cause: '+j.cause);if(j.siren)t.push('SIREN');if(j.memory&&j.state!='alarm')t.push('alarm memory: '+j.memory);if(j.locked)t.push('code blocked '+j.locked+' s');\n"
 " $('sub').textContent=t.join(' - ');\n"
-" let h='';for(const z of j.zones)h+='<tr><td>'+z.pin+'</td><td>'+esc(z.name)+'</td><td>'+z.type+' '+(z.nc?'nc':'no')+'</td><td class=\"'+(z.open?'op':'ok')+'\">'+(z.open?'OPEN':'ok')+(z.skip?' (skipped)':'')+'</td></tr>';\n"
+" let h='';for(const z of j.zones)h+='<tr><td>'+z.pin+'</td><td>'+esc(z.name)+'</td><td>'+z.type+' '+(z.nc?'nc':'no')+'</td><td class=\"'+(z.open?'op':'ok')+'\">'+(z.taken?'':(z.open?'OPEN':'ok'))+(z.skip?' (skipped)':'')+(z.taken?' - PIN TAKEN by the keypad / reader, not watched':'')+'</td></tr>';\n"
 " $('zones').innerHTML=h||'<tr><td colspan=4 class=\"hint\">no zones - add them in the settings</td></tr>';\n"
 " $('log').innerHTML=j.log.map(l=>esc(l[0])+'  '+esc(l[1])).join('<br>')||'<span class=\"hint\">(no events)</span>';\n"
 " if(j.last_photo&&j.last_photo!=lastPhoto){lastPhoto=j.last_photo;photo(j.last_photo,j.last_video);}\n"

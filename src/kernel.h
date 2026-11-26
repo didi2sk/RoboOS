@@ -300,6 +300,8 @@ int  access_active(void);
 int  access_poll(char *key, char *uid, int umax);   /* core 0: 1 key, 2 card, 0 none */
 void access_core1_poll(void);                  /* core 1: Wiegand bits */
 void access_info(void);
+int  access_uses_pin(int p);                  /* 0.131 */
+int  doorbell_pin(void);                      /* 0.131: the button GPIO, -1 = off */
 int  camera_clip_start(int seconds, char *name_out);   /* core 0: alarm video, recorded from camera_poll */
 int  camera_clip_busy(void);
 extern const char camera_page[];

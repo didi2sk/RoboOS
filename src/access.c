@@ -3,6 +3,9 @@
  *
  *   keypad gpio [<r1> <r2> <r3> <r4> <c1> <c2> <c3> [c4]]   (no pins = rows 5 6 13 19, columns 12 16 20 21 =
  *        header pins 29 31 33 35 / 32 36 38 40 - the keypad's 8 wires in order, 0.129). A line may be "gnd" (0.130).
+ *   keypad shield
+ *        0.131: with the IoT shield (it uses GPIO 4 5 6 12 16 17 22-25 27): wires 1-8 -> header pins 33 35 37 40 38 26 12
+ *        and any GND (e.g. 39) = GPIO 13 19 26 21 / 20 7 18 / GND - SPI stays free for the RC522.
  *   keypad plug [reversed]
  *        0.130: the keypad's 8-pin connector pushed straight onto header pins 23-37 (the inner row, odd numbers):
  *        23 GPIO11, 25 GND, 27 GPIO0, 29 GPIO5, 31 GPIO6, 33 GPIO13, 35 GPIO19, 37 GPIO26 - wire 1 at pin 23
@@ -94,6 +97,12 @@ int access_set(int n, char **w)
         if (!strcmp(w[1], "gpio") && n == 2) {           /* 0.129: the default wiring (no shield): the end of the header */
             static const int dr[4] = { 5, 6, 13, 19 }, dc[4] = { 12, 16, 20, 21 };   /* pins 29 31 33 35 / 32 36 38 40 */
             for (int i = 0; i < 4; i++) { kr[i] = dr[i]; kc[i] = dc[i]; }
+            nkc = 4; kp_type = 1;
+            return 0;
+        }
+        if (!strcmp(w[1], "shield")) {                   /* 0.131: with the IoT shield: its 7 free GPIOs + wire 8 on any GND */
+            static const int sr[4] = { 13, 19, 26, 21 }, sc[4] = { 20, 7, 18, -1 };   /* pins 33 35 37 40 / 38 26 12 GND */
+            for (int i = 0; i < 4; i++) { kr[i] = sr[i]; kc[i] = sc[i]; }
             nkc = 4; kp_type = 1;
             return 0;
         }
@@ -358,6 +367,16 @@ void access_setup(void)
 }
 
 int access_active(void) { return kp_type || rf_type; }
+
+/* 0.131: is this GPIO taken by the keypad / card reader? (alarm zones and the doorbell must not use it) */
+int access_uses_pin(int p)
+{
+    if (p < 0) return 0;
+    if (kp_type == 1) { for (int i = 0; i < 4; i++) if (kr[i] == p) return 1; for (int i = 0; i < nkc; i++) if (kc[i] == p) return 1; }
+    if (rf_type == 1 && ((p >= 8 && p <= 11) || p == rf_rst)) return 1;
+    if (rf_type == 2 && (p == wd0 || p == wd1)) return 1;
+    return 0;
+}
 
 /* core 0: 1 = a key in *key, 2 = a card (hex) in uid, 0 = nothing */
 int access_poll(char *key, char *uid, int umax)

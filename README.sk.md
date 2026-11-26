@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.130**
+Aktuálna verzia: **0.131**
 
 ## Podporované dosky
 
@@ -533,6 +533,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.128: nová úvodná stránka (`http://<doska>/`): dlaždice stavu (čas behu, čas, CPU, sieť, adresa, alarm, API, HTTPS), karty Alarm / Camera / Photos & videos / Files / Update / JSON API a tlačidlo Reboot (token alebo admin prihlásenie; stránka sa po reštarte sama načíta).
 0.129: `alarm keypad gpio` bez čísel = fóliová klávesnica 4x4 priamo na lište (GPIO 5 6 13 19 / 12 16 20 21 = piny 29 31 33 35 / 32 36 38 40), tabuľka zapojenia v README.
 0.130: `alarm keypad plug [reversed]` = 8-pinový konektor klávesnice nasunutý priamo na piny 23-37 (bez prepájania; vodič na GND pine sa číta naopak, fungujú všetky 16 klávesy); v `alarm keypad gpio` môže byť linka `gnd`.
+0.131: `alarm keypad shield` (klávesnica so shieldom: GPIO 13 19 26 21 / 20 7 18 + GND); kolízie pinov klávesnice / čítačky so zónami alarmu alebo tlačidlom zvončeka sa ukážu (`!!`, `PIN TAKEN`) a taká zóna sa nesleduje.
 0.118: v mikroskope kláves `w` = režim kamery: 1920x1080 stred / 2592x1944 celý snímač (ostrý, ~15 snímok/s) / 1296x972 celý (rýchly); fotky až v plnom 2592x1944; `cam mode full`.
 0.117: správca súborov na webe: `/files` a `/microscope` (zobraziť, stiahnuť, zmazať fotky a videá na karte).
 
@@ -1212,6 +1213,19 @@ GPIO11 = SPI hodiny).
 |---|---|---|---|---|---|---|---|---|
 | vodič klávesnice | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
 | GPIO | 11 | GND | 0 | 5 | 6 | 13 | 19 | 26 |
+
+**So IoT shieldom (0.131, `alarm keypad shield`):** shield zaberá GPIO 4 5 6 12 16 17 22-25 27, takže klávesnica
+ide káblikmi na 7 voľných GPIO a vodič 8 na hocijaký GND pin (znova trik s GND: fungujú všetky 16 klávesy, SPI ostane
+voľné pre RC522). Piny lišty musia byť prístupné (shield s predĺženou lištou - dlhé piny):
+
+| vodič klávesnice | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|
+| GPIO | 13 | 19 | 26 | 21 | 20 | 7 | 18 | GND |
+| pin lišty | 33 | 35 | 37 | 40 | 38 | 26 | 12 | 39 (alebo iný GND) |
+
+Keď klávesnica / čítačka zaberie pin zóny alarmu (napr. `alarm keypad plug` zaberie GPIO 5 = IN4 z `alarm shield`)
+alebo tlačidla zvončeka (GPIO 6), RoboOS vypíše žltý riadok `!!`, zónu ukáže ako `PIN TAKEN` (aj na webe) a nesleduje
+ju - presuň zónu alebo použi druhé nastavenie klávesnice.
 
 Fóliová klávesnica 4x4 priamo na lištu Pi (0.129, `alarm keypad gpio` bez čísel; netreba rezistory - vnútorné
 pull-upy, naraz sa zapína jeden riadok). 8 vodičov klávesnice, pri pohľade spredu s káblom dole, zľava: 1-4 = riadky

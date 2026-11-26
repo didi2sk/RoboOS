@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.130**
+Current version: **0.131**
 
 ## Supported boards
 
@@ -537,6 +537,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.128: new home page (`http://<board>/`): status tiles (uptime, time, CPU, network, address, alarm, API, HTTPS), cards for Alarm / Camera / Photos & videos / Files / Update / JSON API, and a Reboot button (token or admin login; the page reloads when the board is back).
 0.129: `alarm keypad gpio` with no pins = a 4x4 membrane keypad straight on the header (GPIO 5 6 13 19 / 12 16 20 21 = pins 29 31 33 35 / 32 36 38 40), wiring table in the README.
 0.130: `alarm keypad plug [reversed]` = the keypad's 8-pin connector pushed straight onto header pins 23-37 (no wiring; the wire on the GND pin is read the other way round, all 16 keys work); keypad lines may be `gnd` in `alarm keypad gpio`.
+0.131: `alarm keypad shield` (keypad with the IoT shield: GPIO 13 19 26 21 / 20 7 18 + GND); pin clashes between the keypad / card reader and alarm zones or the doorbell button are shown (`!!`, `PIN TAKEN`) and such a zone is not watched.
 0.118: microscope key `w` = camera mode: 1920x1080 centre / 2592x1944 whole sensor (sharp, ~15 fps) / 1296x972 whole (fast); photos up to the full 2592x1944; `cam mode full`.
 0.117: file manager on the web: `/files` and `/microscope` (view, download, delete photos and videos on the card).
 QEMU test: `tools/qemu_btkbd_test.py` plays the controller and a keyboard.
@@ -1225,6 +1226,19 @@ Not with the IoT shield (it covers the header) and not with the RC522 (pin 23 = 
 |---|---|---|---|---|---|---|---|---|
 | keypad wire | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
 | GPIO | 11 | GND | 0 | 5 | 6 | 13 | 19 | 26 |
+
+**With the IoT shield (0.131, `alarm keypad shield`):** the shield covers GPIO 4 5 6 12 16 17 22-25 27, so the
+keypad goes on the 7 free GPIOs with jumper wires, and wire 8 on any GND pin (the GND trick again: all 16 keys work,
+SPI stays free for an RC522). The header pins must be reachable (a stacking header with long pins on the shield):
+
+| keypad wire | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 |
+|---|---|---|---|---|---|---|---|---|
+| GPIO | 13 | 19 | 26 | 21 | 20 | 7 | 18 | GND |
+| header pin | 33 | 35 | 37 | 40 | 38 | 26 | 12 | 39 (or any GND) |
+
+When a keypad / card reader takes the pin of an alarm zone (e.g. `alarm keypad plug` takes GPIO 5 = IN4 of `alarm shield`)
+or of the doorbell button (GPIO 6), RoboOS prints a yellow `!!` line, shows the zone as `PIN TAKEN` (also on the web
+page) and does not watch it - move the zone or use the other keypad setting.
 
 4x4 membrane keypad straight on the Pi header (0.129, `alarm keypad gpio` with no pins; no resistors needed -
 internal pull-ups, one row driven at a time). The keypad's 8 wires, looking at the front with the cable down, from
