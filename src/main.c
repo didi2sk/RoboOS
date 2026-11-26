@@ -2,7 +2,7 @@
 #include "usb.h"
 #include "sd.h"
 
-#define VERSION "0.122"
+#define VERSION "0.123"
 
 const char *os_version(void) { return VERSION; }
 /* found by 'update' / POST /api/update in a kernel8.img: only a RoboOS kernel may replace the running one */
@@ -66,8 +66,16 @@ void kernel_main(void)
     /* the SD card first: /SCREEN.TXT picks the resolution, and a boot picture
      * (/SPLASH.PNG|JPG|BMP) can cover the screen while USB starts; the messages
      * wait in memory behind it */
-    int sde = sd_init();
-    int fs_ok = sde == SD_OK && fat_mount() == 0;
+    /* 0.123: up to 4 tries - the owner's 3B often needed 'sd init' after a reboot (the first try failed) */
+    int sde = SD_OK, fs_ok = 0, sd_tries = 0, sd_first = 0, sd_first_mount = 0;
+    while (!fs_ok && sd_tries < 4) {
+        if (sd_tries) delay_us(150000u * (u32)sd_tries);
+        sde = sd_init();
+        int m = sde == SD_OK ? fat_mount() : -1;
+        fs_ok = sde == SD_OK && m == 0;
+        if (!sd_tries) { sd_first = sde; sd_first_mount = m; }
+        sd_tries++;
+    }
     u32 sw = 1024, sh = 768;
     if (fs_ok) screen_choice(&sw, &sh);
     int fb_ok = fb_init(sw, sh);
@@ -95,6 +103,12 @@ void kernel_main(void)
     if (fs_ok) {
         status(1);
         kprintf("SD card: %s, %u MB (%s)\n", fat_type(), (u32)(fat_volume_bytes() >> 20), sd_controller());
+        if (sd_tries > 1) {                  /* worked, but not at once: say how the first try failed */
+            con_color(COL_YELLOW);
+            kprintf("    (needed %d tries; the first: %s)\n", sd_tries,
+                    sd_first ? sd_error(sd_first) : sd_first_mount == -1 ? "card read failed" : "no FAT partition seen");
+            con_color(COL_DEFAULT);
+        }
         if (sd_sdhost_error()) {             /* the Arasan works, SDHOST did not (WiFi needs SDHOST for the card) */
             status(0);
             con_puts("SDHOST: "); sdhost_print_fail(sd_sdhost_error());
