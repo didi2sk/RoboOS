@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.127**
+Aktuálna verzia: **0.128**
 
 ## Podporované dosky
 
@@ -507,6 +507,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.125: karta sa opraví sama: keď čítanie / zápis bloku zlyhá, karta sa raz znova inicializuje a skúsi to znova, a keď nebola pri štarte pripojená, každý prístup k súboru ju skúsi pripojiť (najviac raz za 2 s). `sd` ukáže, koľkokrát sa to stalo.
 0.126: opätovná inicializácia karty už nikdy nesiahne na piny WiFi / radič Arasan (v 0.125 mohla automatická oprava karty odpojiť WiFi); pri štarte sa radič SDHOST skúša 3-krát, až potom náhradný Arasan.
 0.127: firmvér WiFi sa prečíta z karty do pamäte ešte pred zapnutím WiFi čipu (na 3B so Samsung 64 GB kartou karta zlyhávala, keď sa jej čítanie striedalo s nahrávaním firmvéru).
+0.128: nová úvodná stránka (`http://<doska>/`): dlaždice stavu (čas behu, čas, CPU, sieť, adresa, alarm, API, HTTPS), karty Alarm / Camera / Photos & videos / Files / Update / JSON API a tlačidlo Reboot (token alebo admin prihlásenie; stránka sa po reštarte sama načíta).
 0.118: v mikroskope kláves `w` = režim kamery: 1920x1080 stred / 2592x1944 celý snímač (ostrý, ~15 snímok/s) / 1296x972 celý (rýchly); fotky až v plnom 2592x1944; `cam mode full`.
 0.117: správca súborov na webe: `/files` a `/microscope` (zobraziť, stiahnuť, zmazať fotky a videá na karte).
 

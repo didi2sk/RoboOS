@@ -288,7 +288,8 @@ void alarm_mqtt_resend(void);
 int  alarm_mqtt_next(char *sub, int smax, char *pl, int pmax, int *retain);
 int  alarm_zone_info(int i, int *type, char *name, int nmax);
 extern const char alarm_page[];
-int  alarm_is_on(void);                           /* 0.121 */
+int  alarm_is_on(void);
+const char *alarm_state_text(void);             /* 0.128: for the home page */
 int  alarm_display(char l[4][40], int cols);   /* the display's alarm screen: rows */
 void display_poke(void);                       /* redraw the alarm screen now */
 /* access.c - keypads + card readers for the alarm (0.121) */
