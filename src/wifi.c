@@ -505,6 +505,45 @@ static const struct { int chipid, rev; const char *fw, *nv, *clm; } fwtab[] = {
 static int fwi = -1;
 static char missing[64];
 
+/* 0.127: the firmware files are read from the card into RAM BEFORE the WiFi chip / SDIO start (owner's 3B with a
+ * Samsung 64 GB card: SD reads failed while they alternated with the firmware upload over SDIO; 6 card recoveries
+ * during "firmware upload"). The set is guessed from the board; another chip falls back to reading the card. */
+#define FW_RAM ((u8 *)0x12000000UL)                       /* 16 MB, free (update 0x10/0x11, camera 0x13+) */
+static struct { char name[40]; u8 *p; u32 n; } fwc[3];
+static int nfwc;
+
+static void fw_preload(void)
+{
+    static const char *const set3b[3] = { "brcmfmac43430-sdio.bin", "brcmfmac43430-sdio.txt", "brcmfmac43430-sdio.clm_blob" };
+    static const char *const set3bp[3] = { "brcmfmac43455-sdio.bin", "brcmfmac43455-sdio.txt", "brcmfmac43455-sdio.clm_blob" };
+    static const char *const setz[3] = { "brcmfmac43436-sdio.bin", "brcmfmac43436-sdio.txt", "brcmfmac43436-sdio.clm_blob" };
+    int bt = board_type();
+    const char *const *set = bt == 0x0D || bt == 0x0E || bt == 0x10 ? set3bp : bt == 0x12 ? setz : set3b;
+    u8 *at = FW_RAM;
+    nfwc = 0;
+    for (int i = 0; i < 3; i++) {
+        char p[80] = "/FIRMWARE/"; int k = 10;
+        for (const char *q = set[i]; *q && k < 79; q++) p[k++] = *q;
+        p[k] = 0;
+        struct fat_file f;
+        if (!fat_mounted() || fat_open(p, &f) || f.is_dir || f.size > (4u << 20)) continue;
+        u32 got = 0;
+        while (got < f.size) { int r = fat_read(&f, at + got, f.size - got > 65536 ? 65536 : f.size - got); if (r <= 0) break; got += (u32)r; }
+        if (got != f.size) continue;                       /* a read error: that file comes from the card later */
+        int j = 0; for (; set[i][j] && j < 39; j++) fwc[nfwc].name[j] = set[i][j]; fwc[nfwc].name[j] = 0;
+        fwc[nfwc].p = at; fwc[nfwc].n = got; nfwc++;
+        at += (got + 4095) & ~4095u;
+    }
+    kprintf("WiFi: %d firmware file%s read from the card first\n", nfwc, nfwc == 1 ? "" : "s");
+}
+
+/* the file from RAM: pointer + size, 0 = not preloaded */
+static const u8 *fw_cached(const char *name, u32 *n)
+{
+    for (int i = 0; i < nfwc; i++) if (!strcmp(fwc[i].name, name)) { *n = fwc[i].n; return fwc[i].p; }
+    return 0;
+}
+
 static int fw_open(const char *name, struct fat_file *f)
 {
     char p[80] = "/FIRMWARE/";
@@ -545,33 +584,38 @@ static int fw_load(void)
     for (int i = 0; i < (int)(sizeof(fwtab) / sizeof(fwtab[0])); i++)
         if (fwtab[i].chipid == w.chipid && fwtab[i].rev == w.chiprev) fwi = i;
     if (fwi < 0) return stage("no firmware known for this chip revision");
-    if (fw_open(fwtab[fwi].fw, &f)) return stage("firmware file missing");
+    u32 cn = 0;
+    const u8 *cp = fw_cached(fwtab[fwi].fw, &cn);
+    if (!cp && fw_open(fwtab[fwi].fw, &f)) return stage("firmware file missing");
     sdiowr(Fn1, Clkcsr, ReqALP);
     u64 end = timer_us() + 100000;
     while (!(sdiord(Fn1, Clkcsr) & ALPavail)) if (timer_us() > end) return stage("ALP clock");
     u8 z[4] = { 0, 0, 0, 0 };
     sbmem(1, z, 4, w.rambase + w.socramsize - 4);
     /* the firmware, then read it back */
-    u32 off = 0;
+    u32 off = 0, coff = 0;
     int n;
-    while ((n = fat_read(&f, buf, sizeof(buf))) > 0) {
+    #define FWREAD(b, max) (cp ? (int)(coff < cn ? ({ u32 k_ = cn - coff > (u32)(max) ? (u32)(max) : cn - coff; memcpy((b), cp + coff, k_); coff += k_; k_; }) : 0) : fat_read(&f, (b), (max)))
+    while ((n = FWREAD(buf, sizeof(buf))) > 0) {
         if (off == 0) w.resetvec = (u32)buf[0] | (u32)buf[1] << 8 | (u32)buf[2] << 16 | (u32)buf[3] << 24;
         while (n & 3) buf[n++] = 0;
         if (sbmem(1, buf, n, w.rambase + off)) return stage("firmware upload");
         off += (u32)n;
     }
     u32 total = off;
-    f.pos = 0; f.cur_cluster = 0; f.cur_index = 0;
+    if (cp) coff = 0; else { f.pos = 0; f.cur_cluster = 0; f.cur_index = 0; }
     for (off = 0; off < total; off += (u32)n) {
-        n = fat_read(&f, buf, sizeof(buf));
+        n = FWREAD(buf, sizeof(buf));
         if (n <= 0) break;
         while (n & 3) buf[n++] = 0;
         if (sbmem(0, cmp, n, w.rambase + off) || memcmp_n(buf, cmp, (size_t)n)) return stage("firmware check (read back differs)");
     }
     /* NVRAM at the end of RAM, then its length token */
-    if (fw_open(fwtab[fwi].nv, &f)) return stage("NVRAM file missing");
     static u8 nv[4096] __attribute__((aligned(4)));
-    n = fat_read(&f, nv, sizeof(nv) - 8);
+    cp = fw_cached(fwtab[fwi].nv, &cn); coff = 0;
+    if (!cp && fw_open(fwtab[fwi].nv, &f)) return stage("NVRAM file missing");
+    n = FWREAD(nv, sizeof(nv) - 8);
+    #undef FWREAD
     if (n <= 0) return stage("NVRAM file empty");
     n = condense(nv, n);
     if (sbmem(1, nv, n, w.rambase + w.socramsize - (u32)n - 4)) return stage("NVRAM upload");
@@ -874,12 +918,15 @@ static int clm_load(const char *file)
 {
     struct fat_file f;
     static u8 b[12 + 1400 + 8] __attribute__((aligned(4)));
-    if (fw_open(file, &f)) return stage("CLM file missing");
+    u32 cn = 0, coff = 0;
+    const u8 *cp = fw_cached(file, &cn);                   /* 0.127: preloaded */
+    if (!cp && fw_open(file, &f)) return stage("CLM file missing");
     int flag = (1 << 12) | (1 << 1), n;
     while (!(flag & (1 << 2))) {
-        n = fat_read(&f, b + 12, 1400);
+        if (cp) { n = cn - coff > 1400 ? 1400 : (int)(cn - coff); memcpy(b + 12, cp + coff, (size_t)n); coff += (u32)n; }
+        else n = fat_read(&f, b + 12, 1400);
         if (n <= 0) break;
-        if (f.pos >= f.size) { while (n & 7) b[12 + n++] = 0; flag |= 1 << 2; }
+        if (cp ? coff >= cn : f.pos >= f.size) { while (n & 7) b[12 + n++] = 0; flag |= 1 << 2; }
         b[0] = (u8)flag; b[1] = (u8)(flag >> 8);
         b[2] = 2; b[3] = 0;                               /* type: CLM */
         b[4] = (u8)n; b[5] = (u8)(n >> 8); b[6] = 0; b[7] = 0;
@@ -937,6 +984,7 @@ static int wifi_start(void)
     memset(&w, 0, sizeof(w));
     werr = "";
     missing[0] = 0;
+    fw_preload();                                         /* 0.127: the card first, then the SDIO */
     kprintf("WiFi: SDIO on GPIO34-39...\n");
     if (sdio_init()) return -1;
     if (sb_init()) return -1;
