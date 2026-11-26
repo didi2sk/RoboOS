@@ -134,6 +134,8 @@ int main(void)
     /* GPIO keypad */
     check("keypad gpio line accepted", setline("keypad gpio 13 19 26 21 20 7 18 6") == 0);
     check("a wrong line refused (pin twice)", setline("keypad gpio 13 13 26 21 20 7 18 6") != 0);
+    { char t0[200]; check("keypad gpio (no pins) = 5 6 13 19 / 12 16 20 21", setline("keypad gpio") == 0 && access_text(t0, sizeof(t0)) && strstr(t0, "keypad gpio 5 6 13 19 12 16 20 21")); }
+    setline("keypad gpio 13 19 26 21 20 7 18 6");
     access_setup();
     press(0, 0, 50); press(0, 1, 50); press(0, 2, 50); press(1, 0, 50); press(3, 2, 50); press(0, 3, 50); press(3, 0, 50);
     check("GPIO keypad: 1 2 3 4 # A *", !strcmp(got, "1234#A*"));
