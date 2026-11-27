@@ -513,6 +513,8 @@ int eth_set_gigabit(int on)
 int eth_gigabit(void) { return fam == FAM_LAN78 && giga; }
 
 int eth_link_cached(void) { return ed && !stage[0] ? last_link : 0; }
+static void link_tick(void);
+void eth_link_poll(void) { if (ed && !stage[0]) link_tick(); }   /* 0.141: follow the cable also while WiFi carries the traffic */
 
 /* once a second: follow the link (the MAC must know speed and duplex) */
 static void link_tick(void)
