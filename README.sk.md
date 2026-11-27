@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.142**
+Aktuálna verzia: **0.143**
 
 ## Podporované dosky
 
@@ -536,6 +536,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.131: `alarm keypad shield` (klávesnica so shieldom: GPIO 13 19 26 21 / 20 7 18 + GND); kolízie pinov klávesnice / čítačky so zónami alarmu alebo tlačidlom zvončeka sa ukážu (`!!`, `PIN TAKEN`) a taká zóna sa nesleduje.
 0.132: `alarm keypad test` - naživo klávesa a úrovne liniek na kontrolu zapojenia klávesnice.
 0.133: pri zapnutom alarme bežná stavová obrazovka displeja sama ukazuje alarm (stav, kód ako hviezdičky, zostávajúce sekundy); konzola ukazuje písaný kód ako hviezdičky (`[KEYPAD] code: ****`). Zóna bez pripojeného kontaktu sa javí ako otvorená (napr. okno z `alarm shield`) - nepoužité zóny zmaž (`alarm zone del 27`).
+0.143: OPRAVA Pi 3B+: priamo s doskou na 100 Mbit (Pi 3B) hlásil `link up, 1000 Mbit` a nastavil MAC na 1000, hoci kábel bežal na 100 = nič neprešlo; 1000 sa teraz berie, len keď prijímače 1000BASE-T hlásia OK.
 0.142: Pi 3B+: LED na sieťovom konektore sa zapnú (RoboOS ich nikdy nezapínal); `net` ukáže, čo vidí PHY (linka, auto-negotiation, čo ponúka druhá strana, 1000 Mbit).
 0.141: OPRAVA: kým išla prevádzka cez WiFi, zapojený kábel sa nikdy nezistil (linka sa kontrolovala len pri čítaní rámcov z kábla) - preto kábel + WiFi (0.140) kábel nepoužil.
 0.140: OPRAVA terminálu klávesnice (0.139): každá číslica sa hneď zmazala a `#` hneď hlásil NO CONNECTION (časová značka neskoršia než čas slučky); `NO ANSWER`, keď kód prišiel, ale stav sa nevrátil. Správy medzi doskami idú teraz cez VŠETKY linky, ktoré sú hore - kábel AJ WiFi naraz, druhá kópia sa zahodí - takže jedna cesta môže vypadnúť; `net ip wifi` nechá TCP/IP (web, MQTT, čas) na WiFi aj so zapojeným káblom (/LINK.TXT), napr. ústredňa a klávesnica spojené káblom priamo doska-doska a obe aj na WiFi.
