@@ -874,7 +874,7 @@ static u64 t_wail_at;
  * # / A / B / D, then ONE message "E <code><key>" goes to the master (repeated until its ACK, 4 s) and the display
  * shows "Sending..." until the master's new state arrives (or "NO CONNECTION" + a low beep). */
 static char tcode[16];
-static int tlen, t_sending, t_ok_at_send, t_fail_at_send;
+static int tlen, t_sending, t_ok_at_send, t_fail_at_send, t_noans;
 static u64 t_key_at, t_sent_at, t_err_until;
 
 static void term_stars(void)
@@ -918,8 +918,10 @@ static void terminal_poll(void)
         int e = access_poll(&key, uid, sizeof(uid));
         if (!e) break;
         if (e == 1) term_key(key);
-        else { char m[40] = "ALM C "; scopy(m + 6, uid, (int)sizeof(m) - 6); term_send(m); t_sending = 1; t_sent_at = t; display_poke(); }
+        else { char m[40] = "ALM C "; scopy(m + 6, uid, (int)sizeof(m) - 6); term_send(m); t_sending = 1; t_sent_at = timer_us(); display_poke(); }
     }
+    t = timer_us();                                       /* 0.140: term_key stamped later than the t above - t - t_key_at underflowed
+                                                             (every digit "cleared (10 s)", # at once "NO CONNECTION") */
     if (tlen && t - t_key_at > 10000000) { tlen = 0; tcode[0] = 0; kprintf("\r[KEYPAD] cleared (10 s)  \n"); display_poke(); }
     if (t_sending) {                                      /* waiting for the master's answer */
         int ok, fail, q;
@@ -927,7 +929,9 @@ static void terminal_poll(void)
         if (rstate_at > t_sent_at && ok != t_ok_at_send) { t_sending = 0; display_poke(); }
         else if (fail != t_fail_at_send || t - t_sent_at > 6000000) {
             t_sending = 0; t_err_until = t + 4000000;
-            kprintf("\r[KEYPAD] NO CONNECTION to %s - the code was not delivered\n", remote);
+            t_noans = ok != t_ok_at_send && fail == t_fail_at_send;   /* it arrived, but no state came back */
+            if (t_noans) kprintf("\r[KEYPAD] delivered to %s, but no answer came back\n", remote);
+            else kprintf("\r[KEYPAD] NO CONNECTION to %s - the code was not delivered\n", remote);
             if (sound && !sound_is_exclusive()) sound_tone(300, 400);
             display_poke();
         }
@@ -958,7 +962,7 @@ static int term_display(char l[4][40], int cols)
     __atomic_clear(&rlk, __ATOMIC_RELEASE);
     if (!fresh) { scopy(l[0], "no master", cols + 1); scopy(l[1], remote, cols + 1); }
     if (t_sending) scopy(l[1], "Sending...", cols + 1);
-    else if (t < t_err_until) scopy(l[1], "NO CONNECTION", cols + 1);
+    else if (t < t_err_until) scopy(l[1], t_noans ? "NO ANSWER" : "NO CONNECTION", cols + 1);
     else if (tlen) { char c[24] = "Code: "; int i = 0; for (; i < tlen && i < 15; i++) c[6 + i] = '*'; c[6 + i] = 0; scopy(l[1], c, cols + 1); }
     u64 now = clock_now();
     if (now) { char tb[32]; clock_format(tb, now, 0); scopy(l[2], tb + 11, cols + 1); tb[10] = 0; scopy(l[3], tb, cols + 1); return 4; }
@@ -989,6 +993,7 @@ static void show_net(void)
         net_post_stats(&ok, &fail, &q);
         kprintf("  messages: %d delivered, %d not delivered, %d waiting%s; WiFi send refused (chip full) %d\n",
                 ok, fail, q, t_qfull ? " (queue was full)" : "", wifi_tx_refused());
+        kprintf("  links: cable %s, WiFi %s (messages go on every link that is up)\n", link_eth_up() ? "up" : "down", wifi_joined() ? "connected" : "not connected");
     }
 }
 

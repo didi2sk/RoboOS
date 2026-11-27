@@ -221,6 +221,10 @@ const u8 *link_mac(void);
 const char *link_name(void);
 int  link_send(const void *f, int len);
 int  link_recv(void *buf, int max);
+int  link_recv2(void *buf, int max, int *src);   /* 0.140: either device, src 0 cable / 1 WiFi */
+int  link_eth_up(void);
+void link_set_ip_wifi(int on);
+int  link_ip_wifi(void);
 
 /* i2c.c - BSC1 on GPIO2 (SDA) / GPIO3 (SCL), 100 kHz; 0 = ok, -1 no answer, -2 timeout */
 void i2c_init(void);

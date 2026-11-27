@@ -27,7 +27,7 @@
 #define MAX_PEERS 8
 #define INBOX     8
 
-struct peer { char name[NET_NAME_MAX]; u8 mac[6]; u8 used, has_id; u16 last_id; u64 seen; };
+struct peer { char name[NET_NAME_MAX]; u8 mac[2][6]; u8 has[2]; u8 used, has_id; u16 last_id; u64 seen; };   /* mac[0] cable, mac[1] WiFi */
 struct msg  { char from[NET_NAME_MAX]; char text[NET_TEXT_MAX + 1]; };
 
 static struct peer peers[MAX_PEERS];
@@ -85,6 +85,10 @@ static void init(void)
         struct fat_file f;
         char b[NET_NAME_MAX + 2];
         name_from_file = 1;
+        if (!fat_open("/LINK.TXT", &f) && !f.is_dir) {   /* 0.140: "ip wifi" */
+            int n = fat_read(&f, b, 7);
+            if (n >= 7 && !memcmp_n(b, "ip wifi", 7)) link_set_ip_wifi(1);
+        }
         if (!fat_open("/NAME.TXT", &f) && !f.is_dir) {
             int n = fat_read(&f, b, NET_NAME_MAX);
             if (n < 0) n = 0;
@@ -117,7 +121,17 @@ int  net_avail(void)    { io_lock(); int n = in_count; io_unlock(); return n; }
 
 static int usable(void) { return loop || link_present(); }
 
-static void tx(const u8 *f, int len)
+/* 0.140: BOTH links carry messages - a copy goes over the cable and one over WiFi when both are there, the
+ * receiver drops the second (same id); a lost path does not matter. L 0 = Ethernet, 1 = WiFi. */
+static int lk_ok(int L)
+{
+    if (loop) return L == link_wifi();
+    if (L) return wifi_joined();
+    return link_eth_up() || (link_present() && !link_wifi());
+}
+static const u8 *lk_mac(int L) { return loop ? link_mac() : L ? wifi_mac() : eth_mac(); }
+
+static void tx_on(int L, const u8 *f, int len)
 {
     if (loop) {
         int n = (lqh + 1) % 4;
@@ -125,18 +139,17 @@ static void tx(const u8 *f, int len)
         memcpy(lq[lqh], f, len);
         lq_len[lqh] = len;
         lqh = n;
-    } else {
-        link_send(f, len);
-    }
+    } else if (L) wifi_send(f, len);
+    else eth_send(f, len);
 }
 
-static int build(u8 *f, const u8 *dst, u8 kind, u16 id, const char *to, const char *text)
+static int build(u8 *f, const u8 *dst, u8 kind, u16 id, const char *to, const char *text, int L)
 {
     int len = text ? (int)strlen(text) : 0;
     if (len > NET_TEXT_MAX) len = NET_TEXT_MAX;
     memset(f, 0, HDR + 4);
     memcpy(f, dst, 6);
-    memcpy(f + 6, link_mac(), 6);
+    memcpy(f + 6, lk_mac(L), 6);
     f[12] = 0x88; f[13] = 0xB5;
     memcpy(f + 14, "ROBO", 4);
     f[18] = 1; f[19] = kind;
@@ -148,10 +161,31 @@ static int build(u8 *f, const u8 *dst, u8 kind, u16 id, const char *to, const ch
     return HDR + len < 60 ? 60 : HDR + len;
 }
 
-static void send_simple(const u8 *dst, u8 kind, u16 id, const char *to)
+static void send_simple(int L, const u8 *dst, u8 kind, u16 id, const char *to)
 {
     u8 f[64];
-    tx(f, build(f, dst, kind, id, to, 0));
+    tx_on(L, f, build(f, dst, kind, id, to, 0, L));
+}
+
+static void bcast_all(u8 kind)                            /* WHO on every link */
+{
+    for (int L = 0; L < 2; L++) if (lk_ok(L)) send_simple(L, bcast, kind, 0, 0);
+}
+
+static int has_path(const struct peer *p)
+{
+    for (int L = 0; L < 2; L++) if (lk_ok(L) && p->has[L]) return 1;
+    return 0;
+}
+
+/* a message to one peer on every link we know it on; the number of copies sent */
+static int send_peer(const struct peer *p, u16 id, const char *text)
+{
+    static u8 f[HDR + NET_TEXT_MAX + 4];
+    int n = 0;
+    for (int L = 0; L < 2; L++)
+        if (lk_ok(L) && p->has[L]) { tx_on(L, f, build(f, p->mac[L], K_MSG, id, p->name, text, L)); n++; }
+    return n;
 }
 
 static struct peer *find_peer(const char *name)
@@ -161,7 +195,7 @@ static struct peer *find_peer(const char *name)
     return 0;
 }
 
-static struct peer *note_peer(const char *name, const u8 *mac)
+static struct peer *note_peer(const char *name, const u8 *mac, int L)
 {
     struct peer *p = find_peer(name), *oldest = &peers[0];
     if (!p) {
@@ -174,7 +208,8 @@ static struct peer *note_peer(const char *name, const u8 *mac)
         memcpy(p->name, name, NET_NAME_MAX);
         p->used = 1;
     }
-    memcpy(p->mac, mac, 6);
+    memcpy(p->mac[L], mac, 6);
+    p->has[L] = 1;
     p->seen = timer_us();
     return p;
 }
@@ -187,7 +222,7 @@ static struct { char to[NET_NAME_MAX]; char text[NET_TEXT_MAX + 1]; u64 deadline
 static int oq_h, oq_n, post_ok, post_fail;
 static u64 who_at;
 
-static void input(const u8 *f, int n)
+static void input(const u8 *f, int n, int L)
 {
     char from[NET_NAME_MAX], to[NET_NAME_MAX];
     if (n >= 18 && f[12] == 0x81 && f[13] == 0x00) {     /* VLAN tag: step over it */
@@ -198,17 +233,17 @@ static void input(const u8 *f, int n)
         f = t; n -= 4;
     }
     if (n < HDR || f[12] != 0x88 || f[13] != 0xB5 || memcmp_n(f + 14, "ROBO", 4) || f[18] != 1) return;
-    if (!loop && !memcmp_n(f + 6, link_mac(), 6)) return;     /* our own broadcast */
+    if (!loop && (!memcmp_n(f + 6, wifi_mac(), 6) || !memcmp_n(f + 6, eth_mac(), 6))) return;   /* our own broadcast */
 
     memcpy(from, f + 22, NET_NAME_MAX); from[NET_NAME_MAX - 1] = 0;
     memcpy(to, f + 38, NET_NAME_MAX);   to[NET_NAME_MAX - 1] = 0;
     if (!name_ok(from)) return;
     u16 id = f[20] | (f[21] << 8);
-    struct peer *p = note_peer(from, f + 6);
+    struct peer *p = note_peer(from, f + 6, L);
 
     switch (f[19]) {
     case K_WHO:
-        send_simple(f + 6, K_HERE, 0, from);
+        send_simple(L, f + 6, K_HERE, 0, from);
         break;
     case K_ACK:
         if (id == pending_id && name_eq(to, myname)) acked = 1;
@@ -222,7 +257,7 @@ static void input(const u8 *f, int n)
         if (len > NET_TEXT_MAX || HDR + len > n) return;
         if (to[0]) {
             if (!name_eq(to, myname)) return;
-            send_simple(f + 6, K_ACK, id, from);
+            send_simple(L, f + 6, K_ACK, id, from);
             if (p->has_id && p->last_id == id) return;   /* a repeat: our ACK got lost */
         }
         p->has_id = 1; p->last_id = id;
@@ -254,18 +289,19 @@ static void pump(void)
             int n = lq_len[lqt];
             memcpy(f, lq[lqt], n);
             lqt = (lqt + 1) % 4;
-            input(f, n);
+            input(f, n, link_wifi());
         }
         return;
     }
     if (!link_present()) return;
     for (int i = 0; i < 8; i++) {
-        int n = link_recv(f, sizeof(f));
+        int src = 0;
+        int n = link_recv2(f, sizeof(f), &src);
         if (n <= 0) break;
         int robo = n >= 14 && ((f[12] == 0x88 && f[13] == 0xB5) ||
                    (n >= 18 && f[12] == 0x81 && f[13] == 0x00 && f[16] == 0x88 && f[17] == 0xB5));
-        if (robo) input(f, n);
-        else ipstack_input(f, n);                             /* everything else: TCP/IP */
+        if (robo) input(f, n, src);
+        else if (src == link_wifi()) ipstack_input(f, n);     /* TCP/IP only from the link lwIP uses */
     }
 }
 
@@ -308,14 +344,13 @@ static void post_step(void)
         return;
     }
     if (now < e->next) return;
-    if (!p) {
-        if (now >= who_at) { send_simple(bcast, K_WHO, 0, 0); who_at = now + 700000; }
+    if (!p || !has_path(p)) {
+        if (now >= who_at) { bcast_all(K_WHO); who_at = now + 700000; }
         e->next = now + 50000;
         return;
     }
-    static u8 f[HDR + NET_TEXT_MAX + 4];
     if (!e->id) e->id = ++next_id;
-    tx(f, build(f, p->mac, K_MSG, e->id, p->name, e->text));
+    send_peer(p, e->id, e->text);
     e->tries++;
     e->next = now + 300000;
     if (loop) pump();
@@ -406,21 +441,20 @@ static int send_locked(const char *to, const char *text)
     init();
     u16 id = ++next_id;
     if (name_eq(to, "all") || !strcmp(to, "*")) {
-        tx(f, build(f, bcast, K_MSG, id, 0, text));
+        for (int L = 0; L < 2; L++) if (lk_ok(L)) tx_on(L, f, build(f, bcast, K_MSG, id, 0, text, L));
         if (loop) pump();
         return 1;
     }
     struct peer *p = find_peer(to);
-    if (!p) {                                            /* not seen yet: ask around */
-        send_simple(bcast, K_WHO, 0, 0);
+    if (!p || !has_path(p)) {                            /* not seen yet: ask around */
+        bcast_all(K_WHO);
         wait_ms(500, 0);
-        if (!(p = find_peer(to))) return -2;
+        if (!(p = find_peer(to)) || !has_path(p)) return -2;
     }
-    int len = build(f, p->mac, K_MSG, id, p->name, text);
     for (int attempt = 0; attempt < 3; attempt++) {
         acked = 0;
         pending_id = id;
-        tx(f, len);
+        send_peer(p, id, text);
         wait_ms(300, &acked);
         if (acked) return 0;
     }
@@ -441,16 +475,19 @@ static void who_locked(void)
 {
     if (!usable()) { kprintf("%s\n", net_error(-1)); return; }
     init();
-    send_simple(bcast, K_WHO, 0, 0);
+    bcast_all(K_WHO);
     wait_ms(1000, 0);
     u64 now = timer_us();
     int n = 0;
     for (int i = 0; i < MAX_PEERS; i++) {
         struct peer *p = &peers[i];
         if (!p->used) continue;
-        const u8 *m = p->mac;
-        kprintf("  %-16s %02x:%02x:%02x:%02x:%02x:%02x  seen %u s ago\n", p->name,
-                m[0], m[1], m[2], m[3], m[4], m[5], (u32)((now - p->seen) / 1000000));
+        kprintf("  %-16s seen %u s ago", p->name, (u32)((now - p->seen) / 1000000));
+        for (int L = 0; L < 2; L++) if (p->has[L]) {
+            const u8 *m = p->mac[L];
+            kprintf("  %s %02x:%02x:%02x:%02x:%02x:%02x", L ? "WiFi" : "cable", m[0], m[1], m[2], m[3], m[4], m[5]);
+        }
+        kprintf("\n");
         n++;
     }
     if (!n) kprintf("  nobody answered\n");

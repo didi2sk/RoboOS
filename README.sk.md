@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.139**
+Aktuálna verzia: **0.140**
 
 ## Podporované dosky
 
@@ -536,6 +536,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.131: `alarm keypad shield` (klávesnica so shieldom: GPIO 13 19 26 21 / 20 7 18 + GND); kolízie pinov klávesnice / čítačky so zónami alarmu alebo tlačidlom zvončeka sa ukážu (`!!`, `PIN TAKEN`) a taká zóna sa nesleduje.
 0.132: `alarm keypad test` - naživo klávesa a úrovne liniek na kontrolu zapojenia klávesnice.
 0.133: pri zapnutom alarme bežná stavová obrazovka displeja sama ukazuje alarm (stav, kód ako hviezdičky, zostávajúce sekundy); konzola ukazuje písaný kód ako hviezdičky (`[KEYPAD] code: ****`). Zóna bez pripojeného kontaktu sa javí ako otvorená (napr. okno z `alarm shield`) - nepoužité zóny zmaž (`alarm zone del 27`).
+0.140: OPRAVA terminálu klávesnice (0.139): každá číslica sa hneď zmazala a `#` hneď hlásil NO CONNECTION (časová značka neskoršia než čas slučky); `NO ANSWER`, keď kód prišiel, ale stav sa nevrátil. Správy medzi doskami idú teraz cez VŠETKY linky, ktoré sú hore - kábel AJ WiFi naraz, druhá kópia sa zahodí - takže jedna cesta môže vypadnúť; `net ip wifi` nechá TCP/IP (web, MQTT, čas) na WiFi aj so zapojeným káblom (/LINK.TXT), napr. ústredňa a klávesnica spojené káblom priamo doska-doska a obe aj na WiFi.
 0.139: terminál klávesnice cez WiFi: kód sa drží na termináli a pošle sa CELÝ po # / A / B / D (jedna správa namiesto jednej za každú klávesu), displej ukazuje `Sending...`, kým ústredňa neodpovie, alebo `NO CONNECTION` + hlboké pípnutie; správy idú z frontu na pozadí (opakujú sa až do potvrdenia), takže klávesnica nikdy neprestane čítať klávesy; `alarm` ukazuje doručené / nedoručené správy a odoslania, ktoré WiFi čip odmietol.
 0.138: webové stránky (/update, /alarm, Reboot na úvodnej stránke) ukážu, PREČO doska odmietla (zlý token, API vypnuté, zapnuté HTTPS, veľa pokusov), nielen znova pýtajú token.
 0.137: terminál klávesnice reaguje po `#` hneď: ústredňa pošle nový stav ešte pred hlasovou hláškou (WAV blokuje sekundy) a posiela ho aj počas nej; neodpovedajúci terminál sa naozaj na 10 s nechá na pokoji.
@@ -1304,7 +1305,8 @@ odchodového / príchodového času a pri poplachu hrá tón sirény. Na ústred
 objaví v `alarm` (`terminal dvere, seen 3 s ago`). Na termináli idú do ústredne aj `alarm arm|home|disarm <kód>`
 a `alarm key 1234#`. S tokenom má každá správa HMAC-SHA256 a text je šifrovaný, skopírovaný (zopakovaný) rámec sa
 odmietne; bez tokenu ide kód po LAN čitateľne (`alarm` varuje). `no master` na displeji terminálu = od ústredne
-15 s nič neprišlo. Na webovej stránke `/alarm` terminálu (0.135): napíš `remote <meno ústredne>` do poľa s riadkami
+15 s nič neprišlo.
+**Kábel + WiFi (0.140)**: správy idú cez každú linku, ktorá je hore, takže dosky môžu byť spojené aj káblom priamo jedna s druhou (bez routera; auto-MDIX, hocijaký patch kábel) a zároveň obe na WiFi; na oboch daj `net ip wifi`, aby web, MQTT a čas ostali na WiFi. Keď jedna cesta vypadne, klávesnicu nesie druhá. Na webovej stránke `/alarm` terminálu (0.135): napíš `remote <meno ústredne>` do poľa s riadkami
 klávesnice / kariet a daj Save (samotné meno dosky sa nastavuje príkazom `net name`).
 
 ### IoT shield (návrh dosky)
