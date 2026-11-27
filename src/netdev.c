@@ -43,6 +43,8 @@ int link_recv(void *buf, int max)
 int link_recv2(void *buf, int max, int *src)
 {
     static int turn;
+    if (eth_ok()) eth_link_poll();                        /* 0.141: before, the link was only looked at while frames were read
+                                                             from the cable - on WiFi a cable plugged in was never noticed */
     int w = link_wifi();
     turn ^= 1;
     for (int k = 0; k < 2; k++) {
