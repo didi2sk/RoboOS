@@ -667,15 +667,15 @@ static void crypt(const char *k, const char *seqh, u8 *d, int n)
     }
 }
 static u64 seq_out;
-static struct { char name[NET_NAME_MAX]; u64 seq; } peers[8];
+static struct { char name[NET_NAME_MAX]; u64 seq; int stream; } peers[8];
 static int bad_msgs;
 
 /* text "K 1" -> what goes on the wire; 0 = ok */
-static int alm_send(const char *to, const char *text)
+static int alm_send(const char *to, const char *text, int post_ms)
 {
     const char *k = api_token();
     char m[NET_TEXT_MAX + 1];
-    if (!k[0]) { scopy(m, "ALM ", 5); scopy(m + 4, text, (int)sizeof(m) - 4); return net_send(to, m); }
+    if (!k[0]) { scopy(m, "ALM ", 5); scopy(m + 4, text, (int)sizeof(m) - 4); return post_ms ? net_post(to, m, post_ms) : net_send(to, m); }
     u64 now = clock_now() << 20;
     seq_out = now > seq_out ? now : seq_out + 1;
     char sh[17]; for (int i = 0; i < 16; i++) sh[i] = hx[(seq_out >> (60 - 4 * i)) & 15]; sh[16] = 0;
@@ -698,7 +698,7 @@ static int alm_send(const char *to, const char *text)
     m[o++] = ' ';
     for (int i = 0; i < 8; i++) { m[o++] = hx[mac[i] >> 4]; m[o++] = hx[mac[i] & 15]; }
     m[o] = 0;
-    return net_send(to, m);
+    return post_ms ? net_post(to, m, post_ms) : net_send(to, m);
 }
 
 static int name_same(const char *a, const char *b);
@@ -729,19 +729,23 @@ static int alm_open(const char *from, const char *text, char *out, int omax)
     if (diff) { bad_msgs++; return -1; }
     u8 sb[8]; if (unhex(sh, sb, 8)) { bad_msgs++; return -1; }
     u64 seq = 0; for (int i = 0; i < 8; i++) seq = seq << 8 | sb[i];
+    u8 d[80]; int n = dl / 2;
+    if (n < 1 || n > 80 || n + 5 > omax || unhex(dh, d, n)) { bad_msgs++; return -1; }
+    crypt(k, sh, d, n);
+    /* replay check per sender AND per stream (state lines vs keys / hellos): queued keys may still be on their way
+     * while a newer state line goes out - and in a one-board test both streams come from the same name */
+    int stream = d[0] == 'S';
     int pi = -1, fr = -1;
-    for (int i = 0; i < 8; i++) { if (peers[i].name[0] && name_same(peers[i].name, from)) pi = i; if (!peers[i].name[0] && fr < 0) fr = i; }
+    for (int i = 0; i < 8; i++) { if (peers[i].name[0] && peers[i].stream == stream && name_same(peers[i].name, from)) pi = i; if (!peers[i].name[0] && fr < 0) fr = i; }
     if (pi >= 0) { if (seq <= peers[pi].seq) { bad_msgs++; return -1; } }
     else {
         u64 now = clock_now(), st = seq >> 20;
         if (now && st && (st + 300 < now || st > now + 300)) { bad_msgs++; return -1; }
         pi = fr >= 0 ? fr : (int)(seq & 7);
         scopy(peers[pi].name, from, sizeof(peers[pi].name));
+        peers[pi].stream = stream;
     }
     peers[pi].seq = seq;
-    u8 d[80]; int n = dl / 2;
-    if (n > 80 || n + 5 > omax || unhex(dh, d, n)) { bad_msgs++; return -1; }
-    crypt(k, sh, d, n);
     scopy(out, "ALM ", omax);
     for (int i = 0; i < n; i++) out[4 + i] = d[i] >= 32 && d[i] < 127 ? (char)d[i] : '.';
     out[4 + n] = 0;
@@ -772,7 +776,7 @@ void alarm_net_in(const char *from, const char *wire, int wlen)
         display_poke();
         return;
     }
-    if (text[4] != 'K' && text[4] != 'C' && text[4] != 'H') return;
+    if (text[4] != 'K' && text[4] != 'C' && text[4] != 'H' && text[4] != 'E') return;
     int h = rqh;
     if ((h + 1) % 8 == rqt) return;
     scopy(rq[h].from, from, sizeof(rq[h].from));
@@ -803,6 +807,12 @@ static void master_net(void)
         terms[k].seen = t; terms[k].fails = 0;
         char who[48] = "keypad "; scopy(who + 7, from, (int)sizeof(who) - 7);
         if (text[4] == 'K' && text[6]) { key_remote = 1; key_in(text[6], who); key_remote = 0; }
+        else if (text[4] == 'E' && text[6]) {             /* 0.139: a whole entry from a terminal: code + # / A / B / D */
+            klen = 0; kbuf[0] = 0;
+            key_remote = 1;
+            for (const char *c = text + 6; *c; c++) key_in(*c, who);
+            key_remote = 0;
+        }
         else if (text[4] == 'C' && text[6]) card_in(text + 6, from);
         terms[k].last[0] = 0;                             /* answer at once */
         got = 1;
@@ -828,19 +838,30 @@ static void master_send(int force)
         if (t - terms[i].seen > 120000000ULL) { kprintf("\n[ALARM] terminal %s gone\n", terms[i].name); terms[i].name[0] = 0; continue; }
         if (t < terms[i].quiet) continue;
         if (!strcmp(terms[i].last, m) && t - terms[i].sent_at < 5000000) continue;
-        int r = alm_send(terms[i].name, m + 4);
+        int r = alm_send(terms[i].name, m + 4, 0);
         terms[i].sent_at = t;
         if (r == 0) { scopy(terms[i].last, m, sizeof(terms[i].last)); terms[i].fails = 0; }
         else if (++terms[i].fails >= 3) { terms[i].fails = 0; terms[i].quiet = t + 10000000; }   /* not answering: quiet for 10 s */
     }
 }
 
+/* 0.139: queued (net_post), the keypad is never blocked; whether the master answers comes from the counters */
+static int t_ok0, t_fail0, t_qfull;
 static void term_send(const char *txt)
 {
-    int r = alm_send(remote, txt + 4);
-    if ((r == 0) != (master_ok == 1)) {
-        master_ok = r == 0;
-        kprintf("\n[ALARM] master %s %s\n", remote, r == 0 ? "answers" : "does NOT answer");
+    if (alm_send(remote, txt + 4, txt[4] == 'H' ? 2000 : 4000)) t_qfull++;
+}
+static void term_check(void)
+{
+    int ok, fail, q;
+    net_post_stats(&ok, &fail, &q);
+    int r = -1;
+    if (fail != t_fail0) r = 0;
+    if (ok != t_ok0) r = 1;                               /* the newest news wins */
+    t_ok0 = ok; t_fail0 = fail;
+    if (r >= 0 && r != master_ok) {
+        master_ok = r;
+        kprintf("\n[ALARM] master %s %s\n", remote, r ? "answers" : "does NOT answer");
         display_poke();
     }
 }
@@ -849,18 +870,67 @@ static int t_left = -1, t_wail;
 static u64 t_wail_at;
 
 /* terminal, core 0 */
+/* 0.139 (owner: the keypad keeps the code and sends it whole, then waits for the answer): digits stay HERE until
+ * # / A / B / D, then ONE message "E <code><key>" goes to the master (repeated until its ACK, 4 s) and the display
+ * shows "Sending..." until the master's new state arrives (or "NO CONNECTION" + a low beep). */
+static char tcode[16];
+static int tlen, t_sending, t_ok_at_send, t_fail_at_send;
+static u64 t_key_at, t_sent_at, t_err_until;
+
+static void term_stars(void)
+{
+    char st[20]; int i = 0;
+    for (; i < tlen && i < 15; i++) st[i] = '*';
+    st[i] = 0;
+    kprintf("\r[KEYPAD] code: %s   ", st);
+    display_poke();
+}
+
+static void term_key(char k)
+{
+    u64 t = timer_us();
+    if (sound && !sound_is_exclusive()) sound_tone(1800, 40);
+    t_key_at = t;
+    if (k >= '0' && k <= '9') { if (tlen < 15) tcode[tlen++] = k; tcode[tlen] = 0; term_stars(); return; }
+    if (k == '*' || k == 'C') { tlen = 0; tcode[0] = 0; kprintf("\r[KEYPAD] cleared        \n"); display_poke(); return; }
+    if (k != '#' && k != 'A' && k != 'B' && k != 'D') return;
+    char m[40] = "ALM E ";
+    int n = 6;
+    for (int i = 0; i < tlen; i++) m[n++] = tcode[i];
+    m[n++] = k; m[n] = 0;
+    tlen = 0; tcode[0] = 0;
+    int ok, fail, q;
+    net_post_stats(&ok, &fail, &q);
+    t_ok_at_send = ok; t_fail_at_send = fail;
+    term_send(m);
+    t_sending = 1; t_sent_at = t;
+    kprintf("\r[KEYPAD] sending to %s...\n", remote);
+    display_poke();
+}
+
 static void terminal_poll(void)
 {
     u64 t = timer_us();
+    term_check();
     if (t >= hello_at) { hello_at = t + 20000000; term_send("ALM H"); }
     char key, uid[24];
     for (int i = 0; i < 4; i++) {
         int e = access_poll(&key, uid, sizeof(uid));
         if (!e) break;
-        char m[40] = "ALM K x";
-        if (e == 1) { if (sound && !sound_is_exclusive()) sound_tone(1800, 40); m[6] = key; }
-        else { scopy(m, "ALM C ", sizeof(m)); scopy(m + 6, uid, (int)sizeof(m) - 6); }
-        term_send(m);
+        if (e == 1) term_key(key);
+        else { char m[40] = "ALM C "; scopy(m + 6, uid, (int)sizeof(m) - 6); term_send(m); t_sending = 1; t_sent_at = t; display_poke(); }
+    }
+    if (tlen && t - t_key_at > 10000000) { tlen = 0; tcode[0] = 0; kprintf("\r[KEYPAD] cleared (10 s)  \n"); display_poke(); }
+    if (t_sending) {                                      /* waiting for the master's answer */
+        int ok, fail, q;
+        net_post_stats(&ok, &fail, &q);
+        if (rstate_at > t_sent_at && ok != t_ok_at_send) { t_sending = 0; display_poke(); }
+        else if (fail != t_fail_at_send || t - t_sent_at > 6000000) {
+            t_sending = 0; t_err_until = t + 4000000;
+            kprintf("\r[KEYPAD] NO CONNECTION to %s - the code was not delivered\n", remote);
+            if (sound && !sound_is_exclusive()) sound_tone(300, 400);
+            display_poke();
+        }
     }
     /* sounds from the master's state: beeps in the exit / entry time, the siren tone in an alarm */
     char l0[40];
@@ -887,6 +957,9 @@ static int term_display(char l[4][40], int cols)
     if (fresh) { scopy(l[0], rlines[0], cols + 1); scopy(l[1], rlines[1], cols + 1); }
     __atomic_clear(&rlk, __ATOMIC_RELEASE);
     if (!fresh) { scopy(l[0], "no master", cols + 1); scopy(l[1], remote, cols + 1); }
+    if (t_sending) scopy(l[1], "Sending...", cols + 1);
+    else if (t < t_err_until) scopy(l[1], "NO CONNECTION", cols + 1);
+    else if (tlen) { char c[24] = "Code: "; int i = 0; for (; i < tlen && i < 15; i++) c[6 + i] = '*'; c[6 + i] = 0; scopy(l[1], c, cols + 1); }
     u64 now = clock_now();
     if (now) { char tb[32]; clock_format(tb, now, 0); scopy(l[2], tb + 11, cols + 1); tb[10] = 0; scopy(l[3], tb, cols + 1); return 4; }
     return 2;
@@ -911,6 +984,12 @@ static void show_net(void)
     }
     if (!api_token()[0] && (remote[0] || terms[0].name[0] || terms[1].name[0])) kprintf("  terminal messages: NOT protected - set the same 'http token' on the master and the terminals\n");
     if (bad_msgs) kprintf("  refused terminal messages (wrong token / copied / plain): %d\n", bad_msgs);
+    if (remote[0] || terms[0].name[0] || terms[1].name[0]) {
+        int ok, fail, q;
+        net_post_stats(&ok, &fail, &q);
+        kprintf("  messages: %d delivered, %d not delivered, %d waiting%s; WiFi send refused (chip full) %d\n",
+                ok, fail, q, t_qfull ? " (queue was full)" : "", wifi_tx_refused());
+    }
 }
 
 /* ---------------- the loop (core 0) ---------------- */
@@ -1401,8 +1480,8 @@ void alarm_cmd(int argc, char **argv)
         for (int i = 2; i < argc; i++) for (const char *k = argv[i]; *k && n < 36; k++) ks[n++] = *k >= 'a' && *k <= 'd' ? (char)(*k - 32) : *k;
         if (!kf) { if (!n) { kprintf("alarm %s <code>\n", a); return; } ks[n++] = a[0] == 'a' ? 'A' : a[0] == 'h' ? 'B' : 'D'; }
         int bad = 0;
-        for (int i = 0; i < n; i++) { char m[8] = "ALM K x"; m[6] = ks[i]; if (alm_send(remote, m + 4)) bad = 1; }
-        kprintf(bad ? "master %s does not answer\n" : "sent to %s\n", remote);
+        for (int i = 0; i < n; i++) term_key(ks[i]);      /* 0.139: the same path as the keypad */
+        kprintf(bad ? "the send queue is full (master %s not answering?)\n" : "queued for %s\n", remote);
         return;
     }
     if (!strcmp(a, "arm") || !strcmp(a, "home") || !strcmp(a, "disarm") || !strcmp(a, "panic")) {
