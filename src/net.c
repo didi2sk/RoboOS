@@ -179,6 +179,14 @@ static struct peer *note_peer(const char *name, const u8 *mac)
     return p;
 }
 
+/* 0.139: posted messages (net_post): the caller does not wait. net_poll (core 1) sends the oldest one, repeats it
+ * every 300 ms until its ACK comes, gives up at its deadline (then the peer's address is forgotten, so the next one
+ * asks WHO again). One at a time, in order. */
+#define OQ 16
+static struct { char to[NET_NAME_MAX]; char text[NET_TEXT_MAX + 1]; u64 deadline, next; u16 id; u8 tries; } oq[OQ];
+static int oq_h, oq_n, post_ok, post_fail;
+static u64 who_at;
+
 static void input(const u8 *f, int n)
 {
     char from[NET_NAME_MAX], to[NET_NAME_MAX];
@@ -204,6 +212,10 @@ static void input(const u8 *f, int n)
         break;
     case K_ACK:
         if (id == pending_id && name_eq(to, myname)) acked = 1;
+        if (oq_n && oq[oq_h].id == id && name_eq(to, myname) && name_eq(oq[oq_h].to, from)) {   /* 0.139: a posted message arrived */
+            post_ok++;
+            oq_h = (oq_h + 1) % OQ; oq_n--;
+        }
         break;
     case K_MSG: {
         int len = f[54] | (f[55] << 8);
@@ -283,6 +295,53 @@ static int recv_locked(char *from, char *text, int max)
     return n;
 }
 
+static void post_step(void)
+{
+    if (!oq_n) return;
+    u64 now = timer_us();
+    typeof(&oq[0]) e = &oq[oq_h];
+    struct peer *p = find_peer(e->to);
+    if (now > e->deadline) {
+        post_fail++;
+        if (p && e->tries >= 3) p->used = 0;              /* maybe it has another address now (cable / WiFi) */
+        oq_h = (oq_h + 1) % OQ; oq_n--;
+        return;
+    }
+    if (now < e->next) return;
+    if (!p) {
+        if (now >= who_at) { send_simple(bcast, K_WHO, 0, 0); who_at = now + 700000; }
+        e->next = now + 50000;
+        return;
+    }
+    static u8 f[HDR + NET_TEXT_MAX + 4];
+    if (!e->id) e->id = ++next_id;
+    tx(f, build(f, p->mac, K_MSG, e->id, p->name, e->text));
+    e->tries++;
+    e->next = now + 300000;
+    if (loop) pump();
+}
+
+int net_post(const char *to, const char *text, int give_ms)
+{
+    io_lock();
+    int r = -1;
+    if (usable() && oq_n < OQ && !name_eq(to, "all")) {
+        init();
+        typeof(&oq[0]) e = &oq[(oq_h + oq_n) % OQ];
+        memset(e, 0, sizeof(*e));
+        int i = 0;
+        for (; to[i] && i < NET_NAME_MAX - 1; i++) e->to[i] = to[i];
+        for (i = 0; text[i] && i < NET_TEXT_MAX; i++) e->text[i] = text[i];
+        e->deadline = timer_us() + (u64)give_ms * 1000;
+        oq_n++;
+        r = 0;
+    }
+    io_unlock();
+    return r;
+}
+
+void net_post_stats(int *ok, int *fail, int *queued) { *ok = post_ok; *fail = post_fail; *queued = oq_n; }
+
 /* called from the console idle loop */
 void net_poll(void)
 {
@@ -293,6 +352,7 @@ void net_poll(void)
     if (!usable()) return;
     init();
     pump();
+    post_step();
     ip_poll(notify);
     if (notify) {
         char from[NET_NAME_MAX], text[NET_TEXT_MAX + 1];
@@ -364,6 +424,7 @@ static int send_locked(const char *to, const char *text)
         wait_ms(300, &acked);
         if (acked) return 0;
     }
+    p->used = 0;                                          /* 0.139: ask WHO again next time (another address?) */
     return -3;
 }
 

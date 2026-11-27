@@ -1263,11 +1263,14 @@ int wifi_send(const void *f, int len)
     return send_frame(f, len);
 }
 
+static int tx_refused;
+int wifi_tx_refused(void) { return tx_refused; }
+
 static int send_frame(const void *f, int len)
 {
     static u8 tb[1600] __attribute__((aligned(4)));
     if (!w.up || len > 1514) return -1;
-    if (w.txseq == w.txwindow || (w.fcmask & (1 << 2))) return -2;   /* the firmware has no room now */
+    if (w.txseq == w.txwindow || (w.fcmask & (1 << 2))) { tx_refused++; return -2; }   /* the firmware has no room now */
     int total = Sdpcmsz + 4 + len;
     memset(tb, 0, Sdpcmsz + 4);
     tb[0] = (u8)total; tb[1] = (u8)(total >> 8); tb[2] = (u8)~total; tb[3] = (u8)(~total >> 8);

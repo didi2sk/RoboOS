@@ -182,6 +182,9 @@ void net_notify(int on);                /* print incoming messages right away (s
 const char *net_name(void);
 int  net_set_name(const char *name);    /* 0 = saved to /NAME.TXT, 1 = set only, -1 = bad name */
 int  net_send(const char *to, const char *text);   /* 0 delivered, 1 sent to all, <0 error */
+int  net_post(const char *to, const char *text, int give_ms);   /* 0.139: queued, no waiting; -1 = full */
+void net_post_stats(int *ok, int *fail, int *queued);
+int  wifi_tx_refused(void);                   /* 0.139 */
 const char *net_error(int e);
 int  net_recv(char *from, char *text, int max);    /* text length, -1 = no message */
 int  net_avail(void);

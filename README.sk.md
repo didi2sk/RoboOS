@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.138**
+Aktuálna verzia: **0.139**
 
 ## Podporované dosky
 
@@ -536,6 +536,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.131: `alarm keypad shield` (klávesnica so shieldom: GPIO 13 19 26 21 / 20 7 18 + GND); kolízie pinov klávesnice / čítačky so zónami alarmu alebo tlačidlom zvončeka sa ukážu (`!!`, `PIN TAKEN`) a taká zóna sa nesleduje.
 0.132: `alarm keypad test` - naživo klávesa a úrovne liniek na kontrolu zapojenia klávesnice.
 0.133: pri zapnutom alarme bežná stavová obrazovka displeja sama ukazuje alarm (stav, kód ako hviezdičky, zostávajúce sekundy); konzola ukazuje písaný kód ako hviezdičky (`[KEYPAD] code: ****`). Zóna bez pripojeného kontaktu sa javí ako otvorená (napr. okno z `alarm shield`) - nepoužité zóny zmaž (`alarm zone del 27`).
+0.139: terminál klávesnice cez WiFi: kód sa drží na termináli a pošle sa CELÝ po # / A / B / D (jedna správa namiesto jednej za každú klávesu), displej ukazuje `Sending...`, kým ústredňa neodpovie, alebo `NO CONNECTION` + hlboké pípnutie; správy idú z frontu na pozadí (opakujú sa až do potvrdenia), takže klávesnica nikdy neprestane čítať klávesy; `alarm` ukazuje doručené / nedoručené správy a odoslania, ktoré WiFi čip odmietol.
 0.138: webové stránky (/update, /alarm, Reboot na úvodnej stránke) ukážu, PREČO doska odmietla (zlý token, API vypnuté, zapnuté HTTPS, veľa pokusov), nielen znova pýtajú token.
 0.137: terminál klávesnice reaguje po `#` hneď: ústredňa pošle nový stav ešte pred hlasovou hláškou (WAV blokuje sekundy) a posiela ho aj počas nej; neodpovedajúci terminál sa naozaj na 10 s nechá na pokoji.
 0.136: pípak pre dosku s klávesnicou: `sound out gpio` + piezo / malý reproduktor na GPIO18 (pin 12) a GND; keď je GPIO19 linka klávesnice alebo Waveshare HATu, použije sa len GPIO18.
