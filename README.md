@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.139**
+Current version: **0.140**
 
 ## Supported boards
 
@@ -540,6 +540,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.131: `alarm keypad shield` (keypad with the IoT shield: GPIO 13 19 26 21 / 20 7 18 + GND); pin clashes between the keypad / card reader and alarm zones or the doorbell button are shown (`!!`, `PIN TAKEN`) and such a zone is not watched.
 0.132: `alarm keypad test` - live key / line levels for checking the keypad wiring.
 0.133: while the alarm is on, the display's normal status screen shows the alarm (state, code as stars, seconds left) by itself; the console shows the typed code as stars (`[KEYPAD] code: ****`). A zone with nothing connected shows as open (e.g. the window of `alarm shield`) - remove unused zones (`alarm zone del 27`).
+0.140: FIX keypad terminal (0.139): every digit was cleared at once and `#` said NO CONNECTION at once (a time stamp taken later than the loop's own clock); `NO ANSWER` when the code arrived but no state came back. Messages between boards now go over EVERY link that is up - cable AND WiFi at once, the second copy is dropped - so one path may fail; `net ip wifi` keeps TCP/IP (web, MQTT, time) on WiFi even with a cable in (/LINK.TXT), e.g. master and keypad joined by a cable straight from board to board plus both on WiFi.
 0.139: keypad terminal over WiFi: the code is kept on the terminal and sent WHOLE after # / A / B / D (one message instead of one per key), the display shows `Sending...` until the master answers, or `NO CONNECTION` + a low beep; messages go out from a queue in the background (repeated until acknowledged), so the keypad never stops reading keys; `alarm` shows delivered / not delivered messages and WiFi sends the chip refused.
 0.138: the web pages (/update, /alarm, home page Reboot) show WHY the board refused (wrong token, API off, HTTPS is on, too many tries) instead of only asking for the token again.
 0.137: the keypad terminal answers at once after `#`: the master sends its new state before a voice message plays (a WAV blocks for seconds) and keeps sending during it; a terminal that does not answer is really left alone for 10 s.
@@ -1317,7 +1318,8 @@ in the exit / entry time and sounds the siren tone in an alarm. Nothing to set o
 `alarm` by itself (`terminal door, seen 3 s ago`). On the terminal `alarm arm|home|disarm <code>` and
 `alarm key 1234#` also go to the master. With the token every message carries an HMAC-SHA256 and the text is
 encrypted, a copied (replayed) frame is refused; without a token the code travels in clear on the LAN (`alarm` warns).
-`no master` on the terminal's display = nothing from the master for 15 s. On the web page `/alarm` of the terminal
+`no master` on the terminal's display = nothing from the master for 15 s.
+**Cable + WiFi (0.140)**: messages go over every link that is up, so the boards can also be joined by a cable straight from one to the other (no router; auto-MDIX, any patch cable) while both stay on WiFi; run `net ip wifi` on both so the web, MQTT and time keep using WiFi. If one path fails, the other still carries the keypad. On the web page `/alarm` of the terminal
 (0.135): write `remote <master name>` into the keypad / card lines box and Save (the board name itself is set with `net name`).
 
 ### IoT shield (hardware design)

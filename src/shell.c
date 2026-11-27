@@ -358,7 +358,20 @@ static void net_test(u32 secs)
 
 static void cmd_net(int argc, char **argv)
 {
-    static const char *usage = "net [who | send <name|all> <text> | name [new] | speed 100|1000 | loop on|off | test [s]]";
+    static const char *usage = "net [who | send <name|all> <text> | name [new] | ip wifi|auto | speed 100|1000 | loop on|off | test [s]]";
+    if (argc > 1 && !strcmp(argv[1], "ip")) {             /* 0.140: TCP/IP on WiFi, the cable only for RoboOS messages */
+        if (argc > 2) {
+            int w = !strcmp(argv[2], "wifi");
+            if (!w && strcmp(argv[2], "auto")) { need(usage); return; }
+            io_lock(); link_set_ip_wifi(w); io_unlock();
+            const char *t = w ? "ip wifi\r\n" : "ip auto\r\n";
+            if (!fat_mounted() || fat_write_file("/LINK.TXT", t, (u32)strlen(t))) kprintf("(not saved: no SD card or write error)\n");
+        }
+        kprintf("TCP/IP (web, MQTT, time): %s\n", link_ip_wifi() ? "on WiFi while it is connected, even with a cable in" : "on the cable when it is in, else WiFi");
+        kprintf("RoboOS messages (alarm keypads): on every link that is up (cable %s, WiFi %s)\n",
+                link_eth_up() ? "up" : "down", wifi_joined() ? "connected" : "not connected");
+        return;
+    }
     if (argc > 2 && !strcmp(argv[1], "speed")) {
         if (eth_set_gigabit(!strcmp(argv[2], "1000")) < 0) { kprintf("only the Pi 3B+ chip (LAN7515) can do 1000 Mbit\n"); return; }
         kprintf("negotiating the link again (up to 1000 Mbit: %s); see 'net' in a few seconds\n", eth_gigabit() ? "yes" : "no");
