@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.145**
+Current version: **0.146**
 
 ## Supported boards
 
@@ -542,6 +542,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.133: while the alarm is on, the display's normal status screen shows the alarm (state, code as stars, seconds left) by itself; the console shows the typed code as stars (`[KEYPAD] code: ****`). A zone with nothing connected shows as open (e.g. the window of `alarm shield`) - remove unused zones (`alarm zone del 27`).
 0.144: GSM / LTE modem for the alarm (SIM800L, A7670E, SIM7600E on pins 8/10): SMS on alarm / arm / disarm, calls in an alarm, SMS commands ARM / HOME / DISARM / STATUS from listed numbers (`modem`).
 0.145: OLED module with a rotary knob + CONFIRM / BACK buttons as the alarm keypad (`alarm knob`): turn = digit, push = add it, BACK = delete, CONFIRM = send.
+0.146: alarm reports to a monitoring centre (PCO / ARC) with SIA DC-09 over TCP or UDP: Contact ID (ADM-CID) or SIA-DCS, AES encryption, backup receiver, supervision, daily test (`pco`).
 0.143: FIX Pi 3B+: straight to a 100 Mbit board (Pi 3B) it said `link up, 1000 Mbit` and set its MAC to 1000 while the wire ran at 100 = nothing got through; 1000 is now taken only when the 1000BASE-T receivers report OK.
 0.142: Pi 3B+: the LEDs on the network jack are switched on (RoboOS never enabled them); `net` shows what the PHY sees (link, auto-negotiation, what the other side offers, 1000 Mbit).
 0.141: FIX: while WiFi carried the traffic, a cable plugged in was never noticed (the link was only checked while frames were read from the cable) - so cable + WiFi (0.140) did not use the cable.
@@ -1329,6 +1330,35 @@ too (`alarm remote ...`). Wiring (pull-ups are internal; the OLED is found like 
 Other pins: `alarm knob <tra> <trb> <push> <confirm> <back>` (GPIO numbers); the wrong direction: add `reverse`;
 `alarm knob off`. These pins are not used by the IoT shield (only GPIO6 = the doorbell button, if you use it);
 clashes with zones, the siren or the LED are shown with `!!`.
+
+**Monitoring centre / PCO (0.146, `pco`)**: the alarm reports its events to an alarm receiving centre with the
+standard IP protocol **SIA DC-09** (what PCO software and receivers like Sur-Gard, Osborne-Hoffman, Manitou, Patriot
+or the Ajax / Jablotron receivers accept): Contact ID inside DC-09 (`ADM-CID`, default) or `SIA-DCS`, over TCP or
+UDP, optionally AES-128/192/256 encrypted. Every message waits for the receiver's ACK; without one it is sent again
+(3 tries, then the backup receiver, then every 30 s) - nothing is lost while the network is down (queue of 32). A NAK
+(the receiver's clock differs) makes the board take the receiver's time and send again.
+
+```
+pco host pco.example.sk 5001 tcp     the receiver (address, port, tcp|udp) - from your PCO
+pco backup 10.1.2.3 5001             a second receiver (or 'pco backup off')
+pco account 1A2B                     your object / account number (3-16 hex digits)
+pco line 1   /  pco receiver 12      line (L) and receiver (R) numbers if the PCO gives them
+pco format cid|sia                   Contact ID (ADM-CID) or SIA-DCS
+pco key <32/48/64 hex> | pco key text <16/24/32 chars> | pco key off     AES key
+pco heartbeat 120                    supervision (NULL message) every 120 s, 0 = off
+pco test 24                          a test report (E602) every 24 h; 'pco test' = one now
+pco on | pco off                     settings in /PCO.TXT
+pco send E130 3                      any Contact ID event by hand (for the test with the PCO)
+pco                                  state, the last 8 reports with ACK / NAK / no answer
+```
+
+Events (Contact ID, partition 01; zone = the zone's place in the list, `alarm` shows them in order; user 001 = the
+code, 011.. = the cards): E130 burglary (zone), E133 24h zone, E120 panic, R401 armed / R441 armed home (user),
+E401 / E441 disarmed (user), E406 alarm cancelled, R130 / R120 restored when the siren time is over, E461 code
+blocked (5 wrong), E602 periodic test, E305 power up. In SIA-DCS the same as BA / PA / CL / NL / OP / BC / BR / PR /
+JA / RP / RR. The board needs the time (NTP, DCF77, RTC or `time set`) - DC-09 messages carry it, and encrypted
+ones must. Test without a PCO: `tools/dc09_receiver.py <tcp port> <udp port> log.json [key]` (prints nothing, writes
+every message it got + whether CRC / length / format / time are right).
 
 **GSM / LTE modem for the alarm (0.144)**: SMS and calls over the mobile network - they still go out when the
 internet is down. Modules: SIM800L (2G, being switched off in Europe) or SIMCom A7670E / SIM7600E (LTE), the same

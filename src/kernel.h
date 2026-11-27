@@ -56,6 +56,11 @@ void modem_poll(void);                   /* core 0, con_trygetc */
 void modem_rx_pump(void);                /* core 1, io_poll_all */
 void modem_event(int kind, const char *text);   /* 1 alarm, 2 armed, 3 disarmed, 4 other */
 void modem_cmd(int argc, char **argv);
+void pco_prepare(void);                  /* pco.c 0.146: SIA DC-09 reports to a monitoring centre */
+void pco_poll(int have_ip);
+void pco_event(int qual, int code, int zone);   /* qual 1 event / 3 restore, Contact ID code, zone or user */
+void pco_cmd(int argc, char **argv);
+int  pco_info(char *b, int max);
 int  modem_info(char *b, int max);       /* one status line for 'alarm' */
 int  alarm_sms_cmd(const char *text, const char *from, char *reply, int max);
 void uart_bt_init(int flow);

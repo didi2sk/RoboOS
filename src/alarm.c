@@ -409,8 +409,10 @@ static void siren(int s)
 
 static void set_state(int s) { state = s; state_t = timer_us(); mq_dirty = 1; }
 
+static int act_user = 1;                                  /* 0.146: Contact ID user: 1 = the code, 11.. = cards */
 static void start_alarm(int zi, const char *why)
 {
+    pco_event(1, zi < 0 ? 120 : zones[zi].type == Z_24H ? 133 : 130, zi < 0 ? 0 : zi + 1);
     cause = zi;
     scopy(cause_name, zi >= 0 ? zones[zi].name : why, sizeof(cause_name));
     scopy(memory_name, cause_name, sizeof(memory_name));
@@ -449,7 +451,7 @@ static int act(int what, int mode, const char *c, const char *who, char *msg, in
         scopy(msg, "wrong code", mmax);
         event("wrong code from", who);
         say("WRONG");
-        if (++wrong >= 5) { locked_until = timer_us() + 60000000ULL; wrong = 0; event("code blocked for 60 s", ""); }
+        if (++wrong >= 5) { locked_until = timer_us() + 60000000ULL; wrong = 0; event("code blocked for 60 s", ""); pco_event(1, 461, 0); }
         goto out;
     }
     wrong = 0;
@@ -465,6 +467,7 @@ static int act(int what, int mode, const char *c, const char *who, char *msg, in
             goto out;
         }
         amode = mode ? 1 : 0;
+        pco_event(3, amode ? 441 : 401, act_user);
         for (int i = 0; i < nz; i++) zones[i].skip = 0;
         memory = -1; memory_name[0] = 0; cause = -1;
         set_state(exit_s > 0 ? EXIT_TIME : ARMED);
@@ -476,6 +479,8 @@ static int act(int what, int mode, const char *c, const char *who, char *msg, in
         r = 1;
     } else {
         if (state == DISARMED && !siren_on) { scopy(msg, "already disarmed", mmax); r = 1; goto out; }
+        if (state == ALARM) pco_event(1, 406, act_user);   /* cancel */
+        pco_event(1, amode ? 441 : 401, act_user);
         siren(0);
         set_state(DISARMED);
         cause = -1;
@@ -611,7 +616,9 @@ static void card_in(const char *uid0, const char *src)
         return;
     }
     scopy(who, cards[k].name, sizeof(who));
+    act_user = 11 + k;
     act(state == DISARMED ? 1 : 2, 0, card_ok, who, msg, sizeof(msg));
+    act_user = 1;
     kmsg_set(msg);
 }
 
@@ -1115,6 +1122,7 @@ static void run_states(void)
     else if (state == ALARM && siren_s > 0 && t - state_t >= (u64)siren_s * 1000000) {
         siren(0);
         for (int i = 0; i < nz; i++) zones[i].skip = zones[i].open;   /* a door left open does not re-trigger */
+        if (cause >= 0) pco_event(3, zones[cause].type == Z_24H ? 133 : 130, cause + 1); else pco_event(3, 120, 0);
         set_state(ARMED);
         event("siren time over - armed again (alarm memory kept)", "");
     }
@@ -1532,6 +1540,7 @@ static void show(void)
     conflicts();
     show_net();
     { char mb[160]; if (modem_info(mb, sizeof(mb))) kprintf("  modem: %s\n", mb); }
+    { char pb[160]; if (pco_info(pb, sizeof(pb))) kprintf("  %s\n", pb); }
     if (ncards) { kprintf("  cards:"); for (int i = 0; i < ncards; i++) kprintf(" %s (%s)%s", cards[i].uid, cards[i].name, i + 1 < ncards ? "," : "\n"); }
 }
 

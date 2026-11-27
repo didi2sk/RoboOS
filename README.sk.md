@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.145**
+Aktuálna verzia: **0.146**
 
 ## Podporované dosky
 
@@ -538,6 +538,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.133: pri zapnutom alarme bežná stavová obrazovka displeja sama ukazuje alarm (stav, kód ako hviezdičky, zostávajúce sekundy); konzola ukazuje písaný kód ako hviezdičky (`[KEYPAD] code: ****`). Zóna bez pripojeného kontaktu sa javí ako otvorená (napr. okno z `alarm shield`) - nepoužité zóny zmaž (`alarm zone del 27`).
 0.144: GSM / LTE modem pre alarm (SIM800L, A7670E, SIM7600E na pinoch 8/10): SMS pri poplachu / zastrážení / odstrážení, hovory pri poplachu, SMS príkazy ARM / HOME / DISARM / STATUS z čísel v zozname (`modem`).
 0.145: OLED modul s otočným gombíkom + tlačidlami CONFIRM / BACK ako klávesnica alarmu (`alarm knob`): otočenie = číslica, stlačenie = pridať, BACK = zmazať, CONFIRM = odoslať.
+0.146: hlásenia alarmu na pult centralizovanej ochrany (PCO) cez SIA DC-09 po TCP alebo UDP: Contact ID (ADM-CID) alebo SIA-DCS, šifrovanie AES, záložný prijímač, kontrolné spojenie, denný test (`pco`).
 0.143: OPRAVA Pi 3B+: priamo s doskou na 100 Mbit (Pi 3B) hlásil `link up, 1000 Mbit` a nastavil MAC na 1000, hoci kábel bežal na 100 = nič neprešlo; 1000 sa teraz berie, len keď prijímače 1000BASE-T hlásia OK.
 0.142: Pi 3B+: LED na sieťovom konektore sa zapnú (RoboOS ich nikdy nezapínal); `net` ukáže, čo vidí PHY (linka, auto-negotiation, čo ponúka druhá strana, 1000 Mbit).
 0.141: OPRAVA: kým išla prevádzka cez WiFi, zapojený kábel sa nikdy nezistil (linka sa kontrolovala len pri čítaní rámcov z kábla) - preto kábel + WiFi (0.140) kábel nepoužil.
@@ -1316,6 +1317,35 @@ na termináli (`alarm remote ...`). Zapojenie (pull-upy sú interné; OLED sa n�
 Iné piny: `alarm knob <tra> <trb> <push> <confirm> <back>` (čísla GPIO); opačný smer: pridaj `reverse`;
 `alarm knob off`. Tieto piny IoT shield nepoužíva (len GPIO6 = tlačidlo zvončeka, ak ho máš); kolízie so zónami,
 sirénou alebo LED sa ukážu cez `!!`.
+
+**Pult centralizovanej ochrany / PCO (0.146, `pco`)**: alarm hlási udalosti na PCO štandardným IP protokolom
+**SIA DC-09** (ten berú PCO softvéry a prijímače ako Sur-Gard, Osborne-Hoffman, Manitou, Patriot alebo prijímače Ajax /
+Jablotron): Contact ID v DC-09 (`ADM-CID`, predvolené) alebo `SIA-DCS`, po TCP alebo UDP, voliteľne šifrované AES-128/
+192/256. Každá správa čaká na ACK prijímača; bez neho sa pošle znova (3 pokusy, potom záložný prijímač, potom každých
+30 s) - kým nejde sieť, nič sa nestratí (front 32 správ). NAK (prijímač má iný čas) = doska si zoberie čas prijímača
+a pošle znova.
+
+```
+pco host pco.example.sk 5001 tcp     prijímač (adresa, port, tcp|udp) - dá ti ho PCO
+pco backup 10.1.2.3 5001             druhý prijímač (alebo 'pco backup off')
+pco account 1A2B                     číslo objektu / účtu (3-16 hex číslic)
+pco line 1   /  pco receiver 12      číslo linky (L) a prijímača (R), ak ich PCO dá
+pco format cid|sia                   Contact ID (ADM-CID) alebo SIA-DCS
+pco key <32/48/64 hex> | pco key text <16/24/32 znakov> | pco key off     kľúč AES
+pco heartbeat 120                    kontrolné spojenie (správa NULL) každých 120 s, 0 = vypnuté
+pco test 24                          testovacia správa (E602) každých 24 h; 'pco test' = jedna hneď
+pco on | pco off                     nastavenia v /PCO.TXT
+pco send E130 3                      ľubovoľná Contact ID udalosť ručne (na skúšku s PCO)
+pco                                  stav, posledných 8 hlásení s ACK / NAK / bez odpovede
+```
+
+Udalosti (Contact ID, podsystém 01; zóna = poradie zóny v zozname, `alarm` ich ukazuje v poradí; užívateľ 001 = kód,
+011.. = karty): E130 vlámanie (zóna), E133 24h zóna, E120 panika, R401 zastrážené / R441 zastrážené doma (užívateľ),
+E401 / E441 odstrážené (užívateľ), E406 poplach zrušený, R130 / R120 obnova po skončení sirény, E461 kód zablokovaný
+(5 zlých), E602 pravidelný test, E305 zapnutie. V SIA-DCS to isté ako BA / PA / CL / NL / OP / BC / BR / PR / JA / RP /
+RR. Doska potrebuje čas (NTP, DCF77, RTC alebo `time set`) - správy DC-09 ho nesú a šifrované musia. Skúška bez PCO:
+`tools/dc09_receiver.py <tcp port> <udp port> log.json [kľúč]` (zapíše každú prijatú správu + či sedí CRC / dĺžka /
+formát / čas).
 
 **GSM / LTE modem pre alarm (0.144)**: SMS a hovory cez mobilnú sieť - odídu, aj keď nejde internet. Moduly:
 SIM800L (2G, v Európe sa vypína) alebo SIMCom A7670E / SIM7600E (LTE), rovnaké štandardné AT príkazy. Zapojenie

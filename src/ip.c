@@ -278,6 +278,7 @@ void ip_poll(int notify)
     http_cam_tick();
     ntp_tick();
     mqtt_poll(!ip4_addr_isany_val(*netif_ip4_addr(&nif)) && netif_is_link_up(&nif));
+    pco_poll(!ip4_addr_isany_val(*netif_ip4_addr(&nif)) && netif_is_link_up(&nif));
 
     if (!ip4_addr_cmp(netif_ip4_addr(&nif), &shown_ip)) {
         ip4_addr_copy(shown_ip, *netif_ip4_addr(&nif));
