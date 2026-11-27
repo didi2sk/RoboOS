@@ -411,6 +411,7 @@ static void start_alarm(int zi, const char *why)
     siren(1);
     event("ALARM!", cause_name);
     say("ALARM");
+    { char m[64] = "ALARM: "; scopy(m + 7, cause_name, (int)sizeof(m) - 7); modem_event(1, m); }   /* 0.144 */
     fx |= FX_ALARM;
 }
 
@@ -461,6 +462,7 @@ static int act(int what, int mode, const char *c, const char *who, char *msg, in
         set_state(exit_s > 0 ? EXIT_TIME : ARMED);
         event(exit_s > 0 ? (amode ? "arming (home), exit time, by" : "arming, exit time, by") : (amode ? "ARMED (home) by" : "ARMED by"), who);
         say(exit_s > 0 ? "ARMING" : "ARMED");
+        { char m[64]; scopy(m, amode ? "armed (home) by " : "armed by ", sizeof(m)); int l = (int)strlen(m); scopy(m + l, who, (int)sizeof(m) - l); modem_event(2, m); }
         scopy(msg, exit_s > 0 ? "exit time started" : "armed", mmax);
         fx |= FX_SAVE_ST;
         r = 1;
@@ -471,6 +473,7 @@ static int act(int what, int mode, const char *c, const char *who, char *msg, in
         cause = -1;
         event("DISARMED by", who);
         say("DISARMED");
+        { char m[64] = "disarmed by "; scopy(m + 12, who, (int)sizeof(m) - 12); modem_event(3, m); }
         scopy(msg, memory_name[0] ? "disarmed - there WAS an alarm: " : "disarmed", mmax);
         if (memory_name[0]) { int l = (int)strlen(msg); scopy(msg + l, memory_name, mmax - l); }
         fx |= FX_SAVE_ST;
@@ -479,6 +482,43 @@ static int act(int what, int mode, const char *c, const char *who, char *msg, in
 out:
     unlock();
     return r;
+}
+
+/* 0.144: an SMS from a listed number (modem.c, core 0): ARM / HOME / DISARM <code>, STATUS, HELP; reply = the answer */
+int alarm_sms_cmd(const char *text, const char *from, char *reply, int max)
+{
+    char w[3][24]; int k = 0;
+    for (const char *p = text; *p && k < 3; ) {
+        while (*p == ' ') p++;
+        if (!*p) break;
+        int n = 0;
+        while (*p && *p != ' ' && n < 23) { char c = *p++; w[k][n++] = c >= 'a' && c <= 'z' ? (char)(c - 32) : c; }
+        while (*p && *p != ' ') p++;
+        w[k++][n] = 0;
+    }
+    char who[40] = "SMS "; scopy(who + 4, from, (int)sizeof(who) - 4);
+    char msg[80] = "";
+    if (k >= 2 && (!strcmp(w[0], "ARM") || !strcmp(w[0], "HOME") || !strcmp(w[0], "DISARM"))) {
+        char code_in[24]; int n = 0;                       /* the code as typed (digits) */
+        for (int i = 0; w[1][i] && n < 23; i++) code_in[n++] = w[1][i]; code_in[n] = 0;
+        act(w[0][0] == 'D' ? 2 : 1, w[0][0] == 'H', code_in, who, msg, sizeof(msg));
+    } else if (k >= 1 && !strcmp(w[0], "STATUS")) msg[0] = 0;
+    else {
+        scopy(reply, "RoboOS: ARM <code>, HOME <code>, DISARM <code>, STATUS", max);
+        return 0;
+    }
+    /* answer: what happened + the state now (+ open zones) */
+    int n = 0;
+    #define A(s) do { const char *s_ = (s); while (*s_ && n < max - 1) reply[n++] = *s_++; } while (0)
+    if (msg[0]) { A(msg); A(". "); }
+    A("Now: "); A(alarm_state_text());
+    int any = 0;
+    lock();
+    for (int i = 0; i < nz; i++) if (zones[i].open && !zone_off(&zones[i])) { A(any ? ", " : ". Open: "); A(zones[i].name); any = 1; }
+    unlock();
+    #undef A
+    reply[n] = 0;
+    return 1;
 }
 
 /* ---------------- keypad + cards (0.121, core 0) ---------------- */
@@ -1468,6 +1508,7 @@ static void show(void)
     access_info();
     conflicts();
     show_net();
+    { char mb[160]; if (modem_info(mb, sizeof(mb))) kprintf("  modem: %s\n", mb); }
     if (ncards) { kprintf("  cards:"); for (int i = 0; i < ncards; i++) kprintf(" %s (%s)%s", cards[i].uid, cards[i].name, i + 1 < ncards ? "," : "\n"); }
 }
 
