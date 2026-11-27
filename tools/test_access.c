@@ -13,6 +13,12 @@ static u64 timer_us(void) { return now_us; }
 static void delay_us(u64 u) { now_us += u; }
 static void kprintf(const char *f, ...) { va_list a; va_start(a, f); vprintf(f, a); va_end(a); }
 static int con_trygetc(void) { return -1; }   /* access_keypad_test (0.132) */
+static int io_core_active(void) { return 0; }
+static void display_poke(void) {}
+enum { KA = 6, KB = 13, KP = 19, KOK = 26, KBK = 21 };
+static int knob_test;
+static int knob_lvl[32];                       /* 0.145: knob pins 6 13 19 26 21, 1 = high (idle) */
+static int is_knob(int p) { return p == 6 || p == 13 || p == 19 || p == 26 || p == 21; }
 
 /* ---- GPIO: keypad rows 13 19 26 21 cols 20 7 18 6; Wiegand D0 22 D1 27 (event detect) ---- */
 static int fn[32], lvl[32], key_r = -1, key_c = -1;
@@ -25,6 +31,7 @@ static int PR[4] = { 13, 19, 26, 21 }, PC[4] = { 20, 7, 18, 6 };
 static int low_by(int q) { return q == -1 || (q >= 0 && fn[q] == 1 && lvl[q] == 0); }
 static int gpio_get(int p)
 {
+    if (knob_test && is_knob(p)) return knob_lvl[p];
     if (key_r < 0) return 1;
     int a = PR[key_r], b = PC[key_c];
     if (p == b && low_by(a)) return 0;
@@ -226,6 +233,36 @@ int main(void)
     check("Wiegand keys: 5 (4 bit), 1 (8 bit), #, *", !strcmp(got, "51#*"));
     access_text(t, sizeof(t));
     check("settings text has the wiegand line", strstr(t, "rfid wiegand 22 27") != 0);
+    /* 0.145: rotary knob (6/13 quadrature, 19 push, 26 confirm, 21 back) */
+    setline("rfid off"); setline("keypad off");
+    for (int i = 0; i < 32; i++) knob_lvl[i] = 1;
+    knob_test = 1;
+    check("knob line accepted", setline("knob") == 0);
+    access_setup(); gn = 0; got[0] = 0;
+    int dg = -1;
+    static const int cw[4][2] = { { 0, 1 }, { 0, 0 }, { 1, 0 }, { 1, 1 } };   /* A B from 11 */
+    #define TURN(dir) for (int s = 0; s < 4; s++) { int j = s; \
+        knob_lvl[KA] = dir > 0 ? cw[j][0] : cw[j][1]; knob_lvl[KB] = dir > 0 ? cw[j][1] : cw[j][0]; run_ms(2); }
+    TURN(1); TURN(1); TURN(1);
+    access_knob(&dg);
+    int up = dg;
+    TURN(-1);
+    int kd2 = -1; access_knob(&kd2);
+    printf("    after 3 turns one way: %d, one back: %d\n", up, kd2);
+    check("knob: 3 detents = 3 steps, one back = 1 step", (up == 3 && kd2 == 2) || (up == 7 && kd2 == 8));
+    knob_lvl[KP] = 0; run_ms(40); knob_lvl[KP] = 1; run_ms(40);      /* push = the digit */
+    knob_lvl[KBK] = 0; run_ms(40); knob_lvl[KBK] = 1; run_ms(40);      /* back */
+    knob_lvl[KP] = 0; run_ms(40); knob_lvl[KP] = 1; run_ms(40);
+    knob_lvl[KOK] = 0; run_ms(40); knob_lvl[KOK] = 1; run_ms(40);      /* confirm */
+    char want[8]; snprintf(want, sizeof(want), "%c<%c#", '0' + kd2, '0' + kd2);
+    printf("    knob keys \"%s\" (want \"%s\")\n", got, want);
+    check("knob: push / back / push / confirm -> digit < digit #", !strcmp(got, want));
+    knob_lvl[KA] = 0; run_ms(2); knob_lvl[KA] = 1; run_ms(2);       /* a bounce on one line: no step */
+    int d3 = -1; access_knob(&d3);
+    check("knob: a single bounce is not a step", d3 == kd2);
+    access_text(t, sizeof(t));
+    check("settings text has the knob line", strstr(t, "knob 6 13 19 26 21") != 0);
+    check("knob pins are taken", access_uses_pin(19) && access_uses_pin(21));
     printf(errors ? "%d WRONG\n" : "all OK\n", errors);
     return errors != 0;
 }

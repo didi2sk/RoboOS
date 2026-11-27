@@ -106,7 +106,7 @@ const char alarm_page[] =
 " if(c!='test')$('code').value='';load();}\n"
 "const keys=['exit','entry','siren','siren_pin','armed_pin','volume','voice','photos','video'],checks=['photo','sound','entry_photo','mqtt'];\n"
 "function form(t){const v={},zs=[],ex=[];for(const l of t.split('\\n')){const s=l.trim();if(!s||s[0]=='#')continue;const w=s.split(/\\s+/);\n"
-"  if(w[0]=='keypad'||w[0]=='rfid'||w[0]=='card'||w[0]=='remote'){ex.push(s);continue;}\n"
+"  if(w[0]=='keypad'||w[0]=='rfid'||w[0]=='card'||w[0]=='remote'||w[0]=='knob'){ex.push(s);continue;}\n"
 "  if(w[0]=='zone')zs.push({pin:w[1],type:w[2],nc:w[3],name:w.slice(4).join(' ')});else v[w[0]]=w.slice(1).join(' ');}\n"
 " $('s_on').checked=v.state=='on';for(const k of keys)$('s_'+k).value=v[k]=='none'?'':(v[k]||'');for(const k of checks)$('s_'+k).checked=v[k]=='on';\n"
 " $('ze').innerHTML='';for(const z of zs)addZone(z);$('s_extra').value=ex.join('\\n');}\n"

@@ -28,6 +28,11 @@
  *        8 bits (nibble + inverted nibble) = a key, 26 / 34 bits = a card (parity checked), other lengths = a
  *        card made of all the bits.
  *
+ *   knob [<tra> <trb> <push> <confirm> <back>] [reverse]
+ *        0.145: rotary encoder module (EC11 + CONFIRM / BACK buttons, e.g. the blue OLED board): turning picks a digit
+ *        0-9, the knob's push adds it, BACK deletes the last one ('<'), CONFIRM = '#'. Default pins 17 27 22 23 24 =
+ *        header pins 11 13 15 16 18. Quadrature decoded on core 1 (one step per detent = a full cycle back to 11).
+ *
  * Events for alarm.c: access_poll() -> 1 = a key ('0'-'9', '*', '#', 'A'-'D'), 2 = a card UID in hex.
  * Cores: everything on core 0 except the Wiegand bit collector (core 1); a small ring with atomics between them.
  */
@@ -44,6 +49,13 @@ static int kr[4], kc[4], nkc = 3;
 static int ki2c = 0x20, kswap;
 static int rf_type;                        /* 0 none, 1 rc522, 2 wiegand */
 static int rf_rst = -1, wd0 = -1, wd1 = -1;
+
+/* 0.145: rotary encoder + buttons */
+static int kn_on, kn_a = 6, kn_b = 13, kn_push = 19, kn_ok = 26, kn_back = 21, kn_rev;
+static volatile int kn_steps;                  /* core 1 adds, core 0 takes */
+static int kn_prev = 3, kn_acc, kn_digit;
+static u64 kn_touch, next_kn;
+static int kn_bs[3], kn_bc[3];                 /* button state / candidate count */
 
 /* state */
 static u64 next_kp, next_rf, kp_retry;
@@ -91,6 +103,7 @@ static int gk(const char *s, int *v) { if (!strcmp(s, "gnd")) { *v = -1; return 
 /* one settings line split into words ("keypad ..." / "rfid ..."); 0 ok, -1 bad */
 int access_set(int n, char **w)
 {
+    if (n == 1 && !strcmp(w[0], "knob")) { kn_a = 6; kn_b = 13; kn_push = 19; kn_ok = 26; kn_back = 21; kn_rev = 0; kn_on = 1; return 0; }
     if (n < 2) return -1;
     if (!strcmp(w[0], "keypad")) {
         if (!strcmp(w[1], "off")) { kp_type = 0; return 0; }
@@ -136,6 +149,19 @@ int access_set(int n, char **w)
         }
         return -1;
     }
+    if (!strcmp(w[0], "knob")) {
+        if (n >= 2 && !strcmp(w[1], "off")) { kn_on = 0; return 0; }
+        int p[5] = { 17, 27, 22, 23, 24 }, k = 0, rev = 0;
+        for (int i = 1; i < n; i++) {
+            if (!strcmp(w[i], "reverse")) { rev = 1; continue; }
+            if (k >= 5 || gp(w[i], &p[k])) return -1;
+            k++;
+        }
+        if (k && k != 5) return -1;
+        for (int i = 0; i < 5; i++) for (int j = 0; j < i; j++) if (p[i] == p[j]) return -1;
+        kn_a = p[0]; kn_b = p[1]; kn_push = p[2]; kn_ok = p[3]; kn_back = p[4]; kn_rev = rev; kn_on = 1;
+        return 0;
+    }
     if (!strcmp(w[0], "rfid")) {
         if (!strcmp(w[1], "off")) { rf_type = 0; return 0; }
         if (!strcmp(w[1], "rc522")) {
@@ -172,6 +198,13 @@ int access_text(char *b, int max)
         n = put(b, n, max, "\r\n");
     } else if (kp_type == 2) {
         n = put(b, n, max, "keypad i2c "); n = puth(b, n, max, ki2c); if (kswap) n = put(b, n, max, " swap"); n = put(b, n, max, "\r\n");
+    }
+    if (kn_on) {
+        n = put(b, n, max, "knob");
+        int p[5] = { kn_a, kn_b, kn_push, kn_ok, kn_back };
+        for (int i = 0; i < 5; i++) { n = put(b, n, max, " "); n = putn(b, n, max, p[i]); }
+        if (kn_rev) n = put(b, n, max, " reverse");
+        n = put(b, n, max, "\r\n");
     }
     if (rf_type == 1) { n = put(b, n, max, "rfid rc522"); if (rf_rst >= 0) { n = put(b, n, max, " "); n = putn(b, n, max, rf_rst); } n = put(b, n, max, "\r\n"); }
     else if (rf_type == 2) {
@@ -272,8 +305,25 @@ static volatile u64 wlast;
 static struct { u64 v; int n; } wq[4];
 static volatile int wqh, wqt;
 
+/* 0.145: quadrature on core 1 (polled every loop, ~0.2 ms): the transition table gives +1 / -1 per edge;
+ * one step = back at rest (both lines high, pull-ups) after at least 2 edges the same way (EC11: 4 per detent) */
+static void knob_core1(void)
+{
+    int s = (gpio_get(kn_a) ? 2 : 0) | (gpio_get(kn_b) ? 1 : 0);
+    if (s == kn_prev) return;
+    static const signed char tab[16] = { 0, -1, 1, 0, 1, 0, 0, -1, -1, 0, 0, 1, 0, 1, -1, 0 };
+    kn_acc += tab[(kn_prev << 2) | s];
+    kn_prev = s;
+    if (s == 3) {
+        if (kn_acc >= 2) __atomic_add_fetch(&kn_steps, 1, __ATOMIC_RELAXED);
+        else if (kn_acc <= -2) __atomic_add_fetch(&kn_steps, -1, __ATOMIC_RELAXED);
+        kn_acc = 0;
+    }
+}
+
 void access_core1_poll(void)
 {
+    if (kn_on) knob_core1();
     if (rf_type != 2 || wd0 < 0) return;
     u32 m = (1u << wd0) | (1u << wd1);
     u32 ev = mmio_read(GPEDS0) & m;
@@ -358,6 +408,14 @@ void access_setup(void)
         for (int i = 0; i < nkc; i++) if (kc[i] >= 0) { gpio_func(kc[i], 0); gpio_pull(kc[i], 2); }
     }
     kp_last = kp_cand = -1; kp_cnt = 0; kp_err = 0; kp_retry = 0;
+    if (kn_on) {
+        int p[5] = { kn_a, kn_b, kn_push, kn_ok, kn_back };
+        for (int i = 0; i < 5; i++) { gpio_func(p[i], 0); gpio_pull(p[i], 2); }
+        delay_us(100);
+        kn_prev = (gpio_get(kn_a) ? 2 : 0) | (gpio_get(kn_b) ? 1 : 0);
+        kn_acc = 0; kn_steps = 0;
+        for (int i = 0; i < 3; i++) { kn_bs[i] = 1; kn_bc[i] = 0; }   /* a button held at start is ignored until released */
+    }
     if (rf_type == 1) { spi_init(0); rc_ver = -1; rc_retry = 0; }
     if (rf_type == 2) {
         gpio_func(wd0, 0); gpio_func(wd1, 0); gpio_pull(wd0, 2); gpio_pull(wd1, 2);
@@ -366,7 +424,15 @@ void access_setup(void)
     }
 }
 
-int access_active(void) { return kp_type || rf_type; }
+int access_active(void) { return kp_type || rf_type || kn_on; }
+
+/* 0.145: the digit the knob points at (for the display); 0 = no knob or not touched for 15 s */
+int access_knob(int *digit)
+{
+    if (!kn_on || !kn_touch || timer_us() - kn_touch > 15000000) return 0;
+    *digit = kn_digit;
+    return 1;
+}
 
 /* 0.131: is this GPIO taken by the keypad / card reader? (alarm zones and the doorbell must not use it) */
 int access_uses_pin(int p)
@@ -375,6 +441,7 @@ int access_uses_pin(int p)
     if (kp_type == 1) { for (int i = 0; i < 4; i++) if (kr[i] == p) return 1; for (int i = 0; i < nkc; i++) if (kc[i] == p) return 1; }
     if (rf_type == 1 && ((p >= 8 && p <= 11) || p == rf_rst)) return 1;
     if (rf_type == 2 && (p == wd0 || p == wd1)) return 1;
+    if (kn_on && (p == kn_a || p == kn_b || p == kn_push || p == kn_ok || p == kn_back)) return 1;
     return 0;
 }
 
@@ -408,6 +475,30 @@ int access_poll(char *key, char *uid, int umax)
                 held_until = t + 2000000;
             }
             if (!spi_ok) rc_ver = -1;
+        }
+    }
+    if (kn_on) {                                          /* 0.145: knob turns + buttons (every 10 ms) */
+        if (!io_core_active()) knob_core1();
+        int st = __atomic_exchange_n(&kn_steps, 0, __ATOMIC_ACQ_REL);
+        if (st) {
+            if (kn_rev) st = -st;
+            kn_digit = ((kn_digit + st) % 10 + 10) % 10;
+            kn_touch = t;
+            display_poke();
+        }
+        if (t >= next_kn) {
+            next_kn = t + 10000;
+            int pins[3] = { kn_push, kn_ok, kn_back };
+            for (int i = 0; i < 3; i++) {
+                int v = gpio_get(pins[i]) ? 1 : 0;        /* 0 = pressed */
+                if (v == kn_bs[i]) { kn_bc[i] = 0; continue; }
+                if (++kn_bc[i] < 2) continue;
+                kn_bs[i] = v; kn_bc[i] = 0;
+                if (v) continue;                          /* released */
+                kn_touch = t;
+                char c[2] = { i == 0 ? (char)('0' + kn_digit) : i == 1 ? '#' : '<', 0 };
+                push(1, c);
+            }
         }
     }
     while (wqt != wqh) {
@@ -476,5 +567,7 @@ void access_info(void)
     } else if (rf_type == 2)
         kprintf("  Wiegand D0 GPIO%d D1 GPIO%d: frames %u (bad %u), last %d bits%s%s\n", wd0, wd1, wg_frames, wg_bad, wg_last_bits,
                 cards_read ? ", last card " : "", cards_read ? last_uid : "");
-    if (!kp_type && !rf_type) kprintf("  no keypad / card reader ('alarm keypad ...', 'alarm rfid ...')\n");
+    if (kn_on) kprintf("  knob: turn GPIO%d/%d, push %d, CONFIRM %d, BACK %d%s - digit %d, keys %u\n",
+                       kn_a, kn_b, kn_push, kn_ok, kn_back, kn_rev ? " (reversed)" : "", kn_digit, keys_read);
+    if (!kp_type && !rf_type && !kn_on) kprintf("  no keypad / card reader ('alarm keypad ...', 'alarm rfid ...')\n");
 }
