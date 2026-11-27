@@ -308,6 +308,14 @@ static void net_status(void)
     int sp = eth_link(&full);
     if (sp) kprintf("link:  up, %d Mbit %s duplex\n", sp, full ? "full" : "half");
     else    kprintf("link:  down (cable? auto-negotiation takes a few seconds)\n");
+    u16 pr[6];
+    if (!eth_phy_regs(pr)) {                            /* 0.142: what the PHY sees */
+        kprintf("PHY:   control %04x status %04x (link %s, autoneg %s), we offer %04x, other side offers %04x%s\n",
+                pr[0], pr[1], pr[1] & 4 ? "yes" : "no", pr[1] & 0x20 ? "done" : "not done", pr[2], pr[3],
+                pr[3] ? "" : " (= nothing heard from the other side)");
+        if (eth_chip() >> 16 == 0x7800) kprintf("       1000 Mbit: offered %s, other side %s ('net speed 100' turns it off)\n",
+                                                 pr[4] & 0x200 ? "yes" : "no", pr[5] & 0x800 ? "can" : "cannot / unknown");
+    }
     kprintf("stats: rx %u ok %u bad %u err, tx %u ok %u err",
             eth_stat.rx_ok, eth_stat.rx_bad, eth_stat.rx_err, eth_stat.tx_ok, eth_stat.tx_err);
     if (eth_stat.rx_err || eth_stat.tx_err)

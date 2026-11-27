@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.141**
+Current version: **0.142**
 
 ## Supported boards
 
@@ -540,6 +540,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.131: `alarm keypad shield` (keypad with the IoT shield: GPIO 13 19 26 21 / 20 7 18 + GND); pin clashes between the keypad / card reader and alarm zones or the doorbell button are shown (`!!`, `PIN TAKEN`) and such a zone is not watched.
 0.132: `alarm keypad test` - live key / line levels for checking the keypad wiring.
 0.133: while the alarm is on, the display's normal status screen shows the alarm (state, code as stars, seconds left) by itself; the console shows the typed code as stars (`[KEYPAD] code: ****`). A zone with nothing connected shows as open (e.g. the window of `alarm shield`) - remove unused zones (`alarm zone del 27`).
+0.142: Pi 3B+: the LEDs on the network jack are switched on (RoboOS never enabled them); `net` shows what the PHY sees (link, auto-negotiation, what the other side offers, 1000 Mbit).
 0.141: FIX: while WiFi carried the traffic, a cable plugged in was never noticed (the link was only checked while frames were read from the cable) - so cable + WiFi (0.140) did not use the cable.
 0.140: FIX keypad terminal (0.139): every digit was cleared at once and `#` said NO CONNECTION at once (a time stamp taken later than the loop's own clock); `NO ANSWER` when the code arrived but no state came back. Messages between boards now go over EVERY link that is up - cable AND WiFi at once, the second copy is dropped - so one path may fail; `net ip wifi` keeps TCP/IP (web, MQTT, time) on WiFi even with a cable in (/LINK.TXT), e.g. master and keypad joined by a cable straight from board to board plus both on WiFi.
 0.139: keypad terminal over WiFi: the code is kept on the terminal and sent WHOLE after # / A / B / D (one message instead of one per key), the display shows `Sending...` until the master answers, or `NO CONNECTION` + a low beep; messages go out from a queue in the background (repeated until acknowledged), so the keypad never stops reading keys; `alarm` shows delivered / not delivered messages and WiFi sends the chip refused.
