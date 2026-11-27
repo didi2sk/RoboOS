@@ -134,6 +134,7 @@ static int raw_trygetc(void)
     camera_poll();                              /* camera pictures for the web page (0.104) */
     doorbell_poll();
     alarm_poll();                               /* burglar alarm (0.120) */
+    modem_poll();                               /* GSM/LTE modem (0.144) */
     update_web_poll();                          /* kernel update from the web page (0.122) */
     files_poll();                               /* web file manager: list / read / delete on the card (0.117) */                            /* doorbell button + door radar (0.105) */
     thermal_poll();                             /* AMG8833: presence */

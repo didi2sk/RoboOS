@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.143**
+Aktuálna verzia: **0.144**
 
 ## Podporované dosky
 
@@ -536,6 +536,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.131: `alarm keypad shield` (klávesnica so shieldom: GPIO 13 19 26 21 / 20 7 18 + GND); kolízie pinov klávesnice / čítačky so zónami alarmu alebo tlačidlom zvončeka sa ukážu (`!!`, `PIN TAKEN`) a taká zóna sa nesleduje.
 0.132: `alarm keypad test` - naživo klávesa a úrovne liniek na kontrolu zapojenia klávesnice.
 0.133: pri zapnutom alarme bežná stavová obrazovka displeja sama ukazuje alarm (stav, kód ako hviezdičky, zostávajúce sekundy); konzola ukazuje písaný kód ako hviezdičky (`[KEYPAD] code: ****`). Zóna bez pripojeného kontaktu sa javí ako otvorená (napr. okno z `alarm shield`) - nepoužité zóny zmaž (`alarm zone del 27`).
+0.144: GSM / LTE modem pre alarm (SIM800L, A7670E, SIM7600E na pinoch 8/10): SMS pri poplachu / zastrážení / odstrážení, hovory pri poplachu, SMS príkazy ARM / HOME / DISARM / STATUS z čísel v zozname (`modem`).
 0.143: OPRAVA Pi 3B+: priamo s doskou na 100 Mbit (Pi 3B) hlásil `link up, 1000 Mbit` a nastavil MAC na 1000, hoci kábel bežal na 100 = nič neprešlo; 1000 sa teraz berie, len keď prijímače 1000BASE-T hlásia OK.
 0.142: Pi 3B+: LED na sieťovom konektore sa zapnú (RoboOS ich nikdy nezapínal); `net` ukáže, čo vidí PHY (linka, auto-negotiation, čo ponúka druhá strana, 1000 Mbit).
 0.141: OPRAVA: kým išla prevádzka cez WiFi, zapojený kábel sa nikdy nezistil (linka sa kontrolovala len pri čítaní rámcov z kábla) - preto kábel + WiFi (0.140) kábel nepoužil.
@@ -1293,6 +1294,29 @@ neochráni. Čítačku oddeľ optočlenom na každej linke (ako vstupy IoT shiel
   len ~10-20 cm (nech je pri Pi). Keď je Pi vnútri a čítačka pri bráne, vonkajšia Wiegand klávesnica s čítačkou
   kariet 125 kHz v jednom (12 V, IP65) posiela klávesy AJ karty po tých istých dvoch drôtoch.
 
+**GSM / LTE modem pre alarm (0.144)**: SMS a hovory cez mobilnú sieť - odídu, aj keď nejde internet. Moduly:
+SIM800L (2G, v Európe sa vypína) alebo SIMCom A7670E / SIM7600E (LTE), rovnaké štandardné AT príkazy. Zapojenie
+(sériová konzola sa z týchto pinov počas zapnutého modemu odpojí):
+
+| Modem | Pi |
+|---|---|
+| RXD | pin 8 (GPIO14) - pre SIM800L (logika 2,8 V) cez delič, napr. 4,7 k do série + 10 k na GND |
+| TXD | pin 10 (GPIO15) |
+| GND | hocijaký GND pin |
+| VCC | VLASTNÝ zdroj: SIM800L 3,7-4,2 V, špičky 2 A (Li-ion článok alebo step-down menič), nikdy nie 3,3 V / 5 V z Pi |
+
+```
+modem number add +421900123456     kto dostane SMS / hovory a smie posielať príkazy (najviac 5)
+modem on                           nájdenie + nastavenie (9600 Bd; LTE modul sa z 115200 prepne sám)
+modem                              stav: sieť, signál v dBm, SIM, počty SMS
+modem sms +421900123456 test       skúšobná SMS     modem at AT+CSQ     hocijaký AT príkaz
+modem set sms_alarm|sms_arm|sms_disarm|call|commands on|off
+```
+Pri poplachu dostane každé číslo SMS („<doska> 14:03: ALARM: dvere“) a postupne mu zavolá (po 25 s, odstráženie
+hovory zastaví); zastráženie / odstráženie pošle tiež SMS. SMS príkazy len z čísel v zozname: `ARM 1234`,
+`HOME 1234`, `DISARM 1234`, `STATUS` - odpoveď príde SMS. Staré správy na SIM sa pri štarte modemu zmažú (starý
+DISARM sa nikdy nevykoná). `alarm` ukazuje stav modemu. Nastavenia v /MODEM.TXT.
+
 **Terminál klávesnice: druhé Pi ako klávesnica + displej (0.134).** To isté jadro na inej doske (napr. Zero 2 W
 pri dverách) sa stane terminálom ústredne:
 
@@ -1442,6 +1466,7 @@ Systém komunikuje po anglicky.
 | `ai <otázka>\|@príkaz ..\|key\|model` | otázka pre Claude (vlastný API kľúč Anthropic) |
 | `radio [MHz\|up\|down\|scan\|vol n\|off]` | FM rádio (modul RDA5807M na I2C) |
 | `motion [watch\|zero\|threshold mg\|alarm on\|off]` | náklon, zrýchlenie, otrasy (MPU-6050 / GY-521) |
+| `modem [on\|off\|number\|pin\|set\|sms\|call\|at]` | GSM/LTE modem na pinoch 8/10: SMS + hovory z alarmu, SMS príkazy |
 | `alarm [on\|off\|arm\|home\|disarm <kód>\|zone\|set\|shield\|keypad\|rfid\|card\|remote\|log\|test]` | zabezpečovací systém v jadre: zóny, siréna, klávesnica + RFID / Wiegand karty, fotky + video, stránka /alarm, Home Assistant |
 | `cam [live\|snap\|bars\|reg a [v]\|off]` | kamera na plochom kábli: nájde senzor, obraz naživo na HDMI |
 | `thermal [once\|range lo hi\|person C]` | termokamera 8x8 (AMG8833), tepelná mapa naživo |

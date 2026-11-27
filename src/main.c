@@ -2,7 +2,7 @@
 #include "usb.h"
 #include "sd.h"
 
-#define VERSION "0.143"
+#define VERSION "0.144"
 
 const char *os_version(void) { return VERSION; }
 /* found by 'update' / POST /api/update in a kernel8.img: only a RoboOS kernel may replace the running one */
@@ -132,7 +132,8 @@ void kernel_main(void)
     thermal_boot();                      /* I2C 0x69: AMG8833 thermal camera */
     display_boot();                      /* I2C: OLED / LCD display (/DISPLAY.TXT) */
     doorbell_boot();                     /* /DOORBELL.TXT: doorbell button + door radar */
-    alarm_boot();                        /* /ALARM.TXT + /ALARM.ST: the burglar alarm (armed again after a power cut) */
+    alarm_boot();
+    modem_boot();                        /* 0.144: /MODEM.TXT - SMS / calls for the alarm */                        /* /ALARM.TXT + /ALARM.ST: the burglar alarm (armed again after a power cut) */
     radio_boot();                        /* I2C: RDA5807M FM radio (/RADIO.TXT) */
     { u64 rt = rtc_read(); if (rt) clock_set_time(rt, 3); }   /* the time before NTP answers */
     voice_boot();                        /* I2C 0x64: DFRobot offline voice module (/VOICE.TXT) */

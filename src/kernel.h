@@ -45,6 +45,19 @@ void uart_putc(char c);
 char uart_getc(void);
 int  uart_has_char(void);
 void uart_console_mini(int on);          /* console PL011 <-> mini UART (Bluetooth takes the PL011) */
+void uart_modem_open(u32 baud);          /* 0.144: GSM/LTE modem on GPIO14/15 (mini UART) */
+void uart_modem_close(void);
+void uart_modem_baud(u32 baud);
+void uart_modem_putc(u8 c);
+int  uart_modem_getc(void);              /* -1 = nothing */
+int  uart_modem_owned(void);
+void modem_boot(void);                   /* modem.c */
+void modem_poll(void);                   /* core 0, con_trygetc */
+void modem_rx_pump(void);                /* core 1, io_poll_all */
+void modem_event(int kind, const char *text);   /* 1 alarm, 2 armed, 3 disarmed, 4 other */
+void modem_cmd(int argc, char **argv);
+int  modem_info(char *b, int max);       /* one status line for 'alarm' */
+int  alarm_sms_cmd(const char *text, const char *from, char *reply, int max);
 void uart_bt_init(int flow);
 void uart_bt_baud(u32 baud);
 void uart_bt_putc(u8 c);

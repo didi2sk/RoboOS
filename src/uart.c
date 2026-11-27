@@ -15,9 +15,19 @@
 #define UART0_IMSC  (MMIO_BASE + 0x201038)
 #define UART0_ICR   (MMIO_BASE + 0x201044)
 
+static volatile int modem_owns;             /* 0.144: GPIO14/15 + the mini UART belong to the modem (modem.c) */
+
 void uart_init(void)
 {
     mmio_write(UART0_CR, 0);                 /* disable UART */
+    if (modem_owns) {                        /* the pins are the modem's: the PL011 runs pin-less (QEMU still sees it) */
+        u32 c2[3] = { 2, 4000000, 0 };
+        mbox_prop(0x00038002, c2, 3);
+        gpio_func(32, 0); gpio_func(33, 0);
+        mmio_write(UART0_ICR, 0x7FF); mmio_write(UART0_IBRD, 2); mmio_write(UART0_FBRD, 0xB);
+        mmio_write(UART0_LCRH, 0x7 << 4); mmio_write(UART0_IMSC, 0); mmio_write(UART0_CR, 0x301);
+        return;
+    }
 
     /* set UART clock to 4 MHz via firmware (default 48 MHz) */
     u32 clk[3] = { 2 /* UART */, 4000000, 0 };
@@ -77,6 +87,11 @@ static void pull(int pin, int mode)
 void uart_console_mini(int on)
 {
     if (on == on_mini) return;
+    if (modem_owns) {                        /* 0.144: the mini UART is the modem's - the console has no serial line then */
+        on_mini = on;
+        if (!on) uart_init();
+        return;
+    }
     if (on) {
         while (mmio_read(UART0_FR) & 0x08) ;  /* PL011 still sending */
         u32 clk[2] = { 4, 0 };               /* core clock: 250 MHz with enable_uart=1 */
@@ -151,9 +166,58 @@ int uart_bt_getc(u32 us)
 
 /* ---------------- the console ---------------- */
 
+/* ---------------- 0.144: the modem on the mini UART (GPIO14 TX pin 8, GPIO15 RX pin 10, ALT5) ---------------- */
+
+void uart_modem_baud(u32 baud)
+{
+    u32 clk[2] = { 4, 0 };                   /* core clock: 250 MHz with enable_uart=1 */
+    u32 core = mbox_prop(0x00030002, clk, 2) && clk[1] ? clk[1] : 250000000;
+    while (modem_owns && !(mmio_read(MU_LSR) & 0x40)) ;
+    mmio_write(MU_CNTL, 0);
+    mmio_write(MU_BAUD, core / (8 * baud) - 1);
+    mmio_write(MU_IIR, 0xC6);
+    mmio_write(MU_CNTL, 3);
+}
+
+void uart_modem_open(u32 baud)
+{
+    if (on_mini) { while (!(mmio_read(MU_LSR) & 0x40)) ; }   /* the console was there (Bluetooth on): it goes quiet */
+    else while (mmio_read(UART0_FR) & 0x08) ;
+    modem_owns = 1;
+    mmio_write(AUX_ENABLES, mmio_read(AUX_ENABLES) | 1);
+    mmio_write(MU_CNTL, 0);
+    mmio_write(MU_IER, 0);
+    mmio_write(MU_LCR, 3);
+    mmio_write(MU_MCR, 0);
+    gpio_func(14, 2);                        /* ALT5 */
+    gpio_func(15, 2);
+    pull(15, 2);
+    uart_modem_baud(baud);
+}
+
+void uart_modem_close(void)
+{
+    if (!modem_owns) return;
+    while (!(mmio_read(MU_LSR) & 0x40)) ;
+    modem_owns = 0;
+    if (on_mini) { on_mini = 0; uart_console_mini(1); }   /* Bluetooth still on: the console back on the mini UART */
+    else uart_init();
+}
+
+void uart_modem_putc(u8 c)
+{
+    u64 end = timer_us() + 20000;
+    while (!(mmio_read(MU_LSR) & 0x20)) if (timer_us() > end) return;
+    mmio_write(MU_IO, c);
+}
+
+int uart_modem_getc(void) { return (mmio_read(MU_LSR) & 1) ? (int)(mmio_read(MU_IO) & 0xFF) : -1; }
+int uart_modem_owned(void) { return modem_owns; }
+
 void uart_putc(char c)
 {
     if (on_mini) {
+        if (modem_owns) return;
         while (!(mmio_read(MU_LSR) & 0x20)) ;  /* TX FIFO full */
         mmio_write(MU_IO, (u8)c);
         return;
@@ -164,13 +228,14 @@ void uart_putc(char c)
 
 int uart_has_char(void)
 {
-    if (on_mini) return mmio_read(MU_LSR) & 1;
+    if (on_mini) return modem_owns ? 0 : (mmio_read(MU_LSR) & 1);
     return !(mmio_read(UART0_FR) & 0x10);
 }
 
 char uart_getc(void)
 {
     if (on_mini) {
+        if (modem_owns) return 0;
         while (!(mmio_read(MU_LSR) & 1)) ;
         return (char)(mmio_read(MU_IO) & 0xFF);
     }

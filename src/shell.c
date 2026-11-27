@@ -739,6 +739,7 @@ static const struct cmd cmds[] = {
     { "radio",  "[MHz|up|down|scan|vol|off]", "FM radio (RDA5807M module)",  radio_cmd  },
     { "motion", "[watch|zero|threshold mg|alarm on|off]", "tilt, acceleration, shakes (MPU-6050)", motion_cmd },
     { "alarm",  "[on|off|arm|home|disarm <code>|zone|set|keypad|rfid|card|log|test]", "burglar alarm: zones, siren, keypad + cards, photos + video, web page /alarm, Home Assistant", alarm_cmd },
+    { "modem",  "[on|off|number|pin|set|sms|call|at]", "GSM/LTE modem (SIM800L, A7670, SIM7600) on GPIO14/15: alarm SMS, calls, SMS commands", modem_cmd },
     { "doorbell", "[on [pin]|off|test|radar <pin>|...]", "video doorbell: button -> photo + gong + Home Assistant; door radar", doorbell_cmd },
     { "microscope", "", "camera full screen: zoom 1-2.5x (+ -), arrows, space photo, v video, q quit", cmd_micro },
     { "cam", "[reg a [v]|off]", "camera on the CSI cable (OV5647 / IMX219)", camera_cmd },

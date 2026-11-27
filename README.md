@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.143**
+Current version: **0.144**
 
 ## Supported boards
 
@@ -540,6 +540,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.131: `alarm keypad shield` (keypad with the IoT shield: GPIO 13 19 26 21 / 20 7 18 + GND); pin clashes between the keypad / card reader and alarm zones or the doorbell button are shown (`!!`, `PIN TAKEN`) and such a zone is not watched.
 0.132: `alarm keypad test` - live key / line levels for checking the keypad wiring.
 0.133: while the alarm is on, the display's normal status screen shows the alarm (state, code as stars, seconds left) by itself; the console shows the typed code as stars (`[KEYPAD] code: ****`). A zone with nothing connected shows as open (e.g. the window of `alarm shield`) - remove unused zones (`alarm zone del 27`).
+0.144: GSM / LTE modem for the alarm (SIM800L, A7670E, SIM7600E on pins 8/10): SMS on alarm / arm / disarm, calls in an alarm, SMS commands ARM / HOME / DISARM / STATUS from listed numbers (`modem`).
 0.143: FIX Pi 3B+: straight to a 100 Mbit board (Pi 3B) it said `link up, 1000 Mbit` and set its MAC to 1000 while the wire ran at 100 = nothing got through; 1000 is now taken only when the 1000BASE-T receivers report OK.
 0.142: Pi 3B+: the LEDs on the network jack are switched on (RoboOS never enabled them); `net` shows what the PHY sees (link, auto-negotiation, what the other side offers, 1000 Mbit).
 0.141: FIX: while WiFi carried the traffic, a cable plugged in was never noticed (the link was only checked while frames were read from the cable) - so cable + WiFi (0.140) did not use the cable.
@@ -1306,6 +1307,29 @@ alone does not protect it. Separate the reader with an optocoupler on each line 
   RC522 on SPI only ~10-20 cm (keep it next to the Pi). With the Pi inside and the reader at the gate, an outdoor
   Wiegand keypad + 125 kHz card reader in one (12 V, IP65) sends keys AND cards over the same two wires.
 
+**GSM / LTE modem for the alarm (0.144)**: SMS and calls over the mobile network - they still go out when the
+internet is down. Modules: SIM800L (2G, being switched off in Europe) or SIMCom A7670E / SIM7600E (LTE), the same
+standard AT commands. Wiring (the serial console moves away from these pins while the modem is on):
+
+| Modem | Pi |
+|---|---|
+| RXD | pin 8 (GPIO14) - for the SIM800L (2.8 V logic) through a divider, e.g. 4.7 k in series + 10 k to GND |
+| TXD | pin 10 (GPIO15) |
+| GND | any GND pin |
+| VCC | its OWN supply: SIM800L 3.7-4.2 V, peaks of 2 A (a Li-ion cell or a buck converter), never the Pi's 3.3 V / 5 V |
+
+```
+modem number add +421900123456     who gets the SMS / calls and may send commands (up to 5)
+modem on                           probe + set up (9600 baud; an LTE module is switched from 115200 by itself)
+modem                              status: network, signal in dBm, SIM, SMS counts
+modem sms +421900123456 test       a test SMS        modem at AT+CSQ     any AT command
+modem set sms_alarm|sms_arm|sms_disarm|call|commands on|off
+```
+On an alarm every number gets an SMS ("<board> 14:03: ALARM: door") and is called in turn (25 s each, a disarm
+stops the calls); arming / disarming send an SMS too. SMS commands from the listed numbers only: `ARM 1234`,
+`HOME 1234`, `DISARM 1234`, `STATUS` - the answer comes back by SMS. Old messages on the SIM are deleted when the
+modem starts (a stale DISARM never runs). `alarm` shows the modem's state. Settings in /MODEM.TXT.
+
 **Keypad terminal: a second Pi as the keypad + display (0.134).** The same kernel on another board (e.g. a Zero 2 W
 by the door) becomes a terminal of the alarm board:
 
@@ -1455,6 +1479,7 @@ If you connect after boot, press Enter.
 | `ai <question>\|@cmd ..\|key\|model` | ask Claude (own Anthropic API key) |
 | `radio [MHz\|up\|down\|scan\|vol n\|off]` | FM radio (RDA5807M module on I2C) |
 | `motion [watch\|zero\|threshold mg\|alarm on\|off]` | tilt, acceleration, shakes (MPU-6050 / GY-521) |
+| `modem [on\|off\|number\|pin\|set\|sms\|call\|at]` | GSM/LTE modem on pins 8/10: alarm SMS + calls, SMS commands |
 | `alarm [on\|off\|arm\|home\|disarm <code>\|zone\|set\|shield\|keypad\|rfid\|card\|remote\|log\|test]` | burglar alarm in the kernel: zones, siren, keypad + RFID / Wiegand cards, photos + video, web page /alarm, Home Assistant |
 | `cam [live\|snap\|bars\|reg a [v]\|off]` | camera on the CSI ribbon: find the sensor, live picture on HDMI |
 | `thermal [once\|range lo hi\|person C]` | 8x8 thermal camera (AMG8833), live heat map |
