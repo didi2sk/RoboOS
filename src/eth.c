@@ -76,6 +76,8 @@
 #define L_HW_MEF       0x00000010
 #define L_HW_CLK125    0x02000000
 #define L_HW_REFCLK25  0x01000000
+#define L_HW_LED0_EN   0x00100000      /* 0.142: the jack LEDs (Linux enables them from the device tree) */
+#define L_HW_LED1_EN   0x00200000
 #define L_PMT_PHY_RST  0x00000010
 #define L_PMT_READY    0x00000080
 #define L_USB_BIR      0x00000040
@@ -275,7 +277,7 @@ static int lan78_init(void)
     if ((r = reg_read(L_USB_CFG0, &v))) return fail("USB_CFG0", r);
     if ((r = reg_write(L_USB_CFG0, v & ~(L_USB_BIR | L_USB_BCE)))) return fail("USB_CFG0", r);
     if ((r = reg_read(L_HW_CFG, &v))) return fail("HW_CFG", r);
-    if ((r = reg_write(L_HW_CFG, (v & ~L_HW_MEF) | L_HW_CLK125 | L_HW_REFCLK25))) return fail("HW_CFG", r);
+    if ((r = reg_write(L_HW_CFG, (v & ~L_HW_MEF) | L_HW_CLK125 | L_HW_REFCLK25 | L_HW_LED0_EN | L_HW_LED1_EN))) return fail("HW_CFG", r);
 
     /* FIFOs (12 KB each), no flow control, accept our address + broadcast + multicast */
     if ((r = reg_write(L_FCT_RX_END, (12 * 1024 - 512) / 512))) return fail("FIFO size", r);
@@ -511,6 +513,18 @@ int eth_set_gigabit(int on)
     return 0;
 }
 int eth_gigabit(void) { return fam == FAM_LAN78 && giga; }
+
+/* 0.142: raw PHY registers for `net` (BMCR, BMSR, advertise, partner, 1000 ctl, 1000 status); 0 = ok */
+int eth_phy_regs(u16 r[6])
+{
+    static const u8 n[6] = { 0, 1, 4, 5, 9, 10 };
+    if (!ed || stage[0] || fam == FAM_ECM) return -1;
+    io_lock();
+    int e = 0;
+    for (int i = 0; i < 6; i++) { r[i] = 0; if (phy_read(n[i], &r[i])) e = -1; }
+    io_unlock();
+    return e;
+}
 
 int eth_link_cached(void) { return ed && !stage[0] ? last_link : 0; }
 static void link_tick(void);

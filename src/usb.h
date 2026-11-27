@@ -82,6 +82,7 @@ const char *eth_error(int *code, u32 *hcint);    /* 0 = fine, else the failed in
 int  eth_link(int *full);                        /* 0 = down, else 10 / 100 / 1000 */
 int  eth_set_gigabit(int on);                    /* LAN7515 only; -1 = not this chip */
 int  eth_gigabit(void);
+int  eth_phy_regs(unsigned short r[6]);           /* 0.142 */
 void eth_link_poll(void);                       /* 0.141: once a second, no frames */
 int  eth_link_cached(void);                      /* last known speed, no USB traffic */
 int  eth_send(const void *frame, int len);       /* frame = dst, src, type, payload */
