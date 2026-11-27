@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.144**
+Aktuálna verzia: **0.145**
 
 ## Podporované dosky
 
@@ -537,6 +537,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.132: `alarm keypad test` - naživo klávesa a úrovne liniek na kontrolu zapojenia klávesnice.
 0.133: pri zapnutom alarme bežná stavová obrazovka displeja sama ukazuje alarm (stav, kód ako hviezdičky, zostávajúce sekundy); konzola ukazuje písaný kód ako hviezdičky (`[KEYPAD] code: ****`). Zóna bez pripojeného kontaktu sa javí ako otvorená (napr. okno z `alarm shield`) - nepoužité zóny zmaž (`alarm zone del 27`).
 0.144: GSM / LTE modem pre alarm (SIM800L, A7670E, SIM7600E na pinoch 8/10): SMS pri poplachu / zastrážení / odstrážení, hovory pri poplachu, SMS príkazy ARM / HOME / DISARM / STATUS z čísel v zozname (`modem`).
+0.145: OLED modul s otočným gombíkom + tlačidlami CONFIRM / BACK ako klávesnica alarmu (`alarm knob`): otočenie = číslica, stlačenie = pridať, BACK = zmazať, CONFIRM = odoslať.
 0.143: OPRAVA Pi 3B+: priamo s doskou na 100 Mbit (Pi 3B) hlásil `link up, 1000 Mbit` a nastavil MAC na 1000, hoci kábel bežal na 100 = nič neprešlo; 1000 sa teraz berie, len keď prijímače 1000BASE-T hlásia OK.
 0.142: Pi 3B+: LED na sieťovom konektore sa zapnú (RoboOS ich nikdy nezapínal); `net` ukáže, čo vidí PHY (linka, auto-negotiation, čo ponúka druhá strana, 1000 Mbit).
 0.141: OPRAVA: kým išla prevádzka cez WiFi, zapojený kábel sa nikdy nezistil (linka sa kontrolovala len pri čítaní rámcov z kábla) - preto kábel + WiFi (0.140) kábel nepoužil.
@@ -1293,6 +1294,28 @@ neochráni. Čítačku oddeľ optočlenom na každej linke (ako vstupy IoT shiel
 - Na porovnanie: klávesnica na GPIO ~2-3 m kábla, I2C ~1 m (desiatky metrov s extenderom P82B715), RC522 na SPI
   len ~10-20 cm (nech je pri Pi). Keď je Pi vnútri a čítačka pri bráne, vonkajšia Wiegand klávesnica s čítačkou
   kariet 125 kHz v jednom (12 V, IP65) posiela klávesy AJ karty po tých istých dvoch drôtoch.
+
+**OLED modul s otočným gombíkom (0.145, `alarm knob`)**: malé dosky s I2C OLED 0,96" / 1,3", gombíkom EC11
+a dvoma tlačidlami (piny CONFIRM, OLED_SDA, OLED_SCL, ENCODER_PUSH, ENCODER_TRA, ENCODER_TRB, BAK, GND, 3V3-5V)
+fungujú ako klávesnica alarmu. Otočenie = výber číslice (displej ukáže `Code: **[5]`), stlačenie gombíka = pridať
+číslicu, BAK = zmazať poslednú, CONFIRM = odoslať kód (ako `#`: zastráži, keď je odstrážené, inak odstráži). Ide aj
+na termináli (`alarm remote ...`). Zapojenie (pull-upy sú interné; OLED sa nájde ako každý I2C displej, režim `alarm`):
+
+| pin modulu | hrebienok Pi |
+|---|---|
+| 3V3-5V | pin 1 (3,3 V) |
+| GND | pin 39 (alebo hocijaký GND) |
+| OLED_SDA | pin 3 (GPIO2) |
+| OLED_SCL | pin 5 (GPIO3) |
+| ENCODER_TRA | pin 31 (GPIO6) |
+| ENCODER_TRB | pin 33 (GPIO13) |
+| ENCODER_PUSH | pin 35 (GPIO19) |
+| CONFIRM | pin 37 (GPIO26) |
+| BAK | pin 40 (GPIO21) |
+
+Iné piny: `alarm knob <tra> <trb> <push> <confirm> <back>` (čísla GPIO); opačný smer: pridaj `reverse`;
+`alarm knob off`. Tieto piny IoT shield nepoužíva (len GPIO6 = tlačidlo zvončeka, ak ho máš); kolízie so zónami,
+sirénou alebo LED sa ukážu cez `!!`.
 
 **GSM / LTE modem pre alarm (0.144)**: SMS a hovory cez mobilnú sieť - odídu, aj keď nejde internet. Moduly:
 SIM800L (2G, v Európe sa vypína) alebo SIMCom A7670E / SIM7600E (LTE), rovnaké štandardné AT príkazy. Zapojenie

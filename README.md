@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.144**
+Current version: **0.145**
 
 ## Supported boards
 
@@ -541,6 +541,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.132: `alarm keypad test` - live key / line levels for checking the keypad wiring.
 0.133: while the alarm is on, the display's normal status screen shows the alarm (state, code as stars, seconds left) by itself; the console shows the typed code as stars (`[KEYPAD] code: ****`). A zone with nothing connected shows as open (e.g. the window of `alarm shield`) - remove unused zones (`alarm zone del 27`).
 0.144: GSM / LTE modem for the alarm (SIM800L, A7670E, SIM7600E on pins 8/10): SMS on alarm / arm / disarm, calls in an alarm, SMS commands ARM / HOME / DISARM / STATUS from listed numbers (`modem`).
+0.145: OLED module with a rotary knob + CONFIRM / BACK buttons as the alarm keypad (`alarm knob`): turn = digit, push = add it, BACK = delete, CONFIRM = send.
 0.143: FIX Pi 3B+: straight to a 100 Mbit board (Pi 3B) it said `link up, 1000 Mbit` and set its MAC to 1000 while the wire ran at 100 = nothing got through; 1000 is now taken only when the 1000BASE-T receivers report OK.
 0.142: Pi 3B+: the LEDs on the network jack are switched on (RoboOS never enabled them); `net` shows what the PHY sees (link, auto-negotiation, what the other side offers, 1000 Mbit).
 0.141: FIX: while WiFi carried the traffic, a cable plugged in was never noticed (the link was only checked while frames were read from the cable) - so cable + WiFi (0.140) did not use the cable.
@@ -1306,6 +1307,28 @@ alone does not protect it. Separate the reader with an optocoupler on each line 
 - For comparison: a GPIO matrix keypad ~2-3 m of cable, I2C ~1 m (tens of metres with a P82B715 extender), the
   RC522 on SPI only ~10-20 cm (keep it next to the Pi). With the Pi inside and the reader at the gate, an outdoor
   Wiegand keypad + 125 kHz card reader in one (12 V, IP65) sends keys AND cards over the same two wires.
+
+**OLED module with a rotary knob (0.145, `alarm knob`)**: the small boards with a 0.96" / 1.3" I2C OLED, an EC11
+knob and two buttons (pins CONFIRM, OLED_SDA, OLED_SCL, ENCODER_PUSH, ENCODER_TRA, ENCODER_TRB, BAK, GND, 3V3-5V)
+work as the alarm keypad. Turn = choose a digit (the display shows `Code: **[5]`), push the knob = add that digit,
+BAK = delete the last one, CONFIRM = send the code (like `#`: arm when disarmed, else disarm). Works on a terminal
+too (`alarm remote ...`). Wiring (pull-ups are internal; the OLED is found like any I2C display, mode `alarm`):
+
+| module pin | Pi header |
+|---|---|
+| 3V3-5V | pin 1 (3.3 V) |
+| GND | pin 39 (or any GND) |
+| OLED_SDA | pin 3 (GPIO2) |
+| OLED_SCL | pin 5 (GPIO3) |
+| ENCODER_TRA | pin 31 (GPIO6) |
+| ENCODER_TRB | pin 33 (GPIO13) |
+| ENCODER_PUSH | pin 35 (GPIO19) |
+| CONFIRM | pin 37 (GPIO26) |
+| BAK | pin 40 (GPIO21) |
+
+Other pins: `alarm knob <tra> <trb> <push> <confirm> <back>` (GPIO numbers); the wrong direction: add `reverse`;
+`alarm knob off`. These pins are not used by the IoT shield (only GPIO6 = the doorbell button, if you use it);
+clashes with zones, the siren or the LED are shown with `!!`.
 
 **GSM / LTE modem for the alarm (0.144)**: SMS and calls over the mobile network - they still go out when the
 internet is down. Modules: SIM800L (2G, being switched off in Europe) or SIMCom A7670E / SIM7600E (LTE), the same
