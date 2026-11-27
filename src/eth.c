@@ -481,7 +481,11 @@ static int link_update(int *full)
         u16 c = adv & lpa;
         int speed = (c & 0x0180) ? 100 : 10;
         int fd = (c & 0x0100) || (!(c & 0x0180) && (c & 0x0040));
-        if (!phy_read(9, &gctl) && !phy_read(10, &gsts) && (gctl & 0x0200) && (gsts & 0x0800)) {
+        /* 1000 only when both offer it AND the 1000BASE-T receivers are really OK (bits 13 local, 12 remote):
+         * 0.143 - straight to a Pi 3B (100 Mbit only) the PHY showed the partner bit and we set the MAC to
+         * 1000 while the wire ran at 100 = link "up 1000" but no frame got through */
+        if (!phy_read(9, &gctl) && !phy_read(10, &gsts) && (gctl & 0x0200) && (gsts & 0x0800) && (gsts & 0x3000) == 0x3000
+            && !(gsts & 0x8000)) {
             speed = 1000; fd = 1;                /* both sides can do 1000BASE-T full duplex */
         }
         if (speed != cur_speed || fd != cur_full) lan78_up(speed, fd);
