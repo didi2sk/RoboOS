@@ -59,7 +59,7 @@ async def check():
 
             with closing(station.db()) as db, db:
                 before = [row[0] for row in db.execute('SELECT label FROM events ORDER BY id')]
-                assert before == ['Poplach · Zadné dvere', 'Zastrážené', 'Odstrážené',
+                assert before == ['Poplach · Zadné dvere', 'Zastrážené · užívateľ 001', 'Odstrážené · užívateľ 001',
                                   'Test prenosu', 'Návrat po poplachu · Zadné dvere'], before
                 db.execute('UPDATE objects SET last_seen=1 WHERE account=?', ('1001',))
             station.supervise()

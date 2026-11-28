@@ -123,18 +123,32 @@ class Station:
         if duplicate:
             return
         qualifier, code, partition, number = event
-        incident = qualifier == '1' and code in ALARM_CODES
+        incident = qualifier == '1' and (code in ALARM_CODES or code == '461')
+        zones = self.objects[account].get('zones', {})
+        zone = zones.get(f'{partition}/{number}', zones.get(number, f'Zóna {number}'))
         if code == '401' and qualifier in ('1', '3'):
             label = 'Odstrážené' if qualifier == '1' else 'Zastrážené'
+        elif code == '441' and qualifier in ('1', '3'):
+            label = 'Odstrážené (doma)' if qualifier == '1' else 'Zastrážené doma'
         elif code in ('601', '602'):
             label = 'Test prenosu'
+        elif code == '120' and qualifier in ('1', '3'):
+            label = 'Panika' if incident else 'Návrat po panike'
         elif code in ALARM_CODES and qualifier in ('1', '3'):
-            label = 'Poplach' if incident else 'Návrat po poplachu'
-            zones = self.objects[account].get('zones', {})
-            zone = zones.get(f'{partition}/{number}', zones.get(number, f'Zóna {number}'))
+            label = ('Poplach 24h' if code == '133' else 'Poplach') if incident else 'Návrat po poplachu'
             label += f' · {zone}'
+        elif code == '406':
+            label = 'Poplach zrušený'
+        elif code == '461':
+            label = 'Zablokovaný kód (veľa zlých pokusov)'
+        elif code == '305':
+            label = 'Zapnutie / reštart ústredne'
+        elif code == '301':
+            label = 'Výpadok napájania' if qualifier == '1' else 'Napájanie obnovené'
         else:
             label = 'Udalosť Contact ID'
+        if code in ('401', '441', '406') and number != '000':
+            label += f' · užívateľ {number}'
         row = db.execute(
             'INSERT INTO events(received, account, sequence, payload, qualifier, code, partition, number, label) '
             'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
