@@ -1357,8 +1357,10 @@ code, 011.. = the cards): E130 burglary (zone), E133 24h zone, E120 panic, R401 
 E401 / E441 disarmed (user), E406 alarm cancelled, R130 / R120 restored when the siren time is over, E461 code
 blocked (5 wrong), E602 periodic test, E305 power up. In SIA-DCS the same as BA / PA / CL / NL / OP / BC / BR / PR /
 JA / RP / RR. The board needs the time (NTP, DCF77, RTC or `time set`) - DC-09 messages carry it, and encrypted
-ones must. Test without a PCO: `tools/dc09_receiver.py <tcp port> <udp port> log.json [key]` (prints nothing, writes
-every message it got + whether CRC / length / format / time are right).
+ones must. Test without a PCO: `tools/dc09_receiver.py <tcp port> <udp port> log.json [key]` on a PC (also Windows:
+install Python from python.org, `python dc09_receiver.py 5001 5002 log.json`, allow it in the firewall, then on the
+board `pco host <PC address> 5001 tcp`, `pco on`, `pco test`). It prints one line per message with its answer and
+writes the details to the log (CRC / length / format / time checks); a key needs `pip install cryptography`.
 
 **GSM / LTE modem for the alarm (0.144)**: SMS and calls over the mobile network - they still go out when the
 internet is down. Modules: SIM800L (2G, being switched off in Europe) or SIMCom A7670E / SIM7600E (LTE), the same

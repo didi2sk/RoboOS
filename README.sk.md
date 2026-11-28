@@ -1344,8 +1344,10 @@ Udalosti (Contact ID, podsystém 01; zóna = poradie zóny v zozname, `alarm` ic
 E401 / E441 odstrážené (užívateľ), E406 poplach zrušený, R130 / R120 obnova po skončení sirény, E461 kód zablokovaný
 (5 zlých), E602 pravidelný test, E305 zapnutie. V SIA-DCS to isté ako BA / PA / CL / NL / OP / BC / BR / PR / JA / RP /
 RR. Doska potrebuje čas (NTP, DCF77, RTC alebo `time set`) - správy DC-09 ho nesú a šifrované musia. Skúška bez PCO:
-`tools/dc09_receiver.py <tcp port> <udp port> log.json [kľúč]` (zapíše každú prijatú správu + či sedí CRC / dĺžka /
-formát / čas).
+`tools/dc09_receiver.py <tcp port> <udp port> log.json [kľúč]` na PC (aj Windows: Python z python.org,
+`python dc09_receiver.py 5001 5002 log.json`, povoliť ho vo firewalle, potom na doske `pco host <adresa PC> 5001 tcp`,
+`pco on`, `pco test`). Vypíše riadok na každú správu s odpoveďou a podrobnosti zapíše do logu (CRC / dĺžka / formát /
+čas); kľúč potrebuje `pip install cryptography`.
 
 **GSM / LTE modem pre alarm (0.144)**: SMS a hovory cez mobilnú sieť - odídu, aj keď nejde internet. Moduly:
 SIM800L (2G, v Európe sa vypína) alebo SIMCom A7670E / SIM7600E (LTE), rovnaké štandardné AT príkazy. Zapojenie

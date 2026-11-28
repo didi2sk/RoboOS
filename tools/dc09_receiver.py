@@ -5,10 +5,11 @@ Test receiver for SIA DC-09 (RoboOS pco.c, 0.146): TCP + UDP, checks CRC-16/ARC,
 Every message goes to the log file as one JSON line.
 
 usage: tools/dc09_receiver.py <tcp port> <udp port> <log file> [key hex|text:...] [nak_first] [duh=<code>]
+Prints one line per message; a key needs the 'cryptography' package (pip install cryptography).
+Windows: python dc09_receiver.py 5001 5002 log.json   (allow Python in the firewall when asked)
 """
 import json, re, socket, sys, threading, time
 from datetime import datetime, timezone
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 tport, uport, logf = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
 key = None
@@ -38,6 +39,7 @@ def crc(s):
     return "%04X" % c
 
 def aes(data, dec):
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes   # only with a key: pip install cryptography
     c = Cipher(algorithms.AES(key), modes.CBC(bytes(16)))
     x = c.decryptor() if dec else c.encryptor()
     return x.update(data) + x.finalize()
@@ -109,6 +111,10 @@ def handle(raw, proto):
 def log(rec):
     with lock:
         with open(logf, "a") as f: f.write(json.dumps(rec) + "\n")
+        ok = all(rec.get(k, True) for k in ("crc_ok", "len_ok", "ts_ok", "data_ok", "pad_ok"))
+        what = rec.get("error") or (rec.get("id", "") + " " + (rec.get("data") or "(supervision)"))
+        print(time.strftime("%H:%M:%S"), rec["proto"].upper(), rec.get("seq", "----"), what,
+              "->", rec.get("answer", "no answer"), "" if ok else "  !! FORMAT PROBLEM: " + json.dumps(rec), flush=True)
 
 def tcp_client(c):
     buf = b""
@@ -137,6 +143,10 @@ def udp_server():
         r = handle(d.decode(errors="replace"), "udp")
         if r: u.sendto(r, a)
 
+print(f"SIA DC-09 test receiver: TCP {tport}, UDP {uport}, log {logf}" + (", AES key set" if key else ""), flush=True)
 threading.Thread(target=tcp_server, daemon=True).start()
 threading.Thread(target=udp_server, daemon=True).start()
-while True: time.sleep(3600)
+try:
+    while True: time.sleep(1)
+except KeyboardInterrupt:
+    pass
