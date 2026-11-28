@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.148**
+Aktuálna verzia: **0.149**
 
 ## Podporované dosky
 
@@ -541,6 +541,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.146: hlásenia alarmu na pult centralizovanej ochrany (PCO) cez SIA DC-09 po TCP alebo UDP: Contact ID (ADM-CID) alebo SIA-DCS, šifrovanie AES, záložný prijímač, kontrolné spojenie, denný test (`pco`).
 0.147: PCO: kontrolné spojenie (NULL) so sekvenciou 0000 a opakovanie s rovnakými bajtmi (aj s časom), aby prijímač spoznal opakovanie - overené proti `pco-server` (Robo PCO).
 0.148: hlas pri dverách cez web (`intercom`, stránka `/door`): mikrofón INMP441 + reproduktor s MAX98357A na I2S - počúvaš dvere a podržaním tlačidla hovoríš z prehliadača v mobile.
+0.149: zvonček: stavová LED (`doorbell led`), vlastné MQTT topicy ako mal starý program (`doorbell topic ring|move`), `doorbell radar hold` - RoboOS tak nahradí existujúci zvonček bez zmeny v Home Assistant.
 0.143: OPRAVA Pi 3B+: priamo s doskou na 100 Mbit (Pi 3B) hlásil `link up, 1000 Mbit` a nastavil MAC na 1000, hoci kábel bežal na 100 = nič neprešlo; 1000 sa teraz berie, len keď prijímače 1000BASE-T hlásia OK.
 0.142: Pi 3B+: LED na sieťovom konektore sa zapnú (RoboOS ich nikdy nezapínal); `net` ukáže, čo vidí PHY (linka, auto-negotiation, čo ponúka druhá strana, 1000 Mbit).
 0.141: OPRAVA: kým išla prevádzka cez WiFi, zapojený kábel sa nikdy nezistil (linka sa kontrolovala len pri čítaní rámcov z kábla) - preto kábel + WiFi (0.140) kábel nepoužil.
@@ -1319,6 +1320,24 @@ na termináli (`alarm remote ...`). Zapojenie (pull-upy sú interné; OLED sa n�
 Iné piny: `alarm knob <tra> <trb> <push> <confirm> <back>` (čísla GPIO); opačný smer: pridaj `reverse`;
 `alarm knob off`. Tieto piny IoT shield nepoužíva (len GPIO6 = tlačidlo zvončeka, ak ho máš); kolízie so zónami,
 sirénou alebo LED sa ukážu cez `!!`.
+
+**Náhrada existujúceho zvončeka (0.149)**: rovnaké piny a rovnaké MQTT správy ako starý program, takže v Home
+Assistant netreba nič meniť. Príklad (tlačidlo GPIO8 na GND, LED GPIO18, radar RCWL-0516 GPIO26, topicy `door/gong` a
+`door/move`):
+
+```
+mqtt broker 192.168.1.171
+doorbell on 8
+doorbell led 18                                   svieti počas zvonenia, 0,5 s pri pohybe a pri štarte
+doorbell radar 26
+doorbell radar hold 3                             sekúnd medzi návštevami (predvolené 30)
+doorbell topic ring door/gong motion_detected     pošle hneď po stlačení (payload = zvyšok riadku)
+doorbell topic move door/move Pohyb detegovany!   pošle pri pohybe pred dverami
+doorbell test   /   doorbell radar test           skúška
+```
+
+Fotky idú do `/CAM/<dátum>/` na karte a (s MQTT) do `<base>/camera`; odchádzajú aj bežné správy `<base>/doorbell` a
+`<base>/radar`. E-mail RoboOS posielať nevie.
 
 **Hlas pri dverách (0.148, `intercom`, stránka `/door`)**: hovoríš s návštevou cez webovú stránku - počuješ
 dvere a kým držíš **Hold to talk**, dvere počujú teba (striedavo = bez ozveny). Dva lacné I2S moduly zdieľajú
