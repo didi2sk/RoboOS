@@ -1,0 +1,12 @@
+{
+  "objects": {
+    "1001": {
+      "name": "RoboOS pilot",
+      "offline_after": 90,
+      "zones": {
+        "003": "Zadné dvere",
+        "004": "Sklad"
+      }
+    }
+  }
+}
