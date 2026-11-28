@@ -691,6 +691,10 @@ logged_in:;
         head(200); put(kj);
         return olen;
     }
+    if (!strcmp(path, "/api/camera.mjpg")) {              /* 0.150: MJPEG stream (Frigate, VLC, Home Assistant) */
+        if (!get) return fail(405, "use GET");
+        return -9;
+    }
     if (!strcmp(path, "/api/camera.jpg")) {               /* 0.104: ip.c sends the picture, camera.c takes it on core 0 */
         if (!get) return fail(405, "use GET");
         return -2;
@@ -748,5 +752,5 @@ logged_in:;
         put("{\"ok\":true,\"rebooting\":true}\n");
         return olen;
     }
-    return fail(404, "unknown: GET /api/status, GET|POST /api/gpio, GET /api/gpio/<pin>, GET|POST /api/sound, GET|POST /api/display, GET|POST /api/radio, GET /api/sensors, GET|POST /api/camera, GET /api/camera.jpg, GET|POST /api/alarm, GET|POST /api/kernel, GET|POST /api/files, GET /api/file, GET /api/door, GET /api/door/audio, POST /api/door/speak, POST /api/reboot");
+    return fail(404, "unknown: GET /api/status, GET|POST /api/gpio, GET /api/gpio/<pin>, GET|POST /api/sound, GET|POST /api/display, GET|POST /api/radio, GET /api/sensors, GET|POST /api/camera, GET /api/camera.jpg, GET /api/camera.mjpg, GET|POST /api/alarm, GET|POST /api/kernel, GET|POST /api/files, GET /api/file, GET /api/door, GET /api/door/audio, POST /api/door/speak, POST /api/reboot");
 }
