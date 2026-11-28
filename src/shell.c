@@ -739,6 +739,7 @@ static const struct cmd cmds[] = {
     { "radio",  "[MHz|up|down|scan|vol|off]", "FM radio (RDA5807M module)",  radio_cmd  },
     { "motion", "[watch|zero|threshold mg|alarm on|off]", "tilt, acceleration, shakes (MPU-6050)", motion_cmd },
     { "alarm",  "[on|off|arm|home|disarm <code>|zone|set|keypad|rfid|card|log|test]", "burglar alarm: zones, siren, keypad + cards, photos + video, web page /alarm, Home Assistant", alarm_cmd },
+    { "intercom", "[on|off|volume|gain|beep|mic|test]", "door intercom: INMP441 mic + MAX98357A speaker on I2S, talk on the web page /door", intercom_cmd },
     { "pco",    "[on|off|host|backup|account|format|key|heartbeat|test|send]", "alarm reports to a monitoring centre (PCO) with SIA DC-09 (Contact ID / SIA) over TCP/UDP", pco_cmd },
     { "modem",  "[on|off|number|pin|set|sms|call|at]", "GSM/LTE modem (SIM800L, A7670, SIM7600) on GPIO14/15: alarm SMS, calls, SMS commands", modem_cmd },
     { "doorbell", "[on [pin]|off|test|radar <pin>|...]", "video doorbell: button -> photo + gong + Home Assistant; door radar", doorbell_cmd },

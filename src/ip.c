@@ -548,6 +548,7 @@ static int build_home(char *dst, int max)
     B("</div><h2>Pages</h2><div class=\"cards\">");
     card("/alarm", "Alarm", "state, arm / disarm, zones, keypad and cards, settings");
     card("/camera", "Camera", "live picture, photo, exposure, colours, IR light");
+    if (intercom_enabled()) card("/door", "Door intercom", "listen to the door, hold to talk");
     card("/microscope", "Photos &amp; videos", "the pictures in /CAM - view, download, delete");
     card("/files", "Files", "everything on the SD card");
     card("/update", "Update", "check GitHub for a new kernel and install it");
@@ -912,6 +913,14 @@ static int http_try(struct tcp_pcb *pcb, struct http_conn *c)
                              c->req, (u32)n);
                 return 3;
             }
+            if (plen == -8) {                            /* 0.148: GET /api/door/audio - u-law straight from the mic ring */
+                char fv[16] = "";
+                if (query) qparam(query, "from", fv, sizeof(fv));
+                int n = intercom_audio((u8 *)c->req, HTTP_REQ, fv, from);
+                stream_setup(c, "HTTP/1.0 200 OK\r\nContent-Type: application/octet-stream\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n",
+                             c->req, (u32)n);
+                return 3;
+            }
             if (plen == -2) {                            /* GET /api/camera.jpg: core 0 takes the picture */
                 c->cam_ticket = camera_jpeg_want();
                 c->cam_wait = 1;
@@ -930,6 +939,10 @@ static int http_try(struct tcp_pcb *pcb, struct http_conn *c)
     } else if (!strcmp(path, "/alarm")) {                /* 0.120: the alarm page */
         stream_setup(c, "HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
                      alarm_page, (u32)strlen(alarm_page));
+        return 3;
+    } else if (!strcmp(path, "/door")) {                 /* 0.148: the door intercom page */
+        stream_setup(c, "HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+                     door_page, (u32)strlen(door_page));
         return 3;
     } else if (!strcmp(path, "/camera")) {
         stream_setup(c, "HTTP/1.0 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",

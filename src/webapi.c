@@ -724,6 +724,22 @@ logged_in:;
         put("{\"ok\":true,"); put(cj); put("}\n");
         return olen;
     }
+    if (!strcmp(path, "/api/door") || !strcmp(path, "/api/door/audio") || !strcmp(path, "/api/door/speak")) {   /* 0.148 intercom */
+        if (!intercom_enabled()) return fail(404, "the intercom is off - 'intercom on' on the board");
+        if (path[9] == '/' && path[10] == 'a') { if (!get) return fail(405, "use GET"); return -8; }
+        if (path[9] == '/') {
+            if (!post) return fail(405, "use POST (base64 u-law, 16 kHz)");
+            int n = intercom_speak(body, blen, from);
+            if (n < 0) return fail(503, "the intercom is starting - send again");
+            head(200); put("{\"ok\":true,\"samples\":"); put_i(n); put("}\n");
+            return olen;
+        }
+        if (!get) return fail(405, "use GET");
+        static char ij[256];
+        intercom_json(ij, sizeof(ij));
+        head(200); put("{\"ok\":true,"); put(ij); put("}\n");
+        return olen;
+    }
     if (!strcmp(path, "/api/reboot")) {
         if (!post) return fail(405, "use POST");
         kprintf("\n[API] reboot asked by %s\n", from);
@@ -732,5 +748,5 @@ logged_in:;
         put("{\"ok\":true,\"rebooting\":true}\n");
         return olen;
     }
-    return fail(404, "unknown: GET /api/status, GET|POST /api/gpio, GET /api/gpio/<pin>, GET|POST /api/sound, GET|POST /api/display, GET|POST /api/radio, GET /api/sensors, GET|POST /api/camera, GET /api/camera.jpg, GET|POST /api/alarm, GET|POST /api/kernel, GET|POST /api/files, GET /api/file, POST /api/reboot");
+    return fail(404, "unknown: GET /api/status, GET|POST /api/gpio, GET /api/gpio/<pin>, GET|POST /api/sound, GET|POST /api/display, GET|POST /api/radio, GET /api/sensors, GET|POST /api/camera, GET /api/camera.jpg, GET|POST /api/alarm, GET|POST /api/kernel, GET|POST /api/files, GET /api/file, GET /api/door, GET /api/door/audio, POST /api/door/speak, POST /api/reboot");
 }

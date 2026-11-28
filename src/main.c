@@ -2,7 +2,7 @@
 #include "usb.h"
 #include "sd.h"
 
-#define VERSION "0.147"
+#define VERSION "0.148"
 
 const char *os_version(void) { return VERSION; }
 /* found by 'update' / POST /api/update in a kernel8.img: only a RoboOS kernel may replace the running one */
@@ -133,6 +133,7 @@ void kernel_main(void)
     display_boot();                      /* I2C: OLED / LCD display (/DISPLAY.TXT) */
     doorbell_boot();                     /* /DOORBELL.TXT: doorbell button + door radar */
     alarm_boot();
+    intercom_prepare();                  /* 0.148: /INTERCOM.TXT - door voice on /door */
     pco_prepare();                       /* 0.146: /PCO.TXT - SIA DC-09 reports to a monitoring centre */
     modem_boot();                        /* 0.144: /MODEM.TXT - SMS / calls for the alarm */                        /* /ALARM.TXT + /ALARM.ST: the burglar alarm (armed again after a power cut) */
     radio_boot();                        /* I2C: RDA5807M FM radio (/RADIO.TXT) */
