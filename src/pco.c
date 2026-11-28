@@ -4,7 +4,7 @@
  * Wire format (ANSI/SIA DC-09):  LF <crc 4 hex><len 4 hex>"<id>"<seq 4 dec>[R<rcvr>]L<line>#<acct>[<data>]<time> CR
  *   crc  = CRC-16/ARC (poly 0xA001 reflected, init 0) over everything from the first quote up to the CR
  *   len  = the number of those characters in hex ("0" + 3 hex digits)
- *   id   = ADM-CID (Contact ID: "#ACCT|1130 01 015") or SIA-DCS ("#ACCT|Nri1/BA015"), NULL = supervision;
+ *   id   = ADM-CID (Contact ID: "#ACCT|1130 01 015") or SIA-DCS ("#ACCT|Nri1/BA015"), NULL = supervision (seq 0000);
  *          "*" before the id = AES-CBC encrypted (IV 0): the part after '[' is hex of
  *          AES(pad + "|" + data + "]" + time) (NULL: pad + "]" + time), pad = 1..16 random characters (not | [ ]) to a 16-byte multiple
  *   time = _HH:MM:SS,MM-DD-YYYY in UTC (needed when encrypted)
@@ -135,6 +135,7 @@ static int parse_stamp(const char *p, u64 *out)          /* "HH:MM:SS,MM-DD-YYYY
 
 static char msg[400];                                     /* the framed message being sent */
 static int msg_len, cur_seq = 0, cur_kind;                /* kind 1 event, 2 NULL */
+static int seq_ctr, built;                                /* events 0001-9999; NULL always 0000 */
 static struct ev cur;
 static char cur_text[24];                                 /* "E130 z015" for the log */
 
@@ -358,7 +359,7 @@ static void start_try(void)
 {
     answer = 0;
     if (!host[rcv_i][0]) rcv_i = 0;
-    build();
+    if (!built) { build(); built = 1; }                   /* a retry sends the SAME bytes (time too): receivers drop duplicates by them */
     if (addr_ok[rcv_i]) { connect_or_send(); return; }
     st = S_DNS;
     deadline = timer_us() + 10000000ULL;
@@ -419,7 +420,8 @@ void pco_poll(int have_ip)
             putn(cur_text, n, sizeof(cur_text), cur.zone, 3);
         } else if (heartbeat && now >= next_null) cur_kind = 2;
         else return;
-        cur_seq = cur_seq % 9999 + 1;
+        if (cur_kind == 1) { seq_ctr = seq_ctr % 9999 + 1; cur_seq = seq_ctr; } else cur_seq = 0;
+        built = 0;
         tries = 0; naks = 0;
         start_try();
         return;
@@ -438,6 +440,7 @@ void pco_poll(int have_ip)
             if (nak_time && mine) skew = (int)((long long)nak_time - (long long)mine);
             if (++naks > 2) { finished(0, "NAK (time?) - dropped"); return; }
             why = "NAK: the receiver's time differs";
+            built = 0;
             start_try();                                  /* the same sequence number, new time */
         } else if (answer == 3) finished(0, "DUH - not understood");
         else if (answer == 5) failed(why[0] ? why : "connection error");
@@ -607,7 +610,7 @@ void pco_cmd(int argc, char **argv)
                 "            | key <hex 32/48/64>|text <16/24/32 chars>|off | heartbeat <s> | test [hours] | send E130 3]\n");
         return;
     }
-    if (changed) { tcp_drop(); addr_ok[0] = addr_ok[1] = 0; if (st != S_IDLE) { st = S_PAUSE; retry_at = 0; } rcv_i = 0; tries = 0; }
+    if (changed) { tcp_drop(); addr_ok[0] = addr_ok[1] = 0; if (st != S_IDLE) { st = S_PAUSE; retry_at = 0; } rcv_i = 0; tries = 0; built = 0; }
     io_unlock();
     if (err[0]) { con_color(COL_YELLOW); kprintf("%s\n", err); con_color(COL_DEFAULT); }
     if (changed) save();
