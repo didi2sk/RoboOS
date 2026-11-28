@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.146**
+Aktuálna verzia: **0.147**
 
 ## Podporované dosky
 
@@ -539,6 +539,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.144: GSM / LTE modem pre alarm (SIM800L, A7670E, SIM7600E na pinoch 8/10): SMS pri poplachu / zastrážení / odstrážení, hovory pri poplachu, SMS príkazy ARM / HOME / DISARM / STATUS z čísel v zozname (`modem`).
 0.145: OLED modul s otočným gombíkom + tlačidlami CONFIRM / BACK ako klávesnica alarmu (`alarm knob`): otočenie = číslica, stlačenie = pridať, BACK = zmazať, CONFIRM = odoslať.
 0.146: hlásenia alarmu na pult centralizovanej ochrany (PCO) cez SIA DC-09 po TCP alebo UDP: Contact ID (ADM-CID) alebo SIA-DCS, šifrovanie AES, záložný prijímač, kontrolné spojenie, denný test (`pco`).
+0.147: PCO: kontrolné spojenie (NULL) so sekvenciou 0000 a opakovanie s rovnakými bajtmi (aj s časom), aby prijímač spoznal opakovanie - overené proti `pco-server` (Robo PCO).
 0.143: OPRAVA Pi 3B+: priamo s doskou na 100 Mbit (Pi 3B) hlásil `link up, 1000 Mbit` a nastavil MAC na 1000, hoci kábel bežal na 100 = nič neprešlo; 1000 sa teraz berie, len keď prijímače 1000BASE-T hlásia OK.
 0.142: Pi 3B+: LED na sieťovom konektore sa zapnú (RoboOS ich nikdy nezapínal); `net` ukáže, čo vidí PHY (linka, auto-negotiation, čo ponúka druhá strana, 1000 Mbit).
 0.141: OPRAVA: kým išla prevádzka cez WiFi, zapojený kábel sa nikdy nezistil (linka sa kontrolovala len pri čítaní rámcov z kábla) - preto kábel + WiFi (0.140) kábel nepoužil.

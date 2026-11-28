@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.146**
+Current version: **0.147**
 
 ## Supported boards
 
@@ -543,6 +543,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.144: GSM / LTE modem for the alarm (SIM800L, A7670E, SIM7600E on pins 8/10): SMS on alarm / arm / disarm, calls in an alarm, SMS commands ARM / HOME / DISARM / STATUS from listed numbers (`modem`).
 0.145: OLED module with a rotary knob + CONFIRM / BACK buttons as the alarm keypad (`alarm knob`): turn = digit, push = add it, BACK = delete, CONFIRM = send.
 0.146: alarm reports to a monitoring centre (PCO / ARC) with SIA DC-09 over TCP or UDP: Contact ID (ADM-CID) or SIA-DCS, AES encryption, backup receiver, supervision, daily test (`pco`).
+0.147: PCO: supervision (NULL) with sequence 0000 and retries with the same bytes (time included), so receivers drop repeats - tested against `pco-server` (Robo PCO).
 0.143: FIX Pi 3B+: straight to a 100 Mbit board (Pi 3B) it said `link up, 1000 Mbit` and set its MAC to 1000 while the wire ran at 100 = nothing got through; 1000 is now taken only when the 1000BASE-T receivers report OK.
 0.142: Pi 3B+: the LEDs on the network jack are switched on (RoboOS never enabled them); `net` shows what the PHY sees (link, auto-negotiation, what the other side offers, 1000 Mbit).
 0.141: FIX: while WiFi carried the traffic, a cable plugged in was never noticed (the link was only checked while frames were read from the cable) - so cable + WiFi (0.140) did not use the cable.
