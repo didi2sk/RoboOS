@@ -1352,7 +1352,13 @@ Frigate (Docker, e.g. on a NUC) - the input part of a camera (not tried with a r
 cameras:
   door:
     ffmpeg:
-      input_args: -use_wallclock_as_timestamps 1 -headers "Authorization: Bearer <token>" -f mpjpeg
+      input_args:                 # a list: the header has ": " and spaces inside
+        - -use_wallclock_as_timestamps
+        - "1"
+        - -headers
+        - "Authorization: Bearer <token>"
+        - -f
+        - mpjpeg
       inputs:
         - path: http://<board>/api/camera.mjpg
           roles: [detect]

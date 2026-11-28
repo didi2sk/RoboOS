@@ -1339,7 +1339,13 @@ Frigate (Docker, napr. na NUC) - vstupná časť kamery (so skutočným Frigate 
 cameras:
   dvere:
     ffmpeg:
-      input_args: -use_wallclock_as_timestamps 1 -headers "Authorization: Bearer <token>" -f mpjpeg
+      input_args:                 # zoznam: hlavička má v sebe ": " a medzery
+        - -use_wallclock_as_timestamps
+        - "1"
+        - -headers
+        - "Authorization: Bearer <token>"
+        - -f
+        - mpjpeg
       inputs:
         - path: http://<doska>/api/camera.mjpg
           roles: [detect]
