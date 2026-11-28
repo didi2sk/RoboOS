@@ -589,6 +589,7 @@ struct http_conn {
     const u8 *sout;
     char shdr[360];
     int fdl;                                               /* 0.117: download (attachment) instead of view */
+    int mjpeg;                                             /* 0.150: /api/camera.mjpg - 1 first frame, 2 streaming */
     char req[HTTP_REQ + 1];
 };
 static struct http_conn hconn[HTTP_CONNS];
@@ -606,7 +607,7 @@ static void conn_free(struct http_conn *c)
     if (c->cam_hold == 1) camera_jpeg_release(c->sout);
     if (c->cam_hold == 2 || c->cam_wait == 2) files_release();   /* 0.117: the files slot (sent, or the client left) */
     c->cam_hold = 0;
-    c->cam_wait = 0; c->streaming = 0;
+    c->cam_wait = 0; c->streaming = 0; c->mjpeg = 0;
     if (c->tls) { tls_close(c->tls); c->tls = 0; }
     if (c->pin) { pbuf_free(c->pin); c->pin = 0; }
     c->used = 0;
@@ -769,12 +770,25 @@ static void stream_ack(struct http_conn *c, u32 n)
     c->idle = 0;
 }
 
+/* 0.150: an MJPEG frame is queued (copied into lwIP / BearSSL): give the picture back, ask for the next one */
+static void mjpeg_next(struct http_conn *c)
+{
+    if (c->cam_hold == 1) camera_jpeg_release(c->sout);
+    c->cam_hold = 0;
+    c->streaming = 0;
+    c->sout = 0; c->slen = c->soff = 0; c->shlen = c->shoff = 0;
+    c->cam_ticket = camera_jpeg_want();
+    c->cam_wait = 1;
+    c->cam_since = timer_us();
+}
+
 /* plain HTTP: as much as the send buffer takes; closes when all is queued */
 static err_t stream_plain(struct tcp_pcb *pcb, struct http_conn *c)
 {
     for (;;) {
         const u8 *p;
         u32 n = stream_piece(c, &p);
+        if (!n && c->mjpeg == 2) { mjpeg_next(c); break; }    /* 0.150: the next frame, the connection stays */
         if (!n) { tcp_output(pcb); return http_finish(pcb, c); }
         u32 room = tcp_sndbuf(pcb);
         if (!room || tcp_sndqueuelen(pcb) >= TCP_SND_QUEUELEN - 1) break;
@@ -921,6 +935,10 @@ static int http_try(struct tcp_pcb *pcb, struct http_conn *c)
                              c->req, (u32)n);
                 return 3;
             }
+            if (plen == -9) {                            /* 0.150: GET /api/camera.mjpg - pictures one after another */
+                c->mjpeg = 1;
+                plen = -2;
+            }
             if (plen == -2) {                            /* GET /api/camera.jpg: core 0 takes the picture */
                 c->cam_ticket = camera_jpeg_want();
                 c->cam_wait = 1;
@@ -1044,7 +1062,12 @@ static err_t tls_pump(struct tcp_pcb *pcb, struct http_conn *c)
             u8 *b = br_ssl_engine_sendapp_buf(e, &len);
             const u8 *p;
             u32 n = stream_piece(c, &p);
-            if (!n) {
+            if (!n && c->mjpeg == 2) {                    /* 0.150: frame out, wait for the next one */
+                br_ssl_engine_flush(e, 0);
+                mjpeg_next(c);
+                c->closing = 0;
+                progress = 1;
+            } else if (!n) {
                 br_ssl_engine_flush(e, 0);
                 br_ssl_engine_close(e);
                 c->closing = 1;
@@ -1121,7 +1144,21 @@ static void http_cam_tick(void)
         int r = camera_jpeg_take(c->cam_ticket, &p, &len);
         if (!r && timer_us() - c->cam_since < 8000000ULL) continue;
         c->cam_wait = 0;
-        if (r > 0) {
+        if (r > 0 && c->mjpeg) {                         /* 0.150: one part of the MJPEG stream */
+            char h[360]; int n = 0;
+            const char *a = c->mjpeg == 1 ? "HTTP/1.0 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary=frame\r\n"
+                                            "Cache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n" : "\r\n";
+            while (*a) h[n++] = *a++;
+            a = "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "; while (*a) h[n++] = *a++;
+            char t[12]; int k = 0; u32 v = len; do t[k++] = (char)('0' + v % 10); while ((v /= 10)); while (k) h[n++] = t[--k];
+            h[n++] = '\r'; h[n++] = '\n'; h[n++] = '\r'; h[n++] = '\n'; h[n] = 0;
+            stream_setup(c, h, p, len);
+            c->cam_hold = 1;
+            c->mjpeg = 2;
+        } else if (c->mjpeg == 2) {                      /* the camera stopped answering: end the stream */
+            c->mjpeg = 0;
+            stream_setup(c, "\r\n--frame--\r\n", "", 0);
+        } else if (r > 0) {
             char h[160]; int n = 0;
             const char *a = "HTTP/1.0 200 OK\r\nContent-Type: image/jpeg\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: ";
             while (*a) h[n++] = *a++;
@@ -1196,6 +1233,7 @@ static struct http_conn *conn_new(struct tcp_pcb *pcb)
     c->used = 1; c->len = 0; c->done = 0; c->closing = 0; c->idle = 0; c->req[0] = 0; c->upload = 0;
     c->since = timer_us(); c->pcb = pcb; c->tls = 0; c->pin = 0; c->pin_off = 0;
     c->streaming = 0; c->cam_wait = 0; c->cam_hold = 0; c->sout = 0; c->slen = c->soff = 0; c->shlen = c->shoff = 0;
+    c->mjpeg = 0;
     return c;
 }
 

@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.149**
+Aktuálna verzia: **0.150**
 
 ## Podporované dosky
 
@@ -542,6 +542,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.147: PCO: kontrolné spojenie (NULL) so sekvenciou 0000 a opakovanie s rovnakými bajtmi (aj s časom), aby prijímač spoznal opakovanie - overené proti `pco-server` (Robo PCO).
 0.148: hlas pri dverách cez web (`intercom`, stránka `/door`): mikrofón INMP441 + reproduktor s MAX98357A na I2S - počúvaš dvere a podržaním tlačidla hovoríš z prehliadača v mobile.
 0.149: zvonček: stavová LED (`doorbell led`), vlastné MQTT topicy ako mal starý program (`doorbell topic ring|move`), `doorbell radar hold` - RoboOS tak nahradí existujúci zvonček bez zmeny v Home Assistant.
+0.150: MJPEG prúd z kamery `/api/camera.mjpg` (Frigate, VLC, Home Assistant, ffmpeg).
 0.143: OPRAVA Pi 3B+: priamo s doskou na 100 Mbit (Pi 3B) hlásil `link up, 1000 Mbit` a nastavil MAC na 1000, hoci kábel bežal na 100 = nič neprešlo; 1000 sa teraz berie, len keď prijímače 1000BASE-T hlásia OK.
 0.142: Pi 3B+: LED na sieťovom konektore sa zapnú (RoboOS ich nikdy nezapínal); `net` ukáže, čo vidí PHY (linka, auto-negotiation, čo ponúka druhá strana, 1000 Mbit).
 0.141: OPRAVA: kým išla prevádzka cez WiFi, zapojený kábel sa nikdy nezistil (linka sa kontrolovala len pri čítaní rámcov z kábla) - preto kábel + WiFi (0.140) kábel nepoužil.
@@ -1320,6 +1321,33 @@ na termináli (`alarm remote ...`). Zapojenie (pull-upy sú interné; OLED sa n�
 Iné piny: `alarm knob <tra> <trb> <push> <confirm> <back>` (čísla GPIO); opačný smer: pridaj `reverse`;
 `alarm knob off`. Tieto piny IoT shield nepoužíva (len GPIO6 = tlačidlo zvončeka, ak ho máš); kolízie so zónami,
 sirénou alebo LED sa ukážu cez `!!`.
+
+**MJPEG prúd (0.150)**: `GET /api/camera.mjpg` posiela kameru ako `multipart/x-mixed-replace` (JPEG za JPEG-om
+jedným spojením) - to číta Frigate, VLC, ffmpeg aj MJPEG kamera v Home Assistant. Prihlásenie ako pri ostatnom API
+(`Authorization: Bearer <token>`, alebo používateľ cez HTTP Basic, napr. `http://meno:heslo@<doska>/api/camera.mjpg`).
+Nový snímok sa robí hneď, keď predchádzajúci odíde (na Pi 3 niekoľko snímok za sekundu); kamera sa vypne 10 s po
+poslednom divákovi. Príklady:
+
+```
+ffmpeg -headers "Authorization: Bearer <token>" -f mpjpeg -i http://<doska>/api/camera.mjpg -frames:v 1 x.jpg
+vlc http://meno:heslo@<doska>/api/camera.mjpg
+```
+
+Frigate (Docker, napr. na NUC) - vstupná časť kamery (so skutočným Frigate ešte neskúšané):
+
+```yaml
+cameras:
+  dvere:
+    ffmpeg:
+      input_args: -use_wallclock_as_timestamps 1 -headers "Authorization: Bearer <token>" -f mpjpeg
+      inputs:
+        - path: http://<doska>/api/camera.mjpg
+          roles: [detect]
+    detect:
+      width: 648
+      height: 486
+      fps: 2
+```
 
 **Náhrada existujúceho zvončeka (0.149)**: rovnaké piny a rovnaké MQTT správy ako starý program, takže v Home
 Assistant netreba nič meniť. Príklad (tlačidlo GPIO8 na GND, LED GPIO18, radar RCWL-0516 GPIO26, topicy `door/gong` a

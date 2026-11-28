@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.149**
+Current version: **0.150**
 
 ## Supported boards
 
@@ -546,6 +546,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.147: PCO: supervision (NULL) with sequence 0000 and retries with the same bytes (time included), so receivers drop repeats - tested against `pco-server` (Robo PCO).
 0.148: door intercom over the web (`intercom`, page `/door`): INMP441 microphone + MAX98357A speaker on I2S - listen to the door and hold to talk from the phone's browser.
 0.149: doorbell: a status LED (`doorbell led`), own MQTT topics like an old program used (`doorbell topic ring|move`), `doorbell radar hold` - so RoboOS can replace an existing doorbell without changing Home Assistant.
+0.150: MJPEG camera stream `/api/camera.mjpg` (Frigate, VLC, Home Assistant, ffmpeg).
 0.143: FIX Pi 3B+: straight to a 100 Mbit board (Pi 3B) it said `link up, 1000 Mbit` and set its MAC to 1000 while the wire ran at 100 = nothing got through; 1000 is now taken only when the 1000BASE-T receivers report OK.
 0.142: Pi 3B+: the LEDs on the network jack are switched on (RoboOS never enabled them); `net` shows what the PHY sees (link, auto-negotiation, what the other side offers, 1000 Mbit).
 0.141: FIX: while WiFi carried the traffic, a cable plugged in was never noticed (the link was only checked while frames were read from the cable) - so cable + WiFi (0.140) did not use the cable.
@@ -1333,6 +1334,33 @@ too (`alarm remote ...`). Wiring (pull-ups are internal; the OLED is found like 
 Other pins: `alarm knob <tra> <trb> <push> <confirm> <back>` (GPIO numbers); the wrong direction: add `reverse`;
 `alarm knob off`. These pins are not used by the IoT shield (only GPIO6 = the doorbell button, if you use it);
 clashes with zones, the siren or the LED are shown with `!!`.
+
+**MJPEG stream (0.150)**: `GET /api/camera.mjpg` sends the camera as `multipart/x-mixed-replace` (one JPEG after
+another on one connection) - what Frigate, VLC, ffmpeg and the Home Assistant MJPEG camera read. Same login as the
+other API calls (`Authorization: Bearer <token>`, or a user with HTTP Basic, e.g. `http://name:password@<board>/api/camera.mjpg`).
+A new frame is made as soon as the last one has gone out (a few frames per second on a Pi 3); the camera stops 10 s
+after the last viewer. Examples:
+
+```
+ffmpeg -headers "Authorization: Bearer <token>" -f mpjpeg -i http://<board>/api/camera.mjpg -frames:v 1 x.jpg
+vlc http://name:password@<board>/api/camera.mjpg
+```
+
+Frigate (Docker, e.g. on a NUC) - the input part of a camera (not tried with a real Frigate yet):
+
+```yaml
+cameras:
+  door:
+    ffmpeg:
+      input_args: -use_wallclock_as_timestamps 1 -headers "Authorization: Bearer <token>" -f mpjpeg
+      inputs:
+        - path: http://<board>/api/camera.mjpg
+          roles: [detect]
+    detect:
+      width: 648
+      height: 486
+      fps: 2
+```
 
 **Replacing an existing doorbell (0.149)**: the same pins and the same MQTT messages as an old program, so Home
 Assistant needs no change. Example (button GPIO8 to GND, LED GPIO18, RCWL-0516 radar GPIO26, topics `door/gong` and
