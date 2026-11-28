@@ -22,6 +22,11 @@
  * at most ~15 ms for 1 m). Near = 2 readings in a row below dist_cm, away = 3 above. "Someone at the door" =
  * near (and, with a radar too, the radar active as well) - so passers-by further away are not photographed.
  * /DOORBELL.TXT: dist_trig, dist_echo, dist_cm.
+ *
+ * 0.149 (owner: test RoboOS in place of his Python doorbell without changing anything else): a status LED
+ * (`led <pin>`: on while ringing, 0.5 s on a radar visit, 0.5 s at boot), own MQTT topics as the old program
+ * sent them (`ring_topic` / `ring_payload` at once on a press, `move_topic` / `move_payload` on a radar visit;
+ * absolute topics, sent besides the usual <base>/... ones) and `radar_hold` seconds between radar visits.
  */
 #include "kernel.h"
 #include "sd.h"
@@ -39,6 +44,9 @@ static char rlast_when[32], rlast_photo[64];
 static int dist_trig, dist_echo, dist_cm = 100, near, ncnt, fcnt, last_cm = -1;
 static u32 echo_missing;
 static u64 next_dist;
+static int led_pin, radar_hold = 30;                      /* 0.149 */
+static char ring_topic[48], ring_payload[48], move_topic[48], move_payload[48];
+static u64 led_off_at;
 
 static void scopy(char *d, const char *s, int max) { int i = 0; for (; s[i] && i < max - 1; i++) d[i] = s[i]; d[i] = 0; }
 
@@ -47,6 +55,7 @@ static void setup_pin(void)
     if (radar_pin) { gpio_func(radar_pin, 0); gpio_pull(radar_pin, radar_high ? 1 : 2); }
     if (dist_trig) { gpio_func(dist_trig, 1); gpio_set(dist_trig, 0); gpio_func(dist_echo, 0); gpio_pull(dist_echo, 1); near = 0; ncnt = fcnt = 0; }
     rcnt = 0; rstate = -1; rhold_until = timer_us() + 2000000;
+    if (led_pin) { gpio_func(led_pin, 1); gpio_set(led_pin, 0); }
     if (!on) return;
     gpio_func(pin, 0);
     gpio_pull(pin, active_low ? 2 : 1);
@@ -56,7 +65,7 @@ static void setup_pin(void)
 
 static void save(void)
 {
-    char b[320]; int n = 0;
+    char b[640]; int n = 0;
     #define PUT(s) do { const char *s_ = (s); while (*s_ && n < (int)sizeof(b) - 1) b[n++] = *s_++; } while (0)
     PUT("state "); PUT(on ? "on" : "off");
     PUT("\npin "); { char t[4]; int k = 0; int v = pin; if (v >= 10) t[k++] = (char)('0' + v / 10); t[k++] = (char)('0' + v % 10); t[k] = 0; PUT(t); }
@@ -71,6 +80,10 @@ static void save(void)
     #define NUM(v) do { char t_[8]; int k_ = 0, v_ = (v); do t_[k_++] = (char)('0' + v_ % 10); while ((v_ /= 10)); while (k_) b[n++] = t_[--k_]; } while (0)
     if (dist_trig) { PUT("\ndist_trig "); NUM(dist_trig); PUT("\ndist_echo "); NUM(dist_echo); }
     PUT("\ndist_cm "); NUM(dist_cm);
+    PUT("\nled "); if (led_pin) NUM(led_pin); else PUT("off");
+    PUT("\nradar_hold "); NUM(radar_hold);
+    if (ring_topic[0]) { PUT("\nring_topic "); PUT(ring_topic); PUT("\nring_payload "); PUT(ring_payload); }
+    if (move_topic[0]) { PUT("\nmove_topic "); PUT(move_topic); PUT("\nmove_payload "); PUT(move_payload); }
     #undef NUM
     PUT("\n");
     #undef PUT
@@ -80,7 +93,7 @@ static void save(void)
 static void load(void)
 {
     loaded = 1;
-    struct fat_file f; char b[256];
+    struct fat_file f; char b[640];
     if (!fat_mounted() || fat_open("/DOORBELL.TXT", &f) || f.is_dir) return;
     int n = fat_read(&f, b, sizeof(b) - 1);
     if (n <= 0) return;
@@ -100,6 +113,12 @@ static void load(void)
         else if (!strcmp(l, "radar_active")) radar_high = strcmp(v, "low") != 0;
         else if (!strcmp(l, "radar_photo")) radar_photo = strcmp(v, "off") != 0;
         else if (!strcmp(l, "radar_mqtt")) radar_mqtt = !strcmp(v, "on");
+        else if (!strcmp(l, "led")) { int p = 0; while (*v >= '0' && *v <= '9') p = p * 10 + (*v++ - '0'); led_pin = (p >= 2 && p <= 27) ? p : 0; }
+        else if (!strcmp(l, "radar_hold")) { int p = 0; while (*v >= '0' && *v <= '9') p = p * 10 + (*v++ - '0'); if (p >= 1 && p <= 3600) radar_hold = p; }
+        else if (!strcmp(l, "ring_topic")) scopy(ring_topic, v, sizeof(ring_topic));
+        else if (!strcmp(l, "ring_payload")) scopy(ring_payload, v, sizeof(ring_payload));
+        else if (!strcmp(l, "move_topic")) scopy(move_topic, v, sizeof(move_topic));
+        else if (!strcmp(l, "move_payload")) scopy(move_payload, v, sizeof(move_payload));
         else if (!strcmp(l, "dist_trig") || !strcmp(l, "dist_echo") || !strcmp(l, "dist_cm")) {
             int p = 0; while (*v >= '0' && *v <= '9') p = p * 10 + (*v++ - '0');
             if (l[5] == 't') dist_trig = (p >= 2 && p <= 27) ? p : 0;
@@ -110,7 +129,20 @@ static void load(void)
     }
 }
 
-void doorbell_boot(void) { load(); if (!dist_echo || dist_echo == dist_trig) dist_trig = 0; setup_pin(); }
+static void own_topic(const char *t, const char *p)       /* 0.149: the old program's topics (absolute) */
+{
+    if (!t[0] || !mqtt_connected()) return;
+    char full[52] = "/"; scopy(full + 1, t, (int)sizeof(full) - 1);
+    mqtt_publish(full, p, (int)strlen(p), 0);
+}
+static void led(int on_, int ms)
+{
+    if (!led_pin) return;
+    gpio_set(led_pin, on_);
+    led_off_at = on_ && ms ? timer_us() + (u64)ms * 1000 : 0;
+}
+
+void doorbell_boot(void) { load(); if (!dist_echo || dist_echo == dist_trig) dist_trig = 0; setup_pin(); led(1, 500); }
 int doorbell_enabled(void) { return on; }
 int doorbell_pin(void) { if (!loaded) load(); return on ? pin : -1; }   /* 0.131: for the alarm's pin check */
 int doorbell_radar(void) { return radar_pin || dist_trig; }
@@ -143,13 +175,16 @@ static void visit(void)
     if (dist_trig && last_cm >= 0) kprintf("\n[DOOR] someone at the door, %d cm, %s\n", last_cm, rlast_when);
     else kprintf("\n[DOOR] someone at the door %s\n", rlast_when);
     con_color(COL_DEFAULT);
+    led(1, 0);
+    own_topic(move_topic, move_payload);
     radar_mqtt_state(1);
     int send = radar_mqtt && mqtt_connected();
     if (radar_photo || send) {
         int r = camera_take(radar_photo, send, rlast_photo);
         if (r) kprintf("[RADAR] photo: %s\n", camera_take_error(r));
     }
-    rhold_until = timer_us() + 30000000ULL;
+    rhold_until = timer_us() + (u64)radar_hold * 1000000ULL;
+    led(1, 500);                                          /* at least 0.5 s, like the old program */
     busy = 0;
 }
 
@@ -175,6 +210,8 @@ static void ring(void)
     u64 now = clock_now();
     if (now) clock_format(last_when, now, 0); else scopy(last_when, "(no clock)", sizeof(last_when));
     con_color(COL_CYAN); kprintf("\n[DOORBELL] ring %s\n", last_when); con_color(COL_DEFAULT);
+    led(1, 0);
+    own_topic(ring_topic, ring_payload);                  /* at once, before the photo (as the old program) */
     int send = use_mqtt && mqtt_connected();
     int r = camera_take(photo, send, last_photo);         /* first, the visitor faces the button now */
     if (r && r != -1) scopy(last_note, camera_take_error(r), sizeof(last_note));
@@ -187,6 +224,7 @@ static void ring(void)
         mqtt_publish("doorbell", ev, (int)strlen(ev), 0);
     }
     if (last_note[0]) kprintf("[DOORBELL] %s\n", last_note);
+    led(0, 0);
     hold_until = timer_us() + 5000000;
     busy = 0;
 }
@@ -194,6 +232,7 @@ static void ring(void)
 /* core 0, from con_trygetc: every 10 ms */
 void doorbell_poll(void)
 {
+    if (led_off_at && timer_us() >= led_off_at) { led_off_at = 0; if (led_pin) gpio_set(led_pin, 0); }
     if ((!on && !radar_pin && !dist_trig) || busy || io_held()) return;
     u64 t = timer_us();
     if (t < next_poll) return;
@@ -268,9 +307,27 @@ void doorbell_cmd(int argc, char **argv)
         else if (!strcmp(v, "mqtt") && argc > 3) radar_mqtt = !strcmp(argv[3], "on");
         else if (!strcmp(v, "active") && argc > 3) radar_high = strcmp(argv[3], "low") != 0;
         else if (!strcmp(v, "test")) { visit(); return; }
+        else if (!strcmp(v, "hold") && argc > 3) { int p = 0; const char *s = argv[3]; while (*s >= '0' && *s <= '9') p = p * 10 + (*s++ - '0'); if (*s || p < 1 || p > 3600) { kprintf("radar hold 1-3600 s\n"); return; } radar_hold = p; }
         else { int p = 0; while (*v >= '0' && *v <= '9') p = p * 10 + (*v++ - '0');
                if (*v || p < 2 || p > 27) { kprintf("doorbell radar <pin 2-27>|off|photo on|off|mqtt on|off|active high|low|test\n"); return; }
                radar_pin = p; }
+        changed = 1;
+    }
+    else if (!strcmp(a, "led") && argc > 2) {
+        int p = 0; const char *v = argv[2]; while (*v >= '0' && *v <= '9') p = p * 10 + (*v++ - '0');
+        if (!strcmp(argv[2], "off")) { if (led_pin) gpio_set(led_pin, 0); led_pin = 0; }
+        else if (*v || p < 2 || p > 27) { kprintf("led <pin 2-27>|off\n"); return; }
+        else led_pin = p;
+        changed = 1;
+    } else if (!strcmp(a, "topic") && argc > 3 && (!strcmp(argv[2], "ring") || !strcmp(argv[2], "move"))) {
+        char *t = argv[2][0] == 'r' ? ring_topic : move_topic, *pl = argv[2][0] == 'r' ? ring_payload : move_payload;
+        if (!strcmp(argv[3], "off")) { t[0] = pl[0] = 0; }
+        else {
+            scopy(t, argv[3][0] == '/' ? argv[3] + 1 : argv[3], 48);
+            int n = 0; pl[0] = 0;                          /* the payload = the rest of the line */
+            for (int i = 4; i < argc; i++) { if (n && n < 46) pl[n++] = ' '; for (const char *s = argv[i]; *s && n < 47; s++) pl[n++] = *s; pl[n] = 0; }
+            if (!pl[0]) scopy(pl, argv[2][0] == 'r' ? "ring" : "move", 48);
+        }
         changed = 1;
     }
     else if (*a) {
@@ -286,7 +343,9 @@ void doorbell_cmd(int argc, char **argv)
                 "       doorbell radar <pin>|off radar / PIR output (high = someone there): photo when someone comes\n"
                 "       doorbell radar photo on|off   that photo on the card (/CAM/<date>/)\n"
                 "       doorbell radar mqtt on|off    that photo to Home Assistant too\n"
-                "       doorbell radar active high|low, doorbell radar test\n"
+                "       doorbell radar active high|low, doorbell radar hold <s> (between visits, default 30), doorbell radar test\n"
+                "       doorbell led <pin>|off   status LED: on while ringing, 0.5 s on a visit\n"
+                "       doorbell topic ring|move <topic> [payload]|off   also publish there (e.g. an old program's topics)\n"
                 "       doorbell distance <trig> <echo> [cm]  HC-SR04: someone only when nearer than cm (default 100)\n"
                 "       doorbell distance <cm> | off          (with a radar too, both must agree; ECHO via a 5 V divider!)\n");
         return;
@@ -311,5 +370,11 @@ void doorbell_cmd(int argc, char **argv)
         if (!radar_pin) kprintf("  photo on card %s, to MQTT %s ('doorbell radar photo|mqtt on|off'), visits %u\n", radar_photo ? "on" : "off", radar_mqtt ? "on" : "off", visits);
         if (!radar_pin && visits) kprintf("  last visit %s%s%s\n", rlast_when, rlast_photo[0] ? ", photo " : "", rlast_photo);
     } else kprintf("distance sensor off ('doorbell distance <trig> <echo> [cm]')\n");
+    if (led_pin || ring_topic[0] || move_topic[0]) {
+        kprintf("LED %s%s", led_pin ? "GPIO" : "off", ""); if (led_pin) kprintf("%d", led_pin);
+        if (ring_topic[0]) kprintf(", ring -> %s \"%s\"", ring_topic, ring_payload);
+        if (move_topic[0]) kprintf(", visit -> %s \"%s\"", move_topic, move_payload);
+        kprintf(", visits %d s apart\n", radar_hold);
+    }
     if (changed) kprintf("(saved in /DOORBELL.TXT)\n");
 }
