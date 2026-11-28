@@ -44,6 +44,11 @@ py .\pco.py
 | Odstráženie používateľom 001 | `1401 01 001` |
 | Pravidelný test prenosu | `1602 01 000` |
 
+Názvy v dispečingu: 130 poplach (24h zóna 133 = „Poplach 24h“) so zónou, 120 panika, 3130 / 3120 návrat, 3401 / 1401
+zastrážené / odstrážené, 3441 / 1441 zastrážené doma / odstrážené (doma), 406 poplach zrušený (všetky s číslom
+užívateľa: 001 = kód, 011.. = karty RoboOS), 461 zablokovaný kód (otvorí incident), 305 zapnutie / reštart ústredne,
+301 výpadok / obnova napájania, 602 test prenosu. Ostatné kódy sa uložia ako „Udalosť Contact ID“.
+
 Príklad nastavenia v konzole RoboOS. Adresu nahraď privátnou IP servera.
 
 ```text
