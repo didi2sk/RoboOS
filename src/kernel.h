@@ -56,6 +56,16 @@ void modem_poll(void);                   /* core 0, con_trygetc */
 void modem_rx_pump(void);                /* core 1, io_poll_all */
 void modem_event(int kind, const char *text);   /* 1 alarm, 2 armed, 3 disarmed, 4 other */
 void modem_cmd(int argc, char **argv);
+void intercom_prepare(void);             /* intercom.c 0.148: door voice over the web (INMP441 + MAX98357A on I2S) */
+void intercom_poll(void);
+void intercom_poll1(void);
+void intercom_cmd(int argc, char **argv);
+int  intercom_owns_pcm(void);
+int  intercom_enabled(void);
+int  intercom_audio(u8 *out, int max, const char *from_s, const char *client);
+int  intercom_speak(const char *b64, int len, const char *client);
+int  intercom_json(char *b, int max);
+extern const char door_page[];
 void pco_prepare(void);                  /* pco.c 0.146: SIA DC-09 reports to a monitoring centre */
 void pco_poll(int have_ip);
 void pco_event(int qual, int code, int zone);   /* qual 1 event / 3 restore, Contact ID code, zone or user */

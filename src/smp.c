@@ -99,6 +99,7 @@ void io_poll_all(void)
     io_where = "dcf"; dcf_poll();
     io_where = "wiegand"; access_core1_poll();
     io_where = "modem"; modem_rx_pump();
+    io_where = "intercom"; intercom_poll1();
     io_where = "loop";
     io_beats++;
 }

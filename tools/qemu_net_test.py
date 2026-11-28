@@ -50,6 +50,9 @@ def udp_listener():
 threading.Thread(target=tcp_server, daemon=True).start()
 threading.Thread(target=udp_listener, daemon=True).start()
 time.sleep(1)
+for _ in range(50):                       # QEMU may need a moment to create the socket
+    if os.path.exists(ser_path): break
+    time.sleep(0.1)
 ser = socket.socket(socket.AF_UNIX); ser.connect(ser_path); ser.settimeout(0.2)
 out = b""
 def drain(t):

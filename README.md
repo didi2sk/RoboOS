@@ -8,7 +8,7 @@ A mini operating system for the Raspberry Pi that runs directly on the hardware,
 You control it with a **USB keyboard** or over a serial line (UART). Output goes to
 HDMI and UART at the same time, and both inputs work together.
 
-Current version: **0.147**
+Current version: **0.148**
 
 ## Supported boards
 
@@ -544,6 +544,7 @@ sending the STOP); `i2c scan` and the sensor search at boot missed devices that 
 0.145: OLED module with a rotary knob + CONFIRM / BACK buttons as the alarm keypad (`alarm knob`): turn = digit, push = add it, BACK = delete, CONFIRM = send.
 0.146: alarm reports to a monitoring centre (PCO / ARC) with SIA DC-09 over TCP or UDP: Contact ID (ADM-CID) or SIA-DCS, AES encryption, backup receiver, supervision, daily test (`pco`).
 0.147: PCO: supervision (NULL) with sequence 0000 and retries with the same bytes (time included), so receivers drop repeats - tested against `pco-server` (Robo PCO).
+0.148: door intercom over the web (`intercom`, page `/door`): INMP441 microphone + MAX98357A speaker on I2S - listen to the door and hold to talk from the phone's browser.
 0.143: FIX Pi 3B+: straight to a 100 Mbit board (Pi 3B) it said `link up, 1000 Mbit` and set its MAC to 1000 while the wire ran at 100 = nothing got through; 1000 is now taken only when the 1000BASE-T receivers report OK.
 0.142: Pi 3B+: the LEDs on the network jack are switched on (RoboOS never enabled them); `net` shows what the PHY sees (link, auto-negotiation, what the other side offers, 1000 Mbit).
 0.141: FIX: while WiFi carried the traffic, a cable plugged in was never noticed (the link was only checked while frames were read from the cable) - so cable + WiFi (0.140) did not use the cable.
@@ -1331,6 +1332,34 @@ too (`alarm remote ...`). Wiring (pull-ups are internal; the OLED is found like 
 Other pins: `alarm knob <tra> <trb> <push> <confirm> <back>` (GPIO numbers); the wrong direction: add `reverse`;
 `alarm knob off`. These pins are not used by the IoT shield (only GPIO6 = the doorbell button, if you use it);
 clashes with zones, the siren or the LED are shown with `!!`.
+
+**Door intercom (0.148, `intercom`, page `/door`)**: voice at the door through the web page - you hear the door
+and, while you hold **Hold to talk**, the door hears you (half duplex = no echo). Two cheap I2S modules share the
+clock lines:
+
+| module | pin | Pi header |
+|---|---|---|
+| INMP441 microphone | SCK / WS / SD | pin 12 (GPIO18) / pin 35 (GPIO19) / pin 38 (GPIO20) |
+| | L/R, GND, VDD | GND (= left channel), GND, 3.3 V (pin 1) |
+| MAX98357A amplifier | BCLK / LRC / DIN | pin 12 (GPIO18) / pin 35 (GPIO19) / pin 40 (GPIO21) |
+| | GND, VIN | GND, 5 V (pin 2); speaker 4-8 ohm, 3 W on its + / - |
+
+```
+intercom on                  the page /door + the card on the home page (saved in /INTERCOM.TXT)
+intercom beep                1 s of 1 kHz on the speaker (wiring test)
+intercom mic                 live microphone level (wiring test; speak into it)
+intercom volume 80           speaker volume 0-100 %
+intercom gain 4              microphone gain x1-64
+intercom                     state, wiring, levels, conflicts
+```
+
+On the phone open `https://<board>/door` (the browser lets a page use the microphone only over **https** -
+`http tls on`, accept the certificate warning), give the API token once, press **Listen**; hold **Hold to talk**
+(or the space bar) to speak. The camera picture is shown above when there is a camera. Sound: 16 kHz G.711 u-law,
+~0.3-0.5 s delay. The I2S pins are used only while the page listens (8 s after the last request the board lets
+them go), so `sound out i2s` and the intercom cannot play at the same time. GPIO19-21 are also used by the knob
+(0.145), the keypad plug / shield layouts and the Waveshare HAT keys - `intercom` warns. Outside the home: through
+a VPN (e.g. WireGuard on the router).
 
 **Monitoring centre / PCO (0.146, `pco`)**: the alarm reports its events to an alarm receiving centre with the
 standard IP protocol **SIA DC-09** (what PCO software and receivers like Sur-Gard, Osborne-Hoffman, Manitou, Patriot

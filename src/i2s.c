@@ -170,6 +170,7 @@ static void ring_init(void);
 int i2s_start(void)
 {
     if (running) return 0;
+    if (intercom_owns_pcm()) return -1;       /* 0.148: the door intercom has PCM now */
     if (!sine[64]) make_sine();
     sink = SINK_I2S;
     for (int p = 18; p <= 21; p++) gpio_func(p, 4);          /* ALT0: PCM CLK, FS, DIN, DOUT */

@@ -8,7 +8,7 @@ Mini operačný systém pre Raspberry Pi, ktorý beží priamo na hardvéri, bez
 Ovláda sa **USB klávesnicou** alebo cez sériovú linku (UART). Výstup ide naraz na
 HDMI aj UART a oba vstupy fungujú súčasne.
 
-Aktuálna verzia: **0.147**
+Aktuálna verzia: **0.148**
 
 ## Podporované dosky
 
@@ -540,6 +540,7 @@ neroztrhajú impulzy); dve dobré minúty, ktoré k sebe sedia, nastavia hodiny 
 0.145: OLED modul s otočným gombíkom + tlačidlami CONFIRM / BACK ako klávesnica alarmu (`alarm knob`): otočenie = číslica, stlačenie = pridať, BACK = zmazať, CONFIRM = odoslať.
 0.146: hlásenia alarmu na pult centralizovanej ochrany (PCO) cez SIA DC-09 po TCP alebo UDP: Contact ID (ADM-CID) alebo SIA-DCS, šifrovanie AES, záložný prijímač, kontrolné spojenie, denný test (`pco`).
 0.147: PCO: kontrolné spojenie (NULL) so sekvenciou 0000 a opakovanie s rovnakými bajtmi (aj s časom), aby prijímač spoznal opakovanie - overené proti `pco-server` (Robo PCO).
+0.148: hlas pri dverách cez web (`intercom`, stránka `/door`): mikrofón INMP441 + reproduktor s MAX98357A na I2S - počúvaš dvere a podržaním tlačidla hovoríš z prehliadača v mobile.
 0.143: OPRAVA Pi 3B+: priamo s doskou na 100 Mbit (Pi 3B) hlásil `link up, 1000 Mbit` a nastavil MAC na 1000, hoci kábel bežal na 100 = nič neprešlo; 1000 sa teraz berie, len keď prijímače 1000BASE-T hlásia OK.
 0.142: Pi 3B+: LED na sieťovom konektore sa zapnú (RoboOS ich nikdy nezapínal); `net` ukáže, čo vidí PHY (linka, auto-negotiation, čo ponúka druhá strana, 1000 Mbit).
 0.141: OPRAVA: kým išla prevádzka cez WiFi, zapojený kábel sa nikdy nezistil (linka sa kontrolovala len pri čítaní rámcov z kábla) - preto kábel + WiFi (0.140) kábel nepoužil.
@@ -1318,6 +1319,33 @@ na termináli (`alarm remote ...`). Zapojenie (pull-upy sú interné; OLED sa n�
 Iné piny: `alarm knob <tra> <trb> <push> <confirm> <back>` (čísla GPIO); opačný smer: pridaj `reverse`;
 `alarm knob off`. Tieto piny IoT shield nepoužíva (len GPIO6 = tlačidlo zvončeka, ak ho máš); kolízie so zónami,
 sirénou alebo LED sa ukážu cez `!!`.
+
+**Hlas pri dverách (0.148, `intercom`, stránka `/door`)**: hovoríš s návštevou cez webovú stránku - počuješ
+dvere a kým držíš **Hold to talk**, dvere počujú teba (striedavo = bez ozveny). Dva lacné I2S moduly zdieľajú
+hodinové vodiče:
+
+| modul | pin | hrebienok Pi |
+|---|---|---|
+| mikrofón INMP441 | SCK / WS / SD | pin 12 (GPIO18) / pin 35 (GPIO19) / pin 38 (GPIO20) |
+| | L/R, GND, VDD | GND (= ľavý kanál), GND, 3,3 V (pin 1) |
+| zosilňovač MAX98357A | BCLK / LRC / DIN | pin 12 (GPIO18) / pin 35 (GPIO19) / pin 40 (GPIO21) |
+| | GND, VIN | GND, 5 V (pin 2); reproduktor 4-8 ohm, 3 W na jeho + / - |
+
+```
+intercom on                  stránka /door + dlaždica na hlavnej stránke (uložené v /INTERCOM.TXT)
+intercom beep                1 s tónu 1 kHz z reproduktora (skúška zapojenia)
+intercom mic                 živá úroveň mikrofónu (skúška zapojenia; hovor doň)
+intercom volume 80           hlasitosť reproduktora 0-100 %
+intercom gain 4              zosilnenie mikrofónu x1-64
+intercom                     stav, zapojenie, úrovne, kolízie
+```
+
+V mobile otvor `https://<doska>/door` (prehliadač dovolí stránke mikrofón len cez **https** - `http tls on`,
+potvrď varovanie o certifikáte), raz zadaj API token, stlač **Listen**; hovoríš držaním **Hold to talk** (alebo
+medzerníka). Ak je kamera, nad tlačidlami je jej obraz. Zvuk: 16 kHz G.711 u-law, oneskorenie ~0,3-0,5 s. I2S piny
+sa používajú len kým stránka počúva (8 s po poslednej požiadavke ich doska uvoľní), takže `sound out i2s` a intercom
+naraz hrať nemôžu. GPIO19-21 používa aj gombík (0.145), zapojenia klávesnice plug / shield a tlačidlá Waveshare
+HAT-u - `intercom` upozorní. Mimo domu: cez VPN (napr. WireGuard na routeri).
 
 **Pult centralizovanej ochrany / PCO (0.146, `pco`)**: alarm hlási udalosti na PCO štandardným IP protokolom
 **SIA DC-09** (ten berú PCO softvéry a prijímače ako Sur-Gard, Osborne-Hoffman, Manitou, Patriot alebo prijímače Ajax /
